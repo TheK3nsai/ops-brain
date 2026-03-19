@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: ops-brain-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ops_brain
+      POSTGRES_PASSWORD: ops_brain
+      POSTGRES_DB: ops_brain
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./seed:/seed:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ops_brain"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
