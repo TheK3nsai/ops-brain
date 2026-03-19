@@ -12,8 +12,8 @@ INSERT INTO sites (id, client_id, name, slug, address, wan_provider, notes) VALU
     ('019594a0-0002-7000-8000-000000000001', '019594a0-0001-7000-8000-000000000001', 'HSR Main Office', 'hsr-main', NULL, NULL, 'Primary hospice location'),
     ('019594a0-0002-7000-8000-000000000002', '019594a0-0001-7000-8000-000000000001', 'HSR Renacer', 'hsr-renacer', NULL, NULL, 'Second hospice location'),
     ('019594a0-0002-7000-8000-000000000003', '019594a0-0001-7000-8000-000000000001', 'HSR Cloud', 'hsr-cloud', NULL, NULL, 'Cloud/remote infrastructure for HSR'),
-    ('019594a0-0002-7000-8000-000000000004', '019594a0-0002-7000-8000-000000000002', 'CPA Office', 'cpa-office', NULL, NULL, 'CPA firm office'),
-    ('019594a0-0002-7000-8000-000000000005', '019594a0-0002-7000-8000-000000000002', 'Eduardo Home/Remote', 'eduardo-remote', NULL, NULL, 'Eduardo personal/work machines')
+    ('019594a0-0002-7000-8000-000000000004', '019594a0-0001-7000-8000-000000000002', 'CPA Office', 'cpa-office', NULL, NULL, 'CPA firm office'),
+    ('019594a0-0002-7000-8000-000000000005', '019594a0-0001-7000-8000-000000000002', 'Eduardo Home/Remote', 'eduardo-remote', NULL, NULL, 'Eduardo personal/work machines')
 ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, notes = EXCLUDED.notes;
 
 -- Servers (HSR)
