@@ -7,3 +7,6 @@ pub mod vendor_repo;
 pub mod runbook_repo;
 pub mod knowledge_repo;
 pub mod search_repo;
+pub mod incident_repo;
+pub mod session_repo;
+pub mod handoff_repo;

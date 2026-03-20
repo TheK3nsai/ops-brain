@@ -1,6 +1,8 @@
 use serde::Serialize;
 use sqlx::PgPool;
 
+use crate::models::handoff::Handoff;
+use crate::models::incident::Incident;
 use crate::models::knowledge::Knowledge;
 use crate::models::runbook::Runbook;
 use crate::models::server::Server;
@@ -12,13 +14,15 @@ pub struct SearchResults {
     pub services: Vec<Service>,
     pub runbooks: Vec<Runbook>,
     pub knowledge: Vec<Knowledge>,
+    pub incidents: Vec<Incident>,
+    pub handoffs: Vec<Handoff>,
 }
 
 pub async fn search_inventory(
     pool: &PgPool,
     query: &str,
 ) -> Result<SearchResults, sqlx::Error> {
-    let (servers, services, runbooks, knowledge) = tokio::try_join!(
+    let (servers, services, runbooks, knowledge, incidents, handoffs) = tokio::try_join!(
         sqlx::query_as::<_, Server>(
             "SELECT * FROM servers
              WHERE search_vector @@ plainto_tsquery('english', $1)
@@ -51,6 +55,22 @@ pub async fn search_inventory(
         )
         .bind(query)
         .fetch_all(pool),
+        sqlx::query_as::<_, Incident>(
+            "SELECT * FROM incidents
+             WHERE search_vector @@ plainto_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             LIMIT 10"
+        )
+        .bind(query)
+        .fetch_all(pool),
+        sqlx::query_as::<_, Handoff>(
+            "SELECT * FROM handoffs
+             WHERE search_vector @@ plainto_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             LIMIT 10"
+        )
+        .bind(query)
+        .fetch_all(pool),
     )?;
 
     Ok(SearchResults {
@@ -58,6 +78,8 @@ pub async fn search_inventory(
         services,
         runbooks,
         knowledge,
+        incidents,
+        handoffs,
     })
 }
 

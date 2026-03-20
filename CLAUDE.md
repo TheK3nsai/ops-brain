@@ -21,11 +21,13 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs         # OpsBrain struct with ALL 26 #[tool] methods in one impl block
-    inventory.rs   # Parameter structs for inventory tools
-    runbooks.rs    # Parameter structs for runbook tools
-    knowledge.rs   # Parameter structs for knowledge tools
-    context.rs     # Parameter structs + response structs for context tools
+    mod.rs           # OpsBrain struct with ALL 40 #[tool] methods in one impl block
+    inventory.rs     # Parameter structs for inventory tools
+    runbooks.rs      # Parameter structs for runbook tools
+    knowledge.rs     # Parameter structs for knowledge tools
+    context.rs       # Parameter structs + response structs for context tools
+    incidents.rs     # Parameter structs for incident tools
+    coordination.rs  # Parameter structs for session + handoff tools
 migrations/        # 14 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
@@ -67,8 +69,8 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 ## Phase Status
 
 - **Phase 1** (local dev): COMPLETE — 26 tools, stdio transport, verified working
-- **Phase 2** (remote deploy): IN PROGRESS — HTTP transport + auth working, deploying to kensai.cloud
-- **Phase 3** (incidents + coordination): Tables exist, tools deferred
+- **Phase 2** (remote deploy): COMPLETE — HTTP transport + auth, deployed to kensai.cloud
+- **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
 - **Phase 4** (monitoring integration): Deferred until monitoring re-established
 - **Phase 5** (semantic search): Future — pgvector embeddings
 

@@ -1,4 +1,6 @@
 mod context;
+mod coordination;
+mod incidents;
 mod inventory;
 mod knowledge;
 mod runbooks;
@@ -1311,6 +1313,592 @@ impl OpsBrain {
         });
 
         Ok(json_result(&result))
+    }
+
+    // ===== INCIDENT TOOLS =====
+
+    #[tool(
+        name = "create_incident",
+        description = "Create a new incident. Optionally link to affected servers and services immediately."
+    )]
+    async fn create_incident(
+        &self,
+        params: Parameters<incidents::CreateIncidentParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let severity = p.severity.as_deref().unwrap_or("medium");
+
+        // Validate severity
+        if !["low", "medium", "high", "critical"].contains(&severity) {
+            return Ok(error_result(
+                "Invalid severity. Must be: low, medium, high, or critical",
+            ));
+        }
+
+        // Resolve client_slug
+        let client_id = match &p.client_slug {
+            Some(slug) => {
+                match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
+                    Ok(Some(c)) => Some(c.id),
+                    Ok(None) => return Ok(not_found("Client", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
+
+        let incident = match crate::repo::incident_repo::create_incident(
+            &self.pool,
+            &p.title,
+            severity,
+            client_id,
+            p.symptoms.as_deref(),
+            p.notes.as_deref(),
+        )
+        .await
+        {
+            Ok(i) => i,
+            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+        };
+
+        // Link servers if provided
+        if let Some(slugs) = &p.server_slugs {
+            for slug in slugs {
+                if let Ok(Some(server)) =
+                    crate::repo::server_repo::get_server_by_slug(&self.pool, slug).await
+                {
+                    let _ = crate::repo::incident_repo::link_incident_server(
+                        &self.pool,
+                        incident.id,
+                        server.id,
+                    )
+                    .await;
+                }
+            }
+        }
+
+        // Link services if provided
+        if let Some(slugs) = &p.service_slugs {
+            for slug in slugs {
+                if let Ok(Some(service)) =
+                    crate::repo::service_repo::get_service_by_slug(&self.pool, slug).await
+                {
+                    let _ = crate::repo::incident_repo::link_incident_service(
+                        &self.pool,
+                        incident.id,
+                        service.id,
+                    )
+                    .await;
+                }
+            }
+        }
+
+        Ok(json_result(&incident))
+    }
+
+    #[tool(
+        name = "update_incident",
+        description = "Update an incident. Set status to 'resolved' to auto-calculate resolved_at and TTR. \
+        Use for post-mortems: root_cause, resolution, prevention fields."
+    )]
+    async fn update_incident(
+        &self,
+        params: Parameters<incidents::UpdateIncidentParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        let id = match uuid::Uuid::parse_str(&p.id) {
+            Ok(id) => id,
+            Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.id))),
+        };
+
+        // Validate status if provided
+        if let Some(ref status) = p.status {
+            if !["open", "resolved"].contains(&status.as_str()) {
+                return Ok(error_result("Invalid status. Must be: open or resolved"));
+            }
+        }
+
+        // Validate severity if provided
+        if let Some(ref severity) = p.severity {
+            if !["low", "medium", "high", "critical"].contains(&severity.as_str()) {
+                return Ok(error_result(
+                    "Invalid severity. Must be: low, medium, high, or critical",
+                ));
+            }
+        }
+
+        match crate::repo::incident_repo::update_incident(
+            &self.pool,
+            id,
+            p.title.as_deref(),
+            p.status.as_deref(),
+            p.severity.as_deref(),
+            p.symptoms.as_deref(),
+            p.root_cause.as_deref(),
+            p.resolution.as_deref(),
+            p.prevention.as_deref(),
+            p.notes.as_deref(),
+        )
+        .await
+        {
+            Ok(incident) => Ok(json_result(&incident)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "get_incident",
+        description = "Get full details of an incident by ID, including linked servers, services, runbooks, and vendors"
+    )]
+    async fn get_incident(
+        &self,
+        params: Parameters<incidents::GetIncidentParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        let id = match uuid::Uuid::parse_str(&p.id) {
+            Ok(id) => id,
+            Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.id))),
+        };
+
+        let incident = match crate::repo::incident_repo::get_incident(&self.pool, id).await {
+            Ok(Some(i)) => i,
+            Ok(None) => return Ok(not_found("Incident", &p.id)),
+            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+        };
+
+        // Get linked entities
+        let linked_servers: Vec<crate::models::server::Server> = sqlx::query_as(
+            "SELECT s.* FROM servers s JOIN incident_servers isv ON s.id = isv.server_id WHERE isv.incident_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        let linked_services: Vec<crate::models::service::Service> = sqlx::query_as(
+            "SELECT s.* FROM services s JOIN incident_services iss ON s.id = iss.service_id WHERE iss.incident_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        let result = serde_json::json!({
+            "incident": incident,
+            "linked_servers": linked_servers,
+            "linked_services": linked_services,
+        });
+
+        Ok(json_result(&result))
+    }
+
+    #[tool(
+        name = "list_incidents",
+        description = "List incidents with optional filters by client, status, and severity"
+    )]
+    async fn list_incidents(
+        &self,
+        params: Parameters<incidents::ListIncidentsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let limit = p.limit.unwrap_or(20);
+
+        // Resolve client_slug
+        let client_id = match &p.client_slug {
+            Some(slug) => {
+                match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
+                    Ok(Some(c)) => Some(c.id),
+                    Ok(None) => return Ok(not_found("Client", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
+
+        match crate::repo::incident_repo::list_incidents(
+            &self.pool,
+            client_id,
+            p.status.as_deref(),
+            p.severity.as_deref(),
+            limit,
+        )
+        .await
+        {
+            Ok(incidents) => Ok(json_result(&incidents)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "search_incidents",
+        description = "Full-text search across incident titles, symptoms, root causes, resolutions, and notes"
+    )]
+    async fn search_incidents(
+        &self,
+        params: Parameters<incidents::SearchIncidentsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        match crate::repo::incident_repo::search_incidents(&self.pool, &p.query).await {
+            Ok(incidents) => Ok(json_result(&incidents)),
+            Err(e) => Ok(error_result(&format!("Search error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "link_incident",
+        description = "Link an incident to servers, services, runbooks, and/or vendors. \
+        Runbook links include usage tracking: 'followed', 'not-applicable', or 'not-followed'."
+    )]
+    async fn link_incident(
+        &self,
+        params: Parameters<incidents::LinkIncidentParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        let incident_id = match uuid::Uuid::parse_str(&p.incident_id) {
+            Ok(id) => id,
+            Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.incident_id))),
+        };
+
+        // Verify incident exists
+        match crate::repo::incident_repo::get_incident(&self.pool, incident_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => return Ok(not_found("Incident", &p.incident_id)),
+            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+        }
+
+        let mut linked = Vec::new();
+
+        // Link servers
+        if let Some(slugs) = &p.server_slugs {
+            for slug in slugs {
+                match crate::repo::server_repo::get_server_by_slug(&self.pool, slug).await {
+                    Ok(Some(server)) => {
+                        if let Err(e) = crate::repo::incident_repo::link_incident_server(
+                            &self.pool,
+                            incident_id,
+                            server.id,
+                        )
+                        .await
+                        {
+                            return Ok(error_result(&format!(
+                                "Failed to link server '{slug}': {e}"
+                            )));
+                        }
+                        linked.push(format!("server:{slug}"));
+                    }
+                    Ok(None) => return Ok(not_found("Server", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+        }
+
+        // Link services
+        if let Some(slugs) = &p.service_slugs {
+            for slug in slugs {
+                match crate::repo::service_repo::get_service_by_slug(&self.pool, slug).await {
+                    Ok(Some(service)) => {
+                        if let Err(e) = crate::repo::incident_repo::link_incident_service(
+                            &self.pool,
+                            incident_id,
+                            service.id,
+                        )
+                        .await
+                        {
+                            return Ok(error_result(&format!(
+                                "Failed to link service '{slug}': {e}"
+                            )));
+                        }
+                        linked.push(format!("service:{slug}"));
+                    }
+                    Ok(None) => return Ok(not_found("Service", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+        }
+
+        // Link runbooks
+        if let Some(rb_links) = &p.runbook_links {
+            for rb_link in rb_links {
+                let usage = rb_link.usage.as_deref().unwrap_or("followed");
+                if !["followed", "not-applicable", "not-followed"].contains(&usage) {
+                    return Ok(error_result(&format!(
+                        "Invalid runbook usage '{}'. Must be: followed, not-applicable, or not-followed",
+                        usage
+                    )));
+                }
+                match crate::repo::runbook_repo::get_runbook_by_slug(&self.pool, &rb_link.slug)
+                    .await
+                {
+                    Ok(Some(runbook)) => {
+                        if let Err(e) = crate::repo::incident_repo::link_incident_runbook(
+                            &self.pool,
+                            incident_id,
+                            runbook.id,
+                            usage,
+                        )
+                        .await
+                        {
+                            return Ok(error_result(&format!(
+                                "Failed to link runbook '{}': {e}",
+                                rb_link.slug
+                            )));
+                        }
+                        linked.push(format!("runbook:{}", rb_link.slug));
+                    }
+                    Ok(None) => return Ok(not_found("Runbook", &rb_link.slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+        }
+
+        // Link vendors
+        if let Some(names) = &p.vendor_names {
+            for name in names {
+                match crate::repo::vendor_repo::get_vendor_by_name(&self.pool, name).await {
+                    Ok(Some(vendor)) => {
+                        if let Err(e) = crate::repo::incident_repo::link_incident_vendor(
+                            &self.pool,
+                            incident_id,
+                            vendor.id,
+                        )
+                        .await
+                        {
+                            return Ok(error_result(&format!(
+                                "Failed to link vendor '{name}': {e}"
+                            )));
+                        }
+                        linked.push(format!("vendor:{name}"));
+                    }
+                    Ok(None) => return Ok(not_found("Vendor", name)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Linked to incident {}: {}",
+            p.incident_id,
+            linked.join(", ")
+        ))]))
+    }
+
+    // ===== SESSION TOOLS =====
+
+    #[tool(
+        name = "start_session",
+        description = "Start a new work session on a machine. Returns session ID for handoff tracking."
+    )]
+    async fn start_session(
+        &self,
+        params: Parameters<coordination::StartSessionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        match crate::repo::session_repo::start_session(&self.pool, &p.machine_id, &p.machine_hostname)
+            .await
+        {
+            Ok(session) => Ok(json_result(&session)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "end_session",
+        description = "End a work session with an optional summary of what was accomplished"
+    )]
+    async fn end_session(
+        &self,
+        params: Parameters<coordination::EndSessionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        let id = match uuid::Uuid::parse_str(&p.session_id) {
+            Ok(id) => id,
+            Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.session_id))),
+        };
+
+        match crate::repo::session_repo::end_session(&self.pool, id, p.summary.as_deref()).await {
+            Ok(session) => Ok(json_result(&session)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "list_sessions",
+        description = "List work sessions, optionally filtered by machine and active status"
+    )]
+    async fn list_sessions(
+        &self,
+        params: Parameters<coordination::ListSessionsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let limit = p.limit.unwrap_or(20);
+        let active_only = p.active_only.unwrap_or(false);
+
+        match crate::repo::session_repo::list_sessions(
+            &self.pool,
+            p.machine_id.as_deref(),
+            active_only,
+            limit,
+        )
+        .await
+        {
+            Ok(sessions) => Ok(json_result(&sessions)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    // ===== HANDOFF TOOLS =====
+
+    #[tool(
+        name = "create_handoff",
+        description = "Create a handoff task for another machine/session to pick up. \
+        Use for cross-machine coordination: tasks that need to continue on a different machine."
+    )]
+    async fn create_handoff(
+        &self,
+        params: Parameters<coordination::CreateHandoffParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let priority = p.priority.as_deref().unwrap_or("normal");
+
+        if !["low", "normal", "high", "critical"].contains(&priority) {
+            return Ok(error_result(
+                "Invalid priority. Must be: low, normal, high, or critical",
+            ));
+        }
+
+        // Resolve optional session ID
+        let from_session_id = match &p.from_session_id {
+            Some(id_str) => match uuid::Uuid::parse_str(id_str) {
+                Ok(id) => Some(id),
+                Err(_) => return Ok(error_result(&format!("Invalid session UUID: {id_str}"))),
+            },
+            None => None,
+        };
+
+        match crate::repo::handoff_repo::create_handoff(
+            &self.pool,
+            from_session_id,
+            &p.from_machine,
+            p.to_machine.as_deref(),
+            priority,
+            &p.title,
+            &p.body,
+            p.context.as_ref(),
+        )
+        .await
+        {
+            Ok(handoff) => Ok(json_result(&handoff)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "accept_handoff",
+        description = "Accept a pending handoff, marking it as in-progress on your machine"
+    )]
+    async fn accept_handoff(
+        &self,
+        params: Parameters<coordination::UpdateHandoffStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        let id = match uuid::Uuid::parse_str(&p.handoff_id) {
+            Ok(id) => id,
+            Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.handoff_id))),
+        };
+
+        // Verify it's pending
+        match crate::repo::handoff_repo::get_handoff(&self.pool, id).await {
+            Ok(Some(h)) if h.status == "pending" => {}
+            Ok(Some(h)) => {
+                return Ok(error_result(&format!(
+                    "Handoff is already '{}', cannot accept",
+                    h.status
+                )))
+            }
+            Ok(None) => return Ok(not_found("Handoff", &p.handoff_id)),
+            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+        }
+
+        match crate::repo::handoff_repo::update_handoff_status(&self.pool, id, "accepted").await {
+            Ok(handoff) => Ok(json_result(&handoff)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "complete_handoff",
+        description = "Mark a handoff as completed"
+    )]
+    async fn complete_handoff(
+        &self,
+        params: Parameters<coordination::UpdateHandoffStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        let id = match uuid::Uuid::parse_str(&p.handoff_id) {
+            Ok(id) => id,
+            Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.handoff_id))),
+        };
+
+        // Verify it exists and is not already completed
+        match crate::repo::handoff_repo::get_handoff(&self.pool, id).await {
+            Ok(Some(h)) if h.status == "completed" => {
+                return Ok(error_result("Handoff is already completed"))
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => return Ok(not_found("Handoff", &p.handoff_id)),
+            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+        }
+
+        match crate::repo::handoff_repo::update_handoff_status(&self.pool, id, "completed").await {
+            Ok(handoff) => Ok(json_result(&handoff)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "list_handoffs",
+        description = "List handoffs with optional filters. Use status='pending' to see what needs attention."
+    )]
+    async fn list_handoffs(
+        &self,
+        params: Parameters<coordination::ListHandoffsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let limit = p.limit.unwrap_or(20);
+
+        match crate::repo::handoff_repo::list_handoffs(
+            &self.pool,
+            p.status.as_deref(),
+            p.to_machine.as_deref(),
+            p.from_machine.as_deref(),
+            limit,
+        )
+        .await
+        {
+            Ok(handoffs) => Ok(json_result(&handoffs)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "search_handoffs",
+        description = "Full-text search across handoff titles and bodies"
+    )]
+    async fn search_handoffs(
+        &self,
+        params: Parameters<coordination::SearchHandoffsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        match crate::repo::handoff_repo::search_handoffs(&self.pool, &p.query).await {
+            Ok(handoffs) => Ok(json_result(&handoffs)),
+            Err(e) => Ok(error_result(&format!("Search error: {e}"))),
+        }
     }
 }
 

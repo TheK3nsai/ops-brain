@@ -12,7 +12,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks, vendor contacts, pending handoffs, and knowledge entries.
 
-## Tools (26)
+## Tools (40)
 
 ### Inventory (15)
 | Tool | Description |
@@ -22,7 +22,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `get_service` / `list_services` | Service details + which servers run it |
 | `get_site` / `get_client` | Entity lookups with related data |
 | `get_network` / `get_vendor` | Network and vendor lookups |
-| `search_inventory` | Full-text search across all entities |
+| `search_inventory` | Full-text search across all entities (servers, services, runbooks, knowledge, incidents, handoffs) |
 | `upsert_client` / `upsert_site` / `upsert_server` | Create or update records |
 | `upsert_service` / `upsert_vendor` | Create or update records |
 | `link_server_service` | Associate a service with a server |
@@ -47,6 +47,32 @@ get_situational_awareness(server_slug: "hvfs0")
 | `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client |
 | `get_client_overview` | Full client briefing with all related data |
 | `get_server_context` | Everything about a specific server |
+
+### Incidents (6)
+| Tool | Description |
+|------|-------------|
+| `create_incident` | Open a new incident, optionally linking servers and services |
+| `update_incident` | Update fields; setting status to `resolved` auto-calculates TTR |
+| `get_incident` | Full incident details with linked servers, services |
+| `list_incidents` | Filter by client, status, severity |
+| `search_incidents` | Full-text search across titles, symptoms, root causes, resolutions |
+| `link_incident` | Link servers, services, runbooks (with usage tracking), and vendors |
+
+### Sessions (3)
+| Tool | Description |
+|------|-------------|
+| `start_session` | Begin a work session on a machine |
+| `end_session` | End a session with an optional summary |
+| `list_sessions` | List sessions, filter by machine or active status |
+
+### Handoffs (5)
+| Tool | Description |
+|------|-------------|
+| `create_handoff` | Create a task for another machine/session to pick up |
+| `accept_handoff` | Accept a pending handoff |
+| `complete_handoff` | Mark a handoff as done |
+| `list_handoffs` | Filter by status, source/target machine |
+| `search_handoffs` | Full-text search across handoff titles and bodies |
 
 ## Tech Stack
 
@@ -159,9 +185,9 @@ Session 1──N Handoff               N
 
 ## Roadmap
 
-- [x] **Phase 1**: Local MCP server — inventory, runbooks, knowledge, context tools
+- [x] **Phase 1**: Local MCP server — inventory, runbooks, knowledge, context tools (26 tools)
 - [x] **Phase 2**: Remote deployment to cloud server (Streamable HTTP + bearer auth)
-- [ ] **Phase 3**: Incident lifecycle + cross-instance CC coordination (handoffs)
+- [x] **Phase 3**: Incident lifecycle + cross-machine coordination (sessions, handoffs) — 40 tools
 - [ ] **Phase 4**: Live monitoring integration (pluggable backends)
 - [ ] **Phase 5**: Semantic search with pgvector embeddings
 
