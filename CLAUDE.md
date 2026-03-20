@@ -71,7 +71,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 1** (local dev): COMPLETE — 26 tools, stdio transport, verified working
 - **Phase 2** (remote deploy): COMPLETE — HTTP transport + auth, deployed to kensai.cloud
 - **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
-- **Phase 4** (monitoring integration): Deferred until monitoring re-established
+- **Phase 4** (monitoring integration): UNBLOCKED — Uptime Kuma v2.2.1 live at uptime.kensai.cloud (32 monitors, push heartbeats active)
 - **Phase 5** (semantic search): Future — pgvector embeddings
 
 ## Deployment (kensai.cloud)
@@ -82,6 +82,19 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Compose**: `docker-compose.prod.yml` — uses `traefik-net` + `shared-db` networks
 - **Auth**: Bearer token in `OPS_BRAIN_AUTH_TOKEN` env var
 - **Health**: `GET /health` (unauthenticated, used by Docker healthcheck)
+
+## Monitoring (Uptime Kuma)
+
+- **URL**: `https://uptime.kensai.cloud` (v2.2.1)
+- **32 monitors**: 8 push (ops scripts), 6 HTTP (web services), 1 TCP (SSH), 17 Docker containers
+- **Push integration**: Ops scripts in `~/ops/` push heartbeats via cron; URLs in `~/ops/conf/.env`
+- **Admin creds**: `~/docker/uptime-kuma/.env` on kensai.cloud
+- **v2 API quirks**:
+  - socket.io only — no REST except `/api/push/:token` and `/metrics` (Prometheus)
+  - Two-phase setup: `POST /setup-database` first, then socket.io for everything else
+  - `add` event (not `addMonitor`), requires `conditions` field (can be `[]`) and `notificationIDList` (can be `[]`)
+  - Push tokens are client-generated, not auto-assigned
+- **Phase 4 integration paths**: Uptime Kuma webhooks → ops-brain endpoint, scrape `/metrics`, or read SQLite directly
 
 ## Key Tool: get_situational_awareness
 

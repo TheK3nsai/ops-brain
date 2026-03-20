@@ -188,7 +188,7 @@ Session 1──N Handoff               N
 - [x] **Phase 1**: Local MCP server — inventory, runbooks, knowledge, context tools (26 tools)
 - [x] **Phase 2**: Remote deployment to cloud server (Streamable HTTP + bearer auth)
 - [x] **Phase 3**: Incident lifecycle + cross-machine coordination (sessions, handoffs) — 40 tools
-- [ ] **Phase 4**: Live monitoring integration (pluggable backends)
+- [ ] **Phase 4**: Monitoring integration — wire Uptime Kuma alerts into ops-brain (webhooks/metrics)
 - [ ] **Phase 5**: Semantic search with pgvector embeddings
 
 ## License
