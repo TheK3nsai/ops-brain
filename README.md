@@ -64,8 +64,8 @@ get_situational_awareness(server_slug: "hvfs0")
 
 ### Prerequisites
 
-- Rust 1.75+
-- PostgreSQL 15+ (18 recommended)
+- Rust 1.83+
+- PostgreSQL 16+ (18 recommended)
 - [just](https://github.com/casey/just) (optional, for dev commands)
 
 ### Local Development
@@ -95,7 +95,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 
 ### Claude Code Configuration
 
-Add to `~/.claude.json`:
+**Local (stdio)** — add to `~/.claude.json`:
 
 ```json
 {
@@ -110,6 +110,36 @@ Add to `~/.claude.json`:
     }
   }
 }
+```
+
+**Remote (HTTP)** — deploy with Docker, then configure Claude Code with the URL and auth token:
+
+```json
+{
+  "mcpServers": {
+    "ops-brain": {
+      "type": "streamable-http",
+      "url": "https://ops.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-token>"
+      }
+    }
+  }
+}
+```
+
+### Docker Deployment
+
+```sh
+# Build and start (uses shared PostgreSQL)
+docker compose -f docker-compose.prod.yml up -d --build
+
+# Environment variables needed in .env:
+# OPS_BRAIN_DB_PASSWORD=<postgres password>
+# OPS_BRAIN_AUTH_TOKEN=<bearer token for HTTP auth>
+
+# Seed the database
+cat seed/seed.sql | docker exec -i shared-postgres psql -U ops_brain -d ops_brain
 ```
 
 ## Domain Model
@@ -130,7 +160,7 @@ Session 1──N Handoff               N
 ## Roadmap
 
 - [x] **Phase 1**: Local MCP server — inventory, runbooks, knowledge, context tools
-- [ ] **Phase 2**: Remote deployment to cloud server (Streamable HTTP + bearer auth)
+- [x] **Phase 2**: Remote deployment to cloud server (Streamable HTTP + bearer auth)
 - [ ] **Phase 3**: Incident lifecycle + cross-instance CC coordination (handoffs)
 - [ ] **Phase 4**: Live monitoring integration (pluggable backends)
 - [ ] **Phase 5**: Semantic search with pgvector embeddings
