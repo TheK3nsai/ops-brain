@@ -1,3 +1,7 @@
+# ops-brain — Production deployment on kensai.cloud
+# Uses shared-postgres from shared-services stack
+# Caddy handles routing (no labels needed — add Caddyfile entry)
+
 services:
   ops-brain:
     build:

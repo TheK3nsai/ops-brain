@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # MCP SDK
-rmcp = { version = "1.2", features = ["server", "transport-io"] }
+rmcp = { version = "1.2", features = ["server", "transport-io", "transport-streamable-http-server"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -38,6 +38,9 @@ dotenvy = "0.15"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP server
+axum = "0.7"
 
 # Error handling
 anyhow = "1"

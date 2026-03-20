@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
         db::run_migrations(&pool).await?;
     }
 
-    let server = OpsBrain::new(pool);
+    let server = OpsBrain::new(pool.clone());
 
     match config.transport.as_str() {
         "stdio" => {
@@ -42,9 +42,36 @@ async fn main() -> anyhow::Result<()> {
             let service = server.serve(transport).await?;
             service.waiting().await?;
         }
+        "http" => {
+            use std::sync::Arc;
+            use rmcp::transport::streamable_http_server::{
+                session::local::LocalSessionManager,
+                tower::StreamableHttpService,
+            };
+
+            let session_manager = Arc::new(LocalSessionManager::default());
+
+            let mcp_service = StreamableHttpService::new(
+                move || Ok(OpsBrain::new(pool.clone())),
+                session_manager,
+                Default::default(),
+            );
+
+            let app = axum::Router::new()
+                .route("/health", axum::routing::get(|| async { "OK" }))
+                .nest_service("/mcp", mcp_service)
+                .layer(axum::middleware::from_fn_with_state(
+                    config.auth_token.clone(),
+                    auth::bearer_auth,
+                ));
+
+            let listener = tokio::net::TcpListener::bind(&config.listen).await?;
+            tracing::info!("Listening on http://{}", config.listen);
+            axum::serve(listener, app).await?;
+        }
         _ => {
             anyhow::bail!(
-                "Unknown transport: {}. Use 'stdio' (Phase 1) or 'http' (Phase 2)",
+                "Unknown transport: {}. Use 'stdio' or 'http'.",
                 config.transport
             );
         }

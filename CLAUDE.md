@@ -7,17 +7,17 @@ Rust MCP server providing operational intelligence for IT infrastructure managem
 - **Language**: Rust 2021 edition
 - **MCP SDK**: rmcp 1.2 (`#[tool_router]` macro pattern)
 - **Database**: PostgreSQL 18 via sqlx (runtime queries, not compile-time checked)
-- **Transport**: stdio (Phase 1), streamable HTTP planned (Phase 2)
+- **Transport**: stdio (local) or streamable HTTP (remote, via axum)
 - **Binary**: `target/release/ops-brain` (11MB)
 
 ## Project Layout
 
 ```
 src/
-  main.rs          # Entry point: config, DB pool, migrations, stdio transport
+  main.rs          # Entry point: config, DB pool, migrations, stdio/http transport
   config.rs        # CLI/env config via clap
   db.rs            # PgPool creation + migration runner
-  auth.rs          # Bearer token validation (Phase 2 placeholder)
+  auth.rs          # Bearer token validation middleware (axum)
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
@@ -59,18 +59,27 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 |----------|---------|-------------|
 | `DATABASE_URL` | (required) | PostgreSQL connection string |
 | `OPS_BRAIN_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
-| `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address (Phase 2) |
-| `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth (Phase 2) |
+| `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
+| `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
 | `RUST_LOG` | `ops_brain=info` | Tracing filter |
 
 ## Phase Status
 
 - **Phase 1** (local dev): COMPLETE — 26 tools, stdio transport, verified working
-- **Phase 2** (remote deploy): NOT STARTED — Dockerfile + docker-compose.prod.yml ready
+- **Phase 2** (remote deploy): IN PROGRESS — HTTP transport + auth working, deploying to kensai.cloud
 - **Phase 3** (incidents + coordination): Tables exist, tools deferred
 - **Phase 4** (monitoring integration): Deferred until monitoring re-established
 - **Phase 5** (semantic search): Future — pgvector embeddings
+
+## Deployment (kensai.cloud)
+
+- **URL**: `https://ops.kensai.cloud/mcp`
+- **Stack**: Docker on kensai.cloud behind Caddy + Cloudflare Tunnel
+- **Database**: shared-postgres (same as Zammad, Nextcloud)
+- **Compose**: `docker-compose.prod.yml` — uses `traefik-net` + `shared-db` networks
+- **Auth**: Bearer token in `OPS_BRAIN_AUTH_TOKEN` env var
+- **Health**: `GET /health` (unauthenticated, used by Docker healthcheck)
 
 ## Key Tool: get_situational_awareness
 
