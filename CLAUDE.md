@@ -76,7 +76,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 1** (local dev): COMPLETE — 26 tools, stdio transport, verified working
 - **Phase 2** (remote deploy): COMPLETE — HTTP transport + auth, deployed to kensai.cloud
 - **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
-- **Phase 4** (monitoring integration): COMPLETE — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data.
+- **Phase 4** (monitoring integration): COMPLETE & DEPLOYED — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data. All 32 monitors linked.
 - **Phase 5** (semantic search): Future — pgvector embeddings
 
 ## Deployment (kensai.cloud)
@@ -99,7 +99,8 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
   - Two-phase setup: `POST /setup-database` first, then socket.io for everything else
   - `add` event (not `addMonitor`), requires `conditions` field (can be `[]`) and `notificationIDList` (can be `[]`)
   - Push tokens are client-generated, not auto-assigned
-- **Integration**: ops-brain scrapes `/metrics` on demand (no polling). Monitor mappings stored in `monitors` table.
+- **Integration**: ops-brain scrapes `/metrics` on demand (no polling). Monitor mappings stored in `monitors` table. `/metrics` requires basic auth (admin creds).
+- **Internal URL**: `http://uptime-kuma:3001` (on `traefik-net` Docker network)
 - **Tools**: `list_monitors`, `get_monitor_status`, `get_monitoring_summary`, `link_monitor`, `unlink_monitor`
 - **Context enrichment**: `get_situational_awareness` and `get_server_context` include live monitoring for linked monitors
 

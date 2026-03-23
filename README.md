@@ -175,6 +175,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 # OPS_BRAIN_DB_PASSWORD=<postgres password>
 # OPS_BRAIN_AUTH_TOKEN=<bearer token for HTTP auth>
 # UPTIME_KUMA_URL=http://uptime-kuma:3001  (optional, for monitoring integration)
+# UPTIME_KUMA_USERNAME=admin               (if /metrics requires basic auth)
+# UPTIME_KUMA_PASSWORD=<password>          (if /metrics requires basic auth)
 
 # Seed the database
 cat seed/seed.sql | docker exec -i shared-postgres psql -U ops_brain -d ops_brain
