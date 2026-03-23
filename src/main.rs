@@ -1,6 +1,7 @@
 mod auth;
 mod config;
 mod db;
+mod embeddings;
 mod metrics;
 mod models;
 mod repo;
@@ -43,7 +44,23 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let server = OpsBrain::new(pool.clone(), kuma_config.clone());
+    let embedding_client = if config.embeddings_enabled.unwrap_or(true) {
+        tracing::info!(
+            "Embeddings configured: url={}, model={}",
+            config.embedding_url,
+            config.embedding_model
+        );
+        Some(embeddings::EmbeddingClient::new(
+            config.embedding_url.clone(),
+            config.embedding_model.clone(),
+            config.embedding_api_key.clone(),
+        ))
+    } else {
+        tracing::info!("Embeddings disabled via OPS_BRAIN_EMBEDDINGS_ENABLED=false");
+        None
+    };
+
+    let server = OpsBrain::new(pool.clone(), kuma_config.clone(), embedding_client.clone());
 
     match config.transport.as_str() {
         "stdio" => {
@@ -62,8 +79,9 @@ async fn main() -> anyhow::Result<()> {
             let session_manager = Arc::new(LocalSessionManager::default());
 
             let kuma_config_http = kuma_config.clone();
+            let embedding_client_http = embedding_client.clone();
             let mcp_service = StreamableHttpService::new(
-                move || Ok(OpsBrain::new(pool.clone(), kuma_config_http.clone())),
+                move || Ok(OpsBrain::new(pool.clone(), kuma_config_http.clone(), embedding_client_http.clone())),
                 session_manager,
                 Default::default(),
             );

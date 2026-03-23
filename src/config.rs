@@ -34,4 +34,20 @@ pub struct Config {
     /// Optional basic auth password for Uptime Kuma /metrics endpoint
     #[arg(long, env = "UPTIME_KUMA_PASSWORD")]
     pub uptime_kuma_password: Option<String>,
+
+    /// Embedding API base URL (OpenAI-compatible). Default: local ollama.
+    #[arg(long, env = "OPS_BRAIN_EMBEDDING_URL", default_value = "http://localhost:11434/v1/embeddings")]
+    pub embedding_url: String,
+
+    /// Embedding model name (default: nomic-embed-text for ollama)
+    #[arg(long, env = "OPS_BRAIN_EMBEDDING_MODEL", default_value = "nomic-embed-text")]
+    pub embedding_model: String,
+
+    /// API key for embedding service (optional — not needed for local ollama)
+    #[arg(long, env = "OPS_BRAIN_EMBEDDING_API_KEY")]
+    pub embedding_api_key: Option<String>,
+
+    /// Enable embedding generation (default: true if embedding URL is reachable)
+    #[arg(long, env = "OPS_BRAIN_EMBEDDINGS_ENABLED")]
+    pub embeddings_enabled: Option<bool>,
 }

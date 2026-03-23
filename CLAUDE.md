@@ -21,7 +21,7 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct with ALL 45 #[tool] methods in one impl block
+    mod.rs           # OpsBrain struct with ALL 47 #[tool] methods in one impl block
     inventory.rs     # Parameter structs for inventory tools
     runbooks.rs      # Parameter structs for runbook tools
     knowledge.rs     # Parameter structs for knowledge tools
@@ -29,8 +29,10 @@ src/
     incidents.rs     # Parameter structs for incident tools
     coordination.rs  # Parameter structs for session + handoff tools
     monitoring.rs    # Parameter structs for monitoring tools
+    search.rs        # Parameter structs for semantic search tools
+  embeddings.rs    # OpenAI embedding client + text preparation functions
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
-migrations/        # 15 sqlx migration files (auto-run on startup)
+migrations/        # 16 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -43,6 +45,10 @@ seed/seed.sql      # Idempotent seed data with real infrastructure
 - Tracing writes to stderr (critical: stdout is the MCP stdio transport)
 - IDs use UUIDv7 (`Uuid::now_v7()`) for time-ordered sorting
 - FTS uses PostgreSQL tsvector with weighted columns + GIN indexes
+- Semantic search uses pgvector (HNSW cosine) + ollama nomic-embed-text (768 dims)
+- Embedding API is OpenAI-compatible (works with ollama, OpenAI, or any compatible provider)
+- Embedding column is nullable — records work fine without embeddings
+- Hybrid search uses Reciprocal Rank Fusion (RRF) to combine FTS + vector results
 
 ## Development
 
@@ -69,6 +75,10 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 | `UPTIME_KUMA_URL` | (none) | Uptime Kuma base URL for /metrics scraping |
 | `UPTIME_KUMA_USERNAME` | (none) | Basic auth username for /metrics (if needed) |
 | `UPTIME_KUMA_PASSWORD` | (none) | Basic auth password for /metrics (if needed) |
+| `OPS_BRAIN_EMBEDDING_URL` | `http://localhost:11434/v1/embeddings` | Embedding API URL (OpenAI-compatible) |
+| `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
+| `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | API key for embedding service (not needed for ollama) |
+| `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | Set to `false` to disable embeddings entirely |
 | `RUST_LOG` | `ops_brain=info` | Tracing filter |
 
 ## Phase Status
@@ -77,7 +87,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 2** (remote deploy): COMPLETE — HTTP transport + auth, deployed to kensai.cloud
 - **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
 - **Phase 4** (monitoring integration): COMPLETE & DEPLOYED — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data. All 32 monitors linked.
-- **Phase 5** (semantic search): Future — pgvector embeddings
+- **Phase 5** (semantic search): COMPLETE — 2 new tools (semantic_search, backfill_embeddings), 47 total. pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data.
 
 ## Deployment (kensai.cloud)
 
@@ -106,4 +116,18 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 
 ## Key Tool: get_situational_awareness
 
-The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug` and returns a comprehensive briefing: entity details, related entities, services, networks, recent incidents, relevant runbooks, vendor contacts, pending handoffs, knowledge entries, and live monitoring status (if Uptime Kuma is configured and monitors are linked).
+The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug` and returns a comprehensive briefing: entity details, related entities, services, networks, recent incidents, relevant runbooks, vendor contacts, pending handoffs, knowledge entries, live monitoring status (if Uptime Kuma configured), and semantically related content (if embeddings configured).
+
+## Semantic Search
+
+- **Extension**: pgvector (HNSW indexes, cosine distance)
+- **Embeddings**: ollama nomic-embed-text (768 dims) via OpenAI-compatible API, nullable column
+- **Search**: Hybrid RRF (Reciprocal Rank Fusion) combines FTS rank + vector similarity
+- **Tables**: runbooks, knowledge, incidents, handoffs
+- **Auto-embed**: create/update tools generate embeddings best-effort (graceful on failure)
+- **Backfill**: `backfill_embeddings` tool for existing data without embeddings
+- **Graceful degradation**: If embedding API unreachable, all FTS works unchanged. semantic_search falls back to FTS-only.
+- **Context enrichment**: `get_situational_awareness` and `get_server_context` use vector search to find related runbooks/knowledge beyond explicit links
+- **pgvector crate**: `pgvector 0.4` with `sqlx` feature for `Vector` type
+- **Local**: ollama service on stealth (RTX 3070, GPU-accelerated)
+- **Remote**: ollama container on kensai.cloud (CPU-only, same Docker network as ops-brain)

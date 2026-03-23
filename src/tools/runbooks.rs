@@ -19,6 +19,8 @@ pub struct ListRunbooksParams {
 pub struct SearchRunbooksParams {
     /// Search query
     pub query: String,
+    /// Search mode: "fts" (default), "semantic" (vector only), or "hybrid" (FTS + vector RRF)
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

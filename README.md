@@ -10,9 +10,9 @@ ops-brain is an [MCP](https://modelcontextprotocol.io/) server that models IT in
 ```
 get_situational_awareness(server_slug: "hvfs0")
 ```
-**Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks, vendor contacts, pending handoffs, and knowledge entries.
+**Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
-## Tools (45)
+## Tools (47)
 
 ### Inventory (15)
 | Tool | Description |
@@ -31,22 +31,22 @@ get_situational_awareness(server_slug: "hvfs0")
 | Tool | Description |
 |------|-------------|
 | `get_runbook` / `list_runbooks` | Retrieve by slug or filter by category/service/server/tag |
-| `search_runbooks` | Full-text search across runbook content |
+| `search_runbooks` | Search runbook content (mode: fts/semantic/hybrid) |
 | `create_runbook` / `update_runbook` | CRUD with auto-versioning |
 
 ### Knowledge (3)
 | Tool | Description |
 |------|-------------|
 | `add_knowledge` | Store operational facts, gotchas, tips |
-| `search_knowledge` | Full-text search across knowledge base |
+| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid) |
 | `list_knowledge` | Filter by category or client |
 
 ### Context (3)
 | Tool | Description |
 |------|-------------|
-| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client (includes live monitoring) |
+| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client (includes live monitoring + semantically related content) |
 | `get_client_overview` | Full client briefing with all related data |
-| `get_server_context` | Everything about a specific server (includes live monitoring) |
+| `get_server_context` | Everything about a specific server (includes live monitoring + semantically related runbooks/knowledge) |
 
 ### Incidents (6)
 | Tool | Description |
@@ -55,7 +55,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `update_incident` | Update fields; setting status to `resolved` auto-calculates TTR |
 | `get_incident` | Full incident details with linked servers, services |
 | `list_incidents` | Filter by client, status, severity |
-| `search_incidents` | Full-text search across titles, symptoms, root causes, resolutions |
+| `search_incidents` | Search incidents (mode: fts/semantic/hybrid) |
 | `link_incident` | Link servers, services, runbooks (with usage tracking), and vendors |
 
 ### Sessions (3)
@@ -72,7 +72,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `accept_handoff` | Accept a pending handoff |
 | `complete_handoff` | Mark a handoff as done |
 | `list_handoffs` | Filter by status, source/target machine |
-| `search_handoffs` | Full-text search across handoff titles and bodies |
+| `search_handoffs` | Search handoffs (mode: fts/semantic/hybrid) |
 
 ### Monitoring (5)
 | Tool | Description |
@@ -82,6 +82,12 @@ get_situational_awareness(server_slug: "hvfs0")
 | `get_monitoring_summary` | Quick health check — ALL_CLEAR or DEGRADED with down monitor list |
 | `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service |
 | `unlink_monitor` | Remove a monitor-to-entity mapping |
+
+### Semantic Search (2)
+| Tool | Description |
+|------|-------------|
+| `semantic_search` | AI-powered cross-table search — finds conceptually related content even without exact keyword matches |
+| `backfill_embeddings` | Generate embeddings for existing records (batch, with progress reporting) |
 
 ## Tech Stack
 
@@ -93,16 +99,18 @@ get_situational_awareness(server_slug: "hvfs0")
 | SQL | sqlx (async, runtime queries) |
 | Async | tokio |
 | IDs | UUID v7 (time-ordered) |
-| Search | PostgreSQL tsvector + GIN indexes |
+| Search | PostgreSQL tsvector + GIN indexes (FTS), pgvector HNSW (semantic) |
+| Embeddings | ollama nomic-embed-text (768 dims) via OpenAI-compatible API |
 | Monitoring | Uptime Kuma /metrics (Prometheus format, on-demand scraping) |
-| HTTP Client | reqwest (rustls-tls) |
+| HTTP Client | reqwest (rustls-tls, json) |
 
 ## Setup
 
 ### Prerequisites
 
 - Rust 1.83+
-- PostgreSQL 16+ (18 recommended)
+- PostgreSQL 16+ (18 recommended) with [pgvector](https://github.com/pgvector/pgvector) extension
+- [ollama](https://ollama.com/) with `nomic-embed-text` model (for semantic search)
 - [just](https://github.com/casey/just) (optional, for dev commands)
 
 ### Local Development
@@ -122,6 +130,11 @@ just db-up
 # Option B: Use system PostgreSQL
 createuser ops_brain
 createdb ops_brain -O ops_brain
+# pgvector extension (requires superuser):
+psql -U postgres -d ops_brain -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# Pull embedding model
+ollama pull nomic-embed-text
 
 # Build and run (auto-migrates on startup)
 cargo run
@@ -178,6 +191,15 @@ docker compose -f docker-compose.prod.yml up -d --build
 # UPTIME_KUMA_USERNAME=admin               (if /metrics requires basic auth)
 # UPTIME_KUMA_PASSWORD=<password>          (if /metrics requires basic auth)
 
+# For semantic search, run an ollama container on the same Docker network:
+# docker run -d --name ollama --network traefik-net ollama/ollama
+# docker exec ollama ollama pull nomic-embed-text
+# Then set in docker-compose.prod.yml:
+# OPS_BRAIN_EMBEDDING_URL=http://ollama:11434/v1/embeddings
+
+# PostgreSQL must use pgvector-enabled image (pgvector/pgvector:pg18)
+# and the extension must be created: CREATE EXTENSION IF NOT EXISTS vector;
+
 # Seed the database
 cat seed/seed.sql | docker exec -i shared-postgres psql -U ops_brain -d ops_brain
 ```
@@ -206,7 +228,7 @@ Monitor ──── Server (optional)
 - [x] **Phase 2**: Remote deployment to cloud server (Streamable HTTP + bearer auth)
 - [x] **Phase 3**: Incident lifecycle + cross-machine coordination (sessions, handoffs) — 40 tools
 - [x] **Phase 4**: Monitoring integration — live Uptime Kuma /metrics scraping, monitor-to-entity mapping — 45 tools
-- [ ] **Phase 5**: Semantic search with pgvector embeddings
+- [x] **Phase 5**: Semantic search — pgvector + ollama embeddings, hybrid RRF ranking, context enrichment — 47 tools
 
 ## License
 

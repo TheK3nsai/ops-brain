@@ -5,6 +5,7 @@ mod inventory;
 mod knowledge;
 mod monitoring;
 mod runbooks;
+mod search;
 
 use rmcp::{
     handler::server::{tool::ToolRouter, wrapper::Parameters},
@@ -14,6 +15,7 @@ use rmcp::{
 use serde::Serialize;
 use sqlx::PgPool;
 
+use crate::embeddings::EmbeddingClient;
 use crate::metrics::UptimeKumaConfig;
 use crate::models::handoff::Handoff;
 use crate::models::incident::Incident;
@@ -22,6 +24,7 @@ use crate::models::incident::Incident;
 pub struct OpsBrain {
     pool: PgPool,
     kuma_config: Option<UptimeKumaConfig>,
+    embedding_client: Option<EmbeddingClient>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -43,11 +46,48 @@ fn not_found(entity: &str, key: &str) -> CallToolResult {
 
 #[tool_router]
 impl OpsBrain {
-    pub fn new(pool: PgPool, kuma_config: Option<UptimeKumaConfig>) -> Self {
+    pub fn new(pool: PgPool, kuma_config: Option<UptimeKumaConfig>, embedding_client: Option<EmbeddingClient>) -> Self {
         Self {
             pool,
             kuma_config,
+            embedding_client,
             tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Best-effort embed and store: logs warning on failure, never blocks the caller.
+    async fn embed_and_store(&self, table: &str, id: uuid::Uuid, text: &str) {
+        let Some(ref client) = self.embedding_client else {
+            return;
+        };
+        match client.embed_text(text).await {
+            Ok(embedding) => {
+                let result = match table {
+                    "runbooks" => crate::repo::embedding_repo::store_runbook_embedding(&self.pool, id, &embedding).await,
+                    "knowledge" => crate::repo::embedding_repo::store_knowledge_embedding(&self.pool, id, &embedding).await,
+                    "incidents" => crate::repo::embedding_repo::store_incident_embedding(&self.pool, id, &embedding).await,
+                    "handoffs" => crate::repo::embedding_repo::store_handoff_embedding(&self.pool, id, &embedding).await,
+                    _ => return,
+                };
+                if let Err(e) = result {
+                    tracing::warn!("Failed to store embedding for {table}/{id}: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to generate embedding for {table}/{id}: {e}");
+            }
+        }
+    }
+
+    /// Helper to get query embedding, returning None if embedding client unavailable.
+    async fn get_query_embedding(&self, text: &str) -> Option<Vec<f32>> {
+        let client = self.embedding_client.as_ref()?;
+        match client.embed_text(text).await {
+            Ok(emb) => Some(emb),
+            Err(e) => {
+                tracing::warn!("Failed to embed query: {e}");
+                None
+            }
         }
     }
 
@@ -594,14 +634,29 @@ impl OpsBrain {
 
     #[tool(
         name = "search_runbooks",
-        description = "Full-text search across runbook titles and content"
+        description = "Search across runbook titles and content. Supports mode: 'fts' (default, keyword match), \
+        'semantic' (AI vector similarity), or 'hybrid' (combined FTS + vector via RRF ranking)"
     )]
     async fn search_runbooks(
         &self,
         params: Parameters<runbooks::SearchRunbooksParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        match crate::repo::search_repo::search_runbooks(&self.pool, &p.query).await {
+        let mode = p.mode.as_deref().unwrap_or("fts");
+        let result = match mode {
+            "semantic" => {
+                let Some(emb) = self.get_query_embedding(&p.query).await else {
+                    return Ok(error_result("Semantic search unavailable (OPENAI_API_KEY not set)"));
+                };
+                crate::repo::embedding_repo::vector_search_runbooks(&self.pool, &emb, 20).await
+            }
+            "hybrid" => {
+                let emb = self.get_query_embedding(&p.query).await;
+                crate::repo::embedding_repo::hybrid_search_runbooks(&self.pool, &p.query, emb.as_deref(), 20).await
+            }
+            _ => crate::repo::search_repo::search_runbooks(&self.pool, &p.query).await,
+        };
+        match result {
             Ok(runbooks) => Ok(json_result(&runbooks)),
             Err(e) => Ok(error_result(&format!("Search error: {e}"))),
         }
@@ -632,7 +687,11 @@ impl OpsBrain {
         )
         .await
         {
-            Ok(runbook) => Ok(json_result(&runbook)),
+            Ok(runbook) => {
+                let text = crate::embeddings::prepare_runbook_text(&runbook);
+                self.embed_and_store("runbooks", runbook.id, &text).await;
+                Ok(json_result(&runbook))
+            }
             Err(e) => Ok(error_result(&format!("Database error: {e}"))),
         }
     }
@@ -670,7 +729,11 @@ impl OpsBrain {
         )
         .await
         {
-            Ok(updated) => Ok(json_result(&updated)),
+            Ok(updated) => {
+                let text = crate::embeddings::prepare_runbook_text(&updated);
+                self.embed_and_store("runbooks", updated.id, &text).await;
+                Ok(json_result(&updated))
+            }
             Err(e) => Ok(error_result(&format!("Database error: {e}"))),
         }
     }
@@ -710,21 +773,40 @@ impl OpsBrain {
         )
         .await
         {
-            Ok(entry) => Ok(json_result(&entry)),
+            Ok(entry) => {
+                let text = crate::embeddings::prepare_knowledge_text(&entry);
+                self.embed_and_store("knowledge", entry.id, &text).await;
+                Ok(json_result(&entry))
+            }
             Err(e) => Ok(error_result(&format!("Database error: {e}"))),
         }
     }
 
     #[tool(
         name = "search_knowledge",
-        description = "Full-text search across knowledge base entries"
+        description = "Search across knowledge base entries. Supports mode: 'fts' (default, keyword match), \
+        'semantic' (AI vector similarity), or 'hybrid' (combined FTS + vector via RRF ranking)"
     )]
     async fn search_knowledge(
         &self,
         params: Parameters<knowledge::SearchKnowledgeParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        match crate::repo::knowledge_repo::search_knowledge(&self.pool, &p.query).await {
+        let mode = p.mode.as_deref().unwrap_or("fts");
+        let result = match mode {
+            "semantic" => {
+                let Some(emb) = self.get_query_embedding(&p.query).await else {
+                    return Ok(error_result("Semantic search unavailable (OPENAI_API_KEY not set)"));
+                };
+                crate::repo::embedding_repo::vector_search_knowledge(&self.pool, &emb, 20).await
+            }
+            "hybrid" => {
+                let emb = self.get_query_embedding(&p.query).await;
+                crate::repo::embedding_repo::hybrid_search_knowledge(&self.pool, &p.query, emb.as_deref(), 20).await
+            }
+            _ => crate::repo::knowledge_repo::search_knowledge(&self.pool, &p.query).await,
+        };
+        match result {
             Ok(entries) => Ok(json_result(&entries)),
             Err(e) => Ok(error_result(&format!("Search error: {e}"))),
         }
@@ -1057,6 +1139,56 @@ impl OpsBrain {
             }
         }
 
+        // Semantic enrichment: find related runbooks/knowledge beyond explicit links
+        if self.embedding_client.is_some() {
+            // Build context string from resolved entities
+            let mut context_parts = Vec::new();
+            if let Some(ref srv) = awareness.server {
+                if let Some(hostname) = srv.get("hostname").and_then(|v| v.as_str()) {
+                    context_parts.push(hostname.to_string());
+                }
+                if let Some(os) = srv.get("os").and_then(|v| v.as_str()) {
+                    context_parts.push(os.to_string());
+                }
+            }
+            for svc in &awareness.services {
+                if let Some(name) = svc.get("name").and_then(|v| v.as_str()) {
+                    context_parts.push(name.to_string());
+                }
+            }
+            if let Some(ref client) = awareness.client {
+                if let Some(name) = client.get("name").and_then(|v| v.as_str()) {
+                    context_parts.push(name.to_string());
+                }
+            }
+
+            if !context_parts.is_empty() {
+                let context_query = context_parts.join(" ");
+                if let Some(emb) = self.get_query_embedding(&context_query).await {
+                    // Find semantically related runbooks
+                    if let Ok(related_runbooks) = crate::repo::embedding_repo::vector_search_runbooks(&self.pool, &emb, 5).await {
+                        for rb in &related_runbooks {
+                            if let Ok(val) = serde_json::to_value(rb) {
+                                if !awareness.relevant_runbooks.iter().any(|existing| existing.get("id") == val.get("id")) {
+                                    awareness.relevant_runbooks.push(val);
+                                }
+                            }
+                        }
+                    }
+                    // Find semantically related knowledge
+                    if let Ok(related_knowledge) = crate::repo::embedding_repo::vector_search_knowledge(&self.pool, &emb, 5).await {
+                        for k in &related_knowledge {
+                            if let Ok(val) = serde_json::to_value(k) {
+                                if !awareness.knowledge.iter().any(|existing| existing.get("id") == val.get("id")) {
+                                    awareness.knowledge.push(val);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Fetch live monitoring data for linked servers/services
         if let Some(ref kuma_config) = self.kuma_config {
             if let Ok(metrics) = crate::metrics::fetch_metrics(kuma_config).await {
@@ -1336,13 +1468,52 @@ impl OpsBrain {
         }
 
         // Get knowledge entries for this client
-        let knowledge = if let Some(cid) = client_id {
+        let mut all_knowledge: Vec<serde_json::Value> = if let Some(cid) = client_id {
             crate::repo::knowledge_repo::list_knowledge(&self.pool, None, Some(cid))
                 .await
                 .unwrap_or_default()
+                .iter()
+                .filter_map(|k| serde_json::to_value(k).ok())
+                .collect()
         } else {
             Vec::new()
         };
+        let mut seen_knowledge_ids: std::collections::HashSet<uuid::Uuid> = all_knowledge
+            .iter()
+            .filter_map(|v| v.get("id").and_then(|id| id.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()))
+            .collect();
+
+        // Semantic enrichment: find related runbooks/knowledge beyond explicit links
+        if self.embedding_client.is_some() {
+            let mut context_parts = vec![server.hostname.clone()];
+            if let Some(ref os) = server.os {
+                context_parts.push(os.clone());
+            }
+            for svc in &services {
+                context_parts.push(svc.name.clone());
+            }
+            let context_query = context_parts.join(" ");
+            if let Some(emb) = self.get_query_embedding(&context_query).await {
+                if let Ok(related_runbooks) = crate::repo::embedding_repo::vector_search_runbooks(&self.pool, &emb, 5).await {
+                    for rb in &related_runbooks {
+                        if seen_runbook_ids.insert(rb.id) {
+                            if let Ok(val) = serde_json::to_value(rb) {
+                                all_runbooks.push(val);
+                            }
+                        }
+                    }
+                }
+                if let Ok(related_knowledge) = crate::repo::embedding_repo::vector_search_knowledge(&self.pool, &emb, 5).await {
+                    for k in &related_knowledge {
+                        if seen_knowledge_ids.insert(k.id) {
+                            if let Ok(val) = serde_json::to_value(k) {
+                                all_knowledge.push(val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Fetch live monitoring data for this server and its services
         let mut monitoring: Vec<serde_json::Value> = Vec::new();
@@ -1389,7 +1560,7 @@ impl OpsBrain {
             "vendors": vendors,
             "recent_incidents": all_incidents,
             "runbooks": all_runbooks,
-            "knowledge": knowledge,
+            "knowledge": all_knowledge,
             "monitoring": monitoring,
         });
 
@@ -1474,6 +1645,9 @@ impl OpsBrain {
             }
         }
 
+        let text = crate::embeddings::prepare_incident_text(&incident);
+        self.embed_and_store("incidents", incident.id, &text).await;
+
         Ok(json_result(&incident))
     }
 
@@ -1523,7 +1697,11 @@ impl OpsBrain {
         )
         .await
         {
-            Ok(incident) => Ok(json_result(&incident)),
+            Ok(incident) => {
+                let text = crate::embeddings::prepare_incident_text(&incident);
+                self.embed_and_store("incidents", incident.id, &text).await;
+                Ok(json_result(&incident))
+            }
             Err(e) => Ok(error_result(&format!("Database error: {e}"))),
         }
     }
@@ -1614,14 +1792,30 @@ impl OpsBrain {
 
     #[tool(
         name = "search_incidents",
-        description = "Full-text search across incident titles, symptoms, root causes, resolutions, and notes"
+        description = "Search across incident titles, symptoms, root causes, resolutions, and notes. \
+        Supports mode: 'fts' (default, keyword match), 'semantic' (AI vector similarity), \
+        or 'hybrid' (combined FTS + vector via RRF ranking)"
     )]
     async fn search_incidents(
         &self,
         params: Parameters<incidents::SearchIncidentsParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        match crate::repo::incident_repo::search_incidents(&self.pool, &p.query).await {
+        let mode = p.mode.as_deref().unwrap_or("fts");
+        let result = match mode {
+            "semantic" => {
+                let Some(emb) = self.get_query_embedding(&p.query).await else {
+                    return Ok(error_result("Semantic search unavailable (OPENAI_API_KEY not set)"));
+                };
+                crate::repo::embedding_repo::vector_search_incidents(&self.pool, &emb, 20).await
+            }
+            "hybrid" => {
+                let emb = self.get_query_embedding(&p.query).await;
+                crate::repo::embedding_repo::hybrid_search_incidents(&self.pool, &p.query, emb.as_deref(), 20).await
+            }
+            _ => crate::repo::incident_repo::search_incidents(&self.pool, &p.query).await,
+        };
+        match result {
             Ok(incidents) => Ok(json_result(&incidents)),
             Err(e) => Ok(error_result(&format!("Search error: {e}"))),
         }
@@ -1872,7 +2066,11 @@ impl OpsBrain {
         )
         .await
         {
-            Ok(handoff) => Ok(json_result(&handoff)),
+            Ok(handoff) => {
+                let text = crate::embeddings::prepare_handoff_text(&handoff);
+                self.embed_and_store("handoffs", handoff.id, &text).await;
+                Ok(json_result(&handoff))
+            }
             Err(e) => Ok(error_result(&format!("Database error: {e}"))),
         }
     }
@@ -1969,17 +2167,225 @@ impl OpsBrain {
 
     #[tool(
         name = "search_handoffs",
-        description = "Full-text search across handoff titles and bodies"
+        description = "Search across handoff titles and bodies. Supports mode: 'fts' (default, keyword match), \
+        'semantic' (AI vector similarity), or 'hybrid' (combined FTS + vector via RRF ranking)"
     )]
     async fn search_handoffs(
         &self,
         params: Parameters<coordination::SearchHandoffsParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        match crate::repo::handoff_repo::search_handoffs(&self.pool, &p.query).await {
+        let mode = p.mode.as_deref().unwrap_or("fts");
+        let result = match mode {
+            "semantic" => {
+                let Some(emb) = self.get_query_embedding(&p.query).await else {
+                    return Ok(error_result("Semantic search unavailable (OPENAI_API_KEY not set)"));
+                };
+                crate::repo::embedding_repo::vector_search_handoffs(&self.pool, &emb, 20).await
+            }
+            "hybrid" => {
+                let emb = self.get_query_embedding(&p.query).await;
+                crate::repo::embedding_repo::hybrid_search_handoffs(&self.pool, &p.query, emb.as_deref(), 20).await
+            }
+            _ => crate::repo::handoff_repo::search_handoffs(&self.pool, &p.query).await,
+        };
+        match result {
             Ok(handoffs) => Ok(json_result(&handoffs)),
             Err(e) => Ok(error_result(&format!("Search error: {e}"))),
         }
+    }
+
+    // ===== SEMANTIC SEARCH TOOLS =====
+
+    #[tool(
+        name = "semantic_search",
+        description = "AI-powered semantic search across runbooks, knowledge, incidents, and handoffs. \
+        Finds conceptually related content even when exact keywords don't match. \
+        Uses hybrid ranking (FTS + vector similarity) for best results. \
+        Falls back to full-text search if embeddings are unavailable."
+    )]
+    async fn semantic_search(
+        &self,
+        params: Parameters<search::SemanticSearchParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let limit = p.limit.unwrap_or(5);
+        let tables = p.tables.unwrap_or_else(|| {
+            vec![
+                "runbooks".to_string(),
+                "knowledge".to_string(),
+                "incidents".to_string(),
+                "handoffs".to_string(),
+            ]
+        });
+
+        let query_embedding = self.get_query_embedding(&p.query).await;
+        let emb_ref = query_embedding.as_deref();
+
+        let mut results = serde_json::Map::new();
+
+        // Run searches for requested tables
+        if tables.iter().any(|t| t == "runbooks") {
+            match crate::repo::embedding_repo::hybrid_search_runbooks(&self.pool, &p.query, emb_ref, limit).await {
+                Ok(items) => { results.insert("runbooks".to_string(), serde_json::to_value(&items).unwrap_or_default()); }
+                Err(e) => { results.insert("runbooks_error".to_string(), serde_json::Value::String(e.to_string())); }
+            }
+        }
+        if tables.iter().any(|t| t == "knowledge") {
+            match crate::repo::embedding_repo::hybrid_search_knowledge(&self.pool, &p.query, emb_ref, limit).await {
+                Ok(items) => { results.insert("knowledge".to_string(), serde_json::to_value(&items).unwrap_or_default()); }
+                Err(e) => { results.insert("knowledge_error".to_string(), serde_json::Value::String(e.to_string())); }
+            }
+        }
+        if tables.iter().any(|t| t == "incidents") {
+            match crate::repo::embedding_repo::hybrid_search_incidents(&self.pool, &p.query, emb_ref, limit).await {
+                Ok(items) => { results.insert("incidents".to_string(), serde_json::to_value(&items).unwrap_or_default()); }
+                Err(e) => { results.insert("incidents_error".to_string(), serde_json::Value::String(e.to_string())); }
+            }
+        }
+        if tables.iter().any(|t| t == "handoffs") {
+            match crate::repo::embedding_repo::hybrid_search_handoffs(&self.pool, &p.query, emb_ref, limit).await {
+                Ok(items) => { results.insert("handoffs".to_string(), serde_json::to_value(&items).unwrap_or_default()); }
+                Err(e) => { results.insert("handoffs_error".to_string(), serde_json::Value::String(e.to_string())); }
+            }
+        }
+
+        if query_embedding.is_none() && self.embedding_client.is_some() {
+            results.insert("_note".to_string(), serde_json::Value::String(
+                "Embedding API call failed — results are FTS-only".to_string(),
+            ));
+        } else if self.embedding_client.is_none() {
+            results.insert("_note".to_string(), serde_json::Value::String(
+                "OPENAI_API_KEY not set — results are FTS-only".to_string(),
+            ));
+        }
+
+        Ok(json_result(&serde_json::Value::Object(results)))
+    }
+
+    #[tool(
+        name = "backfill_embeddings",
+        description = "Generate embeddings for records that don't have them yet. \
+        Use after initial setup or if records were created without an API key. \
+        Processes in batches to avoid API rate limits."
+    )]
+    async fn backfill_embeddings(
+        &self,
+        params: Parameters<search::BackfillEmbeddingsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let Some(ref client) = self.embedding_client else {
+            return Ok(error_result("OPENAI_API_KEY not set — cannot generate embeddings"));
+        };
+
+        let p = params.0;
+        let batch_size = p.batch_size.unwrap_or(10);
+        let tables: Vec<&str> = match &p.table {
+            Some(t) => vec![t.as_str()],
+            None => vec!["runbooks", "knowledge", "incidents", "handoffs"],
+        };
+
+        let mut summary = serde_json::Map::new();
+
+        for table in &tables {
+            let mut processed = 0i64;
+            let mut failed = 0i64;
+
+            match *table {
+                "runbooks" => {
+                    if let Ok(rows) = crate::repo::embedding_repo::get_runbooks_without_embeddings(&self.pool, batch_size).await {
+                        let texts: Vec<String> = rows.iter().map(crate::embeddings::prepare_runbook_text).collect();
+                        match client.embed_texts(&texts).await {
+                            Ok(embeddings) => {
+                                for (row, emb) in rows.iter().zip(embeddings.iter()) {
+                                    if crate::repo::embedding_repo::store_runbook_embedding(&self.pool, row.id, emb).await.is_ok() {
+                                        processed += 1;
+                                    } else {
+                                        failed += 1;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                summary.insert(format!("{table}_error"), serde_json::Value::String(e.to_string()));
+                            }
+                        }
+                    }
+                }
+                "knowledge" => {
+                    if let Ok(rows) = crate::repo::embedding_repo::get_knowledge_without_embeddings(&self.pool, batch_size).await {
+                        let texts: Vec<String> = rows.iter().map(crate::embeddings::prepare_knowledge_text).collect();
+                        match client.embed_texts(&texts).await {
+                            Ok(embeddings) => {
+                                for (row, emb) in rows.iter().zip(embeddings.iter()) {
+                                    if crate::repo::embedding_repo::store_knowledge_embedding(&self.pool, row.id, emb).await.is_ok() {
+                                        processed += 1;
+                                    } else {
+                                        failed += 1;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                summary.insert(format!("{table}_error"), serde_json::Value::String(e.to_string()));
+                            }
+                        }
+                    }
+                }
+                "incidents" => {
+                    if let Ok(rows) = crate::repo::embedding_repo::get_incidents_without_embeddings(&self.pool, batch_size).await {
+                        let texts: Vec<String> = rows.iter().map(crate::embeddings::prepare_incident_text).collect();
+                        match client.embed_texts(&texts).await {
+                            Ok(embeddings) => {
+                                for (row, emb) in rows.iter().zip(embeddings.iter()) {
+                                    if crate::repo::embedding_repo::store_incident_embedding(&self.pool, row.id, emb).await.is_ok() {
+                                        processed += 1;
+                                    } else {
+                                        failed += 1;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                summary.insert(format!("{table}_error"), serde_json::Value::String(e.to_string()));
+                            }
+                        }
+                    }
+                }
+                "handoffs" => {
+                    if let Ok(rows) = crate::repo::embedding_repo::get_handoffs_without_embeddings(&self.pool, batch_size).await {
+                        let texts: Vec<String> = rows.iter().map(crate::embeddings::prepare_handoff_text).collect();
+                        match client.embed_texts(&texts).await {
+                            Ok(embeddings) => {
+                                for (row, emb) in rows.iter().zip(embeddings.iter()) {
+                                    if crate::repo::embedding_repo::store_handoff_embedding(&self.pool, row.id, emb).await.is_ok() {
+                                        processed += 1;
+                                    } else {
+                                        failed += 1;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                summary.insert(format!("{table}_error"), serde_json::Value::String(e.to_string()));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    summary.insert(format!("{table}_error"), serde_json::Value::String("Unknown table".to_string()));
+                    continue;
+                }
+            }
+
+            summary.insert(format!("{table}_processed"), serde_json::Value::Number(processed.into()));
+            summary.insert(format!("{table}_failed"), serde_json::Value::Number(failed.into()));
+        }
+
+        // Get remaining counts
+        if let Ok(counts) = crate::repo::embedding_repo::count_missing_embeddings(&self.pool).await {
+            summary.insert("remaining_runbooks".to_string(), serde_json::Value::Number(counts.runbooks.into()));
+            summary.insert("remaining_knowledge".to_string(), serde_json::Value::Number(counts.knowledge.into()));
+            summary.insert("remaining_incidents".to_string(), serde_json::Value::Number(counts.incidents.into()));
+            summary.insert("remaining_handoffs".to_string(), serde_json::Value::Number(counts.handoffs.into()));
+        }
+
+        Ok(json_result(&serde_json::Value::Object(summary)))
     }
 
     // ===== MONITORING TOOLS =====
@@ -2218,7 +2624,10 @@ impl ServerHandler for OpsBrain {
                 "Operational intelligence server for IT infrastructure management. \
                  Use get_situational_awareness for comprehensive context about any \
                  server, service, or client. Use search_inventory for full-text search. \
-                 Use get_monitoring_summary for live infrastructure health from Uptime Kuma.",
+                 Use semantic_search for AI-powered conceptual search across runbooks, \
+                 knowledge, incidents, and handoffs (finds related content even without \
+                 exact keyword matches). Use get_monitoring_summary for live infrastructure \
+                 health from Uptime Kuma.",
             )
     }
 }

@@ -13,6 +13,8 @@ pub struct AddKnowledgeParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchKnowledgeParams {
     pub query: String,
+    /// Search mode: "fts" (default), "semantic" (vector only), or "hybrid" (FTS + vector RRF)
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
