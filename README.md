@@ -224,11 +224,19 @@ Monitor ──── Server (optional)
 
 ## Roadmap
 
+### Completed
+
 - [x] **Phase 1**: Local MCP server — inventory, runbooks, knowledge, context tools (26 tools)
 - [x] **Phase 2**: Remote deployment to cloud server (Streamable HTTP + bearer auth)
 - [x] **Phase 3**: Incident lifecycle + cross-machine coordination (sessions, handoffs) — 40 tools
 - [x] **Phase 4**: Monitoring integration — live Uptime Kuma /metrics scraping, monitor-to-entity mapping — 45 tools
 - [x] **Phase 5**: Semantic search — pgvector + ollama embeddings, hybrid RRF ranking, context enrichment — 47 tools
+
+### Planned
+
+- [ ] **Phase 6**: Proactive monitoring — scheduled watchdog that detects Uptime Kuma status changes, auto-creates incidents with linked servers/services/runbooks, and sends notifications
+- [ ] **Phase 7**: Zammad integration — link support tickets to ops-brain entities (servers, services, incidents), enrich tickets with situational awareness
+- [ ] **Phase 8**: Scheduled briefings — daily/weekly operational summaries via Claude Code scheduled triggers or email
 
 ## License
 

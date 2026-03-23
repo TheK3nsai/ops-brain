@@ -86,8 +86,11 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 1** (local dev): COMPLETE — 26 tools, stdio transport, verified working
 - **Phase 2** (remote deploy): COMPLETE — HTTP transport + auth, deployed to kensai.cloud
 - **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
-- **Phase 4** (monitoring integration): COMPLETE & DEPLOYED — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data. All 32 monitors linked.
-- **Phase 5** (semantic search): COMPLETE — 2 new tools (semantic_search, backfill_embeddings), 47 total. pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data.
+- **Phase 4** (monitoring integration): COMPLETE & DEPLOYED — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data. All 32 monitors linked. Uptime Kuma admin creds configured in production .env.
+- **Phase 5** (semantic search): COMPLETE & DEPLOYED — 2 new tools (semantic_search, backfill_embeddings), 47 total. pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data. All seed data backfilled (local + remote).
+- **Phase 6** (proactive monitoring): PLANNED — Scheduled watchdog that polls Uptime Kuma, detects status changes (UP→DOWN transitions), auto-creates incidents with linked servers/services, surfaces relevant runbooks, and sends notifications. Turns ops-brain from reactive query tool into an active monitoring system.
+- **Phase 7** (Zammad integration): PLANNED — Connect to Zammad ticketing on kensai.cloud. Link tickets to ops-brain entities, enrich ticket context with situational awareness.
+- **Phase 8** (scheduled briefings): PLANNED — Daily/weekly operational summaries. Open incidents, monitoring health, pending handoffs, recent changes. Delivered via Claude Code scheduled triggers or email.
 
 ## Deployment (kensai.cloud)
 
