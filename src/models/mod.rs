@@ -9,3 +9,4 @@ pub mod incident;
 pub mod session;
 pub mod handoff;
 pub mod knowledge;
+pub mod monitor;

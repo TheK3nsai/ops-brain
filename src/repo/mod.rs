@@ -10,3 +10,4 @@ pub mod search_repo;
 pub mod incident_repo;
 pub mod session_repo;
 pub mod handoff_repo;
+pub mod monitor_repo;

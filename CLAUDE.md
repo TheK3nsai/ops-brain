@@ -21,14 +21,16 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct with ALL 40 #[tool] methods in one impl block
+    mod.rs           # OpsBrain struct with ALL 45 #[tool] methods in one impl block
     inventory.rs     # Parameter structs for inventory tools
     runbooks.rs      # Parameter structs for runbook tools
     knowledge.rs     # Parameter structs for knowledge tools
     context.rs       # Parameter structs + response structs for context tools
     incidents.rs     # Parameter structs for incident tools
     coordination.rs  # Parameter structs for session + handoff tools
-migrations/        # 14 sqlx migration files (auto-run on startup)
+    monitoring.rs    # Parameter structs for monitoring tools
+  metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
+migrations/        # 15 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -64,6 +66,9 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
+| `UPTIME_KUMA_URL` | (none) | Uptime Kuma base URL for /metrics scraping |
+| `UPTIME_KUMA_USERNAME` | (none) | Basic auth username for /metrics (if needed) |
+| `UPTIME_KUMA_PASSWORD` | (none) | Basic auth password for /metrics (if needed) |
 | `RUST_LOG` | `ops_brain=info` | Tracing filter |
 
 ## Phase Status
@@ -71,7 +76,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 1** (local dev): COMPLETE — 26 tools, stdio transport, verified working
 - **Phase 2** (remote deploy): COMPLETE — HTTP transport + auth, deployed to kensai.cloud
 - **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
-- **Phase 4** (monitoring integration): UNBLOCKED — Uptime Kuma v2.2.1 live at uptime.kensai.cloud (32 monitors, push heartbeats active)
+- **Phase 4** (monitoring integration): COMPLETE — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data.
 - **Phase 5** (semantic search): Future — pgvector embeddings
 
 ## Deployment (kensai.cloud)
@@ -94,8 +99,10 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
   - Two-phase setup: `POST /setup-database` first, then socket.io for everything else
   - `add` event (not `addMonitor`), requires `conditions` field (can be `[]`) and `notificationIDList` (can be `[]`)
   - Push tokens are client-generated, not auto-assigned
-- **Phase 4 integration paths**: Uptime Kuma webhooks → ops-brain endpoint, scrape `/metrics`, or read SQLite directly
+- **Integration**: ops-brain scrapes `/metrics` on demand (no polling). Monitor mappings stored in `monitors` table.
+- **Tools**: `list_monitors`, `get_monitor_status`, `get_monitoring_summary`, `link_monitor`, `unlink_monitor`
+- **Context enrichment**: `get_situational_awareness` and `get_server_context` include live monitoring for linked monitors
 
 ## Key Tool: get_situational_awareness
 
-The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug` and returns a comprehensive briefing: entity details, related entities, services, networks, recent incidents, relevant runbooks, vendor contacts, pending handoffs, and knowledge entries.
+The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug` and returns a comprehensive briefing: entity details, related entities, services, networks, recent incidents, relevant runbooks, vendor contacts, pending handoffs, knowledge entries, and live monitoring status (if Uptime Kuma is configured and monitors are linked).

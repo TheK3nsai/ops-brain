@@ -3,6 +3,7 @@ mod coordination;
 mod incidents;
 mod inventory;
 mod knowledge;
+mod monitoring;
 mod runbooks;
 
 use rmcp::{
@@ -13,12 +14,14 @@ use rmcp::{
 use serde::Serialize;
 use sqlx::PgPool;
 
+use crate::metrics::UptimeKumaConfig;
 use crate::models::handoff::Handoff;
 use crate::models::incident::Incident;
 
 #[derive(Clone)]
 pub struct OpsBrain {
     pool: PgPool,
+    kuma_config: Option<UptimeKumaConfig>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -40,9 +43,10 @@ fn not_found(entity: &str, key: &str) -> CallToolResult {
 
 #[tool_router]
 impl OpsBrain {
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool, kuma_config: Option<UptimeKumaConfig>) -> Self {
         Self {
             pool,
+            kuma_config,
             tool_router: Self::tool_router(),
         }
     }
@@ -792,6 +796,7 @@ impl OpsBrain {
             relevant_runbooks: Vec::new(),
             pending_handoffs: Vec::new(),
             knowledge: Vec::new(),
+            monitoring: Vec::new(),
         };
 
         let mut client_id: Option<uuid::Uuid> = None;
@@ -1052,6 +1057,45 @@ impl OpsBrain {
             }
         }
 
+        // Fetch live monitoring data for linked servers/services
+        if let Some(ref kuma_config) = self.kuma_config {
+            if let Ok(metrics) = crate::metrics::fetch_metrics(kuma_config).await {
+                // Get monitor mappings for this server and its services
+                let mut monitor_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+
+                if let Some(srv_id) = server_id {
+                    if let Ok(monitors) =
+                        crate::repo::monitor_repo::get_monitors_for_server(&self.pool, srv_id).await
+                    {
+                        for m in &monitors {
+                            monitor_names.insert(m.monitor_name.clone());
+                        }
+                    }
+                }
+
+                if let Some(svc_id) = service_id {
+                    if let Ok(monitors) =
+                        crate::repo::monitor_repo::get_monitors_for_service(&self.pool, svc_id)
+                            .await
+                    {
+                        for m in &monitors {
+                            monitor_names.insert(m.monitor_name.clone());
+                        }
+                    }
+                }
+
+                // Match metrics to mapped monitors
+                for status in &metrics.monitors {
+                    if monitor_names.contains(&status.name) {
+                        if let Ok(val) = serde_json::to_value(status) {
+                            awareness.monitoring.push(val);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(json_result(&awareness))
     }
 
@@ -1300,6 +1344,42 @@ impl OpsBrain {
             Vec::new()
         };
 
+        // Fetch live monitoring data for this server and its services
+        let mut monitoring: Vec<serde_json::Value> = Vec::new();
+        if let Some(ref kuma_config) = self.kuma_config {
+            if let Ok(metrics) = crate::metrics::fetch_metrics(kuma_config).await {
+                let mut monitor_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+
+                if let Ok(monitors) =
+                    crate::repo::monitor_repo::get_monitors_for_server(&self.pool, server.id).await
+                {
+                    for m in &monitors {
+                        monitor_names.insert(m.monitor_name.clone());
+                    }
+                }
+
+                for svc in &services {
+                    if let Ok(monitors) =
+                        crate::repo::monitor_repo::get_monitors_for_service(&self.pool, svc.id)
+                            .await
+                    {
+                        for m in &monitors {
+                            monitor_names.insert(m.monitor_name.clone());
+                        }
+                    }
+                }
+
+                for status in &metrics.monitors {
+                    if monitor_names.contains(&status.name) {
+                        if let Ok(val) = serde_json::to_value(status) {
+                            monitoring.push(val);
+                        }
+                    }
+                }
+            }
+        }
+
         let result = serde_json::json!({
             "server": server,
             "services": services,
@@ -1310,6 +1390,7 @@ impl OpsBrain {
             "recent_incidents": all_incidents,
             "runbooks": all_runbooks,
             "knowledge": knowledge,
+            "monitoring": monitoring,
         });
 
         Ok(json_result(&result))
@@ -1900,6 +1981,229 @@ impl OpsBrain {
             Err(e) => Ok(error_result(&format!("Search error: {e}"))),
         }
     }
+
+    // ===== MONITORING TOOLS =====
+
+    #[tool(
+        name = "list_monitors",
+        description = "List all Uptime Kuma monitors with live status. Fetches real-time data from the /metrics endpoint. \
+        Optionally filter by status: up, down, pending, maintenance. Shows linked server/service mappings."
+    )]
+    async fn list_monitors(
+        &self,
+        params: Parameters<monitoring::ListMonitorsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let kuma_config = match &self.kuma_config {
+            Some(c) => c,
+            None => return Ok(error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)")),
+        };
+
+        let summary = match crate::metrics::fetch_metrics(kuma_config).await {
+            Ok(s) => s,
+            Err(e) => return Ok(error_result(&format!("Failed to fetch metrics: {e}"))),
+        };
+
+        // Get all monitor mappings from DB
+        let mappings = crate::repo::monitor_repo::list_monitors(&self.pool)
+            .await
+            .unwrap_or_default();
+
+        let mut results: Vec<serde_json::Value> = Vec::new();
+        for monitor in &summary.monitors {
+            // Apply status filter
+            if let Some(ref status_filter) = p.status {
+                if monitor.status_text != *status_filter {
+                    continue;
+                }
+            }
+
+            let mapping = mappings.iter().find(|m| m.monitor_name == monitor.name);
+            let mut val = serde_json::to_value(monitor).unwrap_or_default();
+            if let Some(mapping) = mapping {
+                val["linked_server_id"] = serde_json::to_value(mapping.server_id).unwrap_or_default();
+                val["linked_service_id"] = serde_json::to_value(mapping.service_id).unwrap_or_default();
+                val["mapping_notes"] = serde_json::to_value(&mapping.notes).unwrap_or_default();
+            }
+            results.push(val);
+        }
+
+        let output = serde_json::json!({
+            "total": summary.total,
+            "up": summary.up,
+            "down": summary.down,
+            "pending": summary.pending,
+            "maintenance": summary.maintenance,
+            "filtered_count": results.len(),
+            "monitors": results,
+        });
+        Ok(json_result(&output))
+    }
+
+    #[tool(
+        name = "get_monitor_status",
+        description = "Get detailed live status for a specific Uptime Kuma monitor by name. \
+        Shows status, response time, SSL cert info, and any linked server/service."
+    )]
+    async fn get_monitor_status(
+        &self,
+        params: Parameters<monitoring::GetMonitorStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let kuma_config = match &self.kuma_config {
+            Some(c) => c,
+            None => return Ok(error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)")),
+        };
+
+        let summary = match crate::metrics::fetch_metrics(kuma_config).await {
+            Ok(s) => s,
+            Err(e) => return Ok(error_result(&format!("Failed to fetch metrics: {e}"))),
+        };
+
+        let monitor = match summary.monitors.iter().find(|m| m.name == p.monitor_name) {
+            Some(m) => m,
+            None => return Ok(not_found("Monitor", &p.monitor_name)),
+        };
+
+        let mapping = crate::repo::monitor_repo::get_monitor_by_name(&self.pool, &p.monitor_name)
+            .await
+            .ok()
+            .flatten();
+
+        let mut result = serde_json::to_value(monitor).unwrap_or_default();
+
+        // Enrich with linked entities
+        if let Some(ref mapping) = mapping {
+            if let Some(server_id) = mapping.server_id {
+                if let Ok(Some(server)) =
+                    crate::repo::server_repo::get_server(&self.pool, server_id).await
+                {
+                    result["linked_server"] = serde_json::to_value(&server).unwrap_or_default();
+                }
+            }
+            if let Some(service_id) = mapping.service_id {
+                if let Ok(Some(service)) =
+                    crate::repo::service_repo::get_service(&self.pool, service_id).await
+                {
+                    result["linked_service"] = serde_json::to_value(&service).unwrap_or_default();
+                }
+            }
+            result["mapping_notes"] = serde_json::to_value(&mapping.notes).unwrap_or_default();
+        }
+
+        Ok(json_result(&result))
+    }
+
+    #[tool(
+        name = "get_monitoring_summary",
+        description = "Get a high-level monitoring overview: total monitors, how many are up/down/pending/maintenance, \
+        and a list of any monitors currently DOWN. Quick health check for all infrastructure."
+    )]
+    async fn get_monitoring_summary(
+        &self,
+        _params: Parameters<monitoring::GetMonitoringSummaryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let kuma_config = match &self.kuma_config {
+            Some(c) => c,
+            None => return Ok(error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)")),
+        };
+
+        let summary = match crate::metrics::fetch_metrics(kuma_config).await {
+            Ok(s) => s,
+            Err(e) => return Ok(error_result(&format!("Failed to fetch metrics: {e}"))),
+        };
+
+        // Highlight anything that's down
+        let down_monitors: Vec<&crate::metrics::MonitorStatus> =
+            summary.monitors.iter().filter(|m| m.status == 0).collect();
+
+        let result = serde_json::json!({
+            "status": if summary.down == 0 { "ALL_CLEAR" } else { "DEGRADED" },
+            "total": summary.total,
+            "up": summary.up,
+            "down": summary.down,
+            "pending": summary.pending,
+            "maintenance": summary.maintenance,
+            "down_monitors": down_monitors,
+        });
+        Ok(json_result(&result))
+    }
+
+    #[tool(
+        name = "link_monitor",
+        description = "Link an Uptime Kuma monitor to an ops-brain server and/or service. \
+        This mapping enriches get_situational_awareness with live monitoring data. \
+        The monitor_name must match exactly as shown in list_monitors."
+    )]
+    async fn link_monitor(
+        &self,
+        params: Parameters<monitoring::LinkMonitorParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        // Resolve server slug to ID
+        let server_id = match &p.server_slug {
+            Some(slug) => {
+                match crate::repo::server_repo::get_server_by_slug(&self.pool, slug).await {
+                    Ok(Some(s)) => Some(s.id),
+                    Ok(None) => return Ok(not_found("Server", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
+
+        // Resolve service slug to ID
+        let service_id = match &p.service_slug {
+            Some(slug) => {
+                match crate::repo::service_repo::get_service_by_slug(&self.pool, slug).await {
+                    Ok(Some(s)) => Some(s.id),
+                    Ok(None) => return Ok(not_found("Service", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
+
+        if server_id.is_none() && service_id.is_none() && p.notes.is_none() {
+            return Ok(error_result(
+                "Provide at least one of: server_slug, service_slug, or notes",
+            ));
+        }
+
+        match crate::repo::monitor_repo::upsert_monitor(
+            &self.pool,
+            &p.monitor_name,
+            server_id,
+            service_id,
+            p.notes.as_deref(),
+        )
+        .await
+        {
+            Ok(monitor) => Ok(json_result(&monitor)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "unlink_monitor",
+        description = "Remove the mapping between an Uptime Kuma monitor and ops-brain entities. \
+        The monitor will still appear in list_monitors but won't be linked to any server/service."
+    )]
+    async fn unlink_monitor(
+        &self,
+        params: Parameters<monitoring::UnlinkMonitorParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        match crate::repo::monitor_repo::delete_monitor(&self.pool, &p.monitor_name).await {
+            Ok(true) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Monitor mapping removed: {}",
+                p.monitor_name
+            ))])),
+            Ok(false) => Ok(not_found("Monitor mapping", &p.monitor_name)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
 }
 
 #[tool_handler]
@@ -1913,7 +2217,8 @@ impl ServerHandler for OpsBrain {
             .with_instructions(
                 "Operational intelligence server for IT infrastructure management. \
                  Use get_situational_awareness for comprehensive context about any \
-                 server, service, or client. Use search_inventory for full-text search.",
+                 server, service, or client. Use search_inventory for full-text search. \
+                 Use get_monitoring_summary for live infrastructure health from Uptime Kuma.",
             )
     }
 }

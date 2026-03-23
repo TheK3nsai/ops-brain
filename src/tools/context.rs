@@ -34,6 +34,8 @@ pub struct SituationalAwareness {
     pub relevant_runbooks: Vec<serde_json::Value>,
     pub pending_handoffs: Vec<serde_json::Value>,
     pub knowledge: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub monitoring: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]

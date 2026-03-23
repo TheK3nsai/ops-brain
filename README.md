@@ -12,7 +12,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks, vendor contacts, pending handoffs, and knowledge entries.
 
-## Tools (40)
+## Tools (45)
 
 ### Inventory (15)
 | Tool | Description |
@@ -44,9 +44,9 @@ get_situational_awareness(server_slug: "hvfs0")
 ### Context (3)
 | Tool | Description |
 |------|-------------|
-| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client |
+| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client (includes live monitoring) |
 | `get_client_overview` | Full client briefing with all related data |
-| `get_server_context` | Everything about a specific server |
+| `get_server_context` | Everything about a specific server (includes live monitoring) |
 
 ### Incidents (6)
 | Tool | Description |
@@ -74,6 +74,15 @@ get_situational_awareness(server_slug: "hvfs0")
 | `list_handoffs` | Filter by status, source/target machine |
 | `search_handoffs` | Full-text search across handoff titles and bodies |
 
+### Monitoring (5)
+| Tool | Description |
+|------|-------------|
+| `list_monitors` | All Uptime Kuma monitors with live status, filterable by up/down/pending/maintenance |
+| `get_monitor_status` | Detailed live status for a specific monitor with linked server/service info |
+| `get_monitoring_summary` | Quick health check — ALL_CLEAR or DEGRADED with down monitor list |
+| `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service |
+| `unlink_monitor` | Remove a monitor-to-entity mapping |
+
 ## Tech Stack
 
 | Component | Choice |
@@ -85,6 +94,8 @@ get_situational_awareness(server_slug: "hvfs0")
 | Async | tokio |
 | IDs | UUID v7 (time-ordered) |
 | Search | PostgreSQL tsvector + GIN indexes |
+| Monitoring | Uptime Kuma /metrics (Prometheus format, on-demand scraping) |
+| HTTP Client | reqwest (rustls-tls) |
 
 ## Setup
 
@@ -163,6 +174,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 # Environment variables needed in .env:
 # OPS_BRAIN_DB_PASSWORD=<postgres password>
 # OPS_BRAIN_AUTH_TOKEN=<bearer token for HTTP auth>
+# UPTIME_KUMA_URL=http://uptime-kuma:3001  (optional, for monitoring integration)
 
 # Seed the database
 cat seed/seed.sql | docker exec -i shared-postgres psql -U ops_brain -d ops_brain
@@ -181,6 +193,9 @@ Vendor N────────────────────────
                                    │
 Session 1──N Handoff               N
                              Knowledge
+
+Monitor ──── Server (optional)
+   └──────── Service (optional)
 ```
 
 ## Roadmap
@@ -188,7 +203,7 @@ Session 1──N Handoff               N
 - [x] **Phase 1**: Local MCP server — inventory, runbooks, knowledge, context tools (26 tools)
 - [x] **Phase 2**: Remote deployment to cloud server (Streamable HTTP + bearer auth)
 - [x] **Phase 3**: Incident lifecycle + cross-machine coordination (sessions, handoffs) — 40 tools
-- [ ] **Phase 4**: Monitoring integration — wire Uptime Kuma alerts into ops-brain (webhooks/metrics)
+- [x] **Phase 4**: Monitoring integration — live Uptime Kuma /metrics scraping, monitor-to-entity mapping — 45 tools
 - [ ] **Phase 5**: Semantic search with pgvector embeddings
 
 ## License

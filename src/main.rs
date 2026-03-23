@@ -1,6 +1,7 @@
 mod auth;
 mod config;
 mod db;
+mod metrics;
 mod models;
 mod repo;
 mod tools;
@@ -33,7 +34,16 @@ async fn main() -> anyhow::Result<()> {
         db::run_migrations(&pool).await?;
     }
 
-    let server = OpsBrain::new(pool.clone());
+    let kuma_config = config.uptime_kuma_url.as_ref().map(|url| {
+        tracing::info!("Uptime Kuma metrics configured: {}", url);
+        metrics::UptimeKumaConfig {
+            base_url: url.clone(),
+            username: config.uptime_kuma_username.clone(),
+            password: config.uptime_kuma_password.clone(),
+        }
+    });
+
+    let server = OpsBrain::new(pool.clone(), kuma_config.clone());
 
     match config.transport.as_str() {
         "stdio" => {
@@ -51,8 +61,9 @@ async fn main() -> anyhow::Result<()> {
 
             let session_manager = Arc::new(LocalSessionManager::default());
 
+            let kuma_config_http = kuma_config.clone();
             let mcp_service = StreamableHttpService::new(
-                move || Ok(OpsBrain::new(pool.clone())),
+                move || Ok(OpsBrain::new(pool.clone(), kuma_config_http.clone())),
                 session_manager,
                 Default::default(),
             );
