@@ -17,4 +17,4 @@ CREATE TABLE IF NOT EXISTS monitors (
 CREATE TRIGGER set_monitors_updated_at
     BEFORE UPDATE ON monitors
     FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
+    EXECUTE FUNCTION update_updated_at();
