@@ -15,6 +15,7 @@ CREATE INDEX IF NOT EXISTS idx_ticket_links_incident_id ON ticket_links(incident
 CREATE INDEX IF NOT EXISTS idx_ticket_links_server_id ON ticket_links(server_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_links_service_id ON ticket_links(service_id);
 
+DROP TRIGGER IF EXISTS set_ticket_links_updated_at ON ticket_links;
 CREATE TRIGGER set_ticket_links_updated_at
     BEFORE UPDATE ON ticket_links
     FOR EACH ROW
