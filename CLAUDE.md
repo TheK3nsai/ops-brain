@@ -21,7 +21,7 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct with ALL 56 #[tool] methods in one impl block
+    mod.rs           # OpsBrain struct with ALL 59 #[tool] methods in one impl block
     inventory.rs     # Parameter structs for inventory tools
     runbooks.rs      # Parameter structs for runbook tools
     knowledge.rs     # Parameter structs for knowledge tools
@@ -31,6 +31,7 @@ src/
     monitoring.rs    # Parameter structs for monitoring tools
     search.rs        # Parameter structs for semantic search tools
     zammad.rs        # Parameter structs for Zammad ticketing tools
+    briefings.rs     # Parameter structs + response structs for briefing tools
   embeddings.rs    # OpenAI embedding client + text preparation functions
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
@@ -97,7 +98,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 5** (semantic search): COMPLETE & DEPLOYED — 2 new tools (semantic_search, backfill_embeddings), 47 total. pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data. All seed data backfilled (local + remote).
 - **Phase 6** (proactive monitoring): COMPLETE & DEPLOYED — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
 - **Phase 7** (Zammad integration): COMPLETE — 8 new tools (list_tickets, get_ticket, create_ticket, update_ticket, add_ticket_note, search_tickets, link_ticket, unlink_ticket), 56 total. Live Zammad REST API queries via Token auth. Client mapping (zammad_org_id/group_id/customer_id on clients table). ticket_links table for linking tickets to incidents/servers/services. Context tools enriched with ticket data (get_client_overview shows recent tickets, get_situational_awareness and get_server_context show linked tickets). Env: `ZAMMAD_URL`, `ZAMMAD_API_TOKEN`.
-- **Phase 8** (scheduled briefings): PLANNED — Daily/weekly operational summaries. Open incidents, monitoring health, pending handoffs, recent changes. Delivered via Claude Code scheduled triggers or email.
+- **Phase 8** (scheduled briefings): COMPLETE — 3 new tools (generate_briefing, list_briefings, get_briefing), 59 total. Aggregates monitoring health, open incidents (by severity), watchdog alerts, pending handoffs, and Zammad ticket activity into structured markdown summaries. Daily and weekly types. Weekly includes resolved incident stats (count, avg TTR) and watchdog auto-resolved count. Briefings stored in `briefings` table for historical review. Can be scoped to a specific client or generated globally.
 
 ## Deployment (kensai.cloud)
 

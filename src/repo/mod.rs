@@ -13,3 +13,4 @@ pub mod handoff_repo;
 pub mod monitor_repo;
 pub mod embedding_repo;
 pub mod ticket_link_repo;
+pub mod briefing_repo;

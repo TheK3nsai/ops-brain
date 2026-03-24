@@ -11,3 +11,4 @@ pub mod handoff;
 pub mod knowledge;
 pub mod monitor;
 pub mod ticket_link;
+pub mod briefing;

@@ -12,7 +12,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
-## Tools (56)
+## Tools (59)
 
 ### Inventory (15)
 | Tool | Description |
@@ -95,6 +95,13 @@ get_situational_awareness(server_slug: "hvfs0")
 | `search_tickets` | Full-text search across Zammad tickets (Elasticsearch syntax) |
 | `link_ticket` | Map a Zammad ticket to ops-brain incident/server/service |
 | `unlink_ticket` | Remove a ticket mapping |
+
+### Briefings (3)
+| Tool | Description |
+|------|-------------|
+| `generate_briefing` | Generate a daily or weekly operational briefing — aggregates monitoring, incidents, handoffs, tickets into a structured markdown summary |
+| `list_briefings` | List previously generated briefings, filterable by type and client |
+| `get_briefing` | Retrieve a specific briefing by ID |
 
 ### Semantic Search (2)
 | Tool | Description |
@@ -256,10 +263,7 @@ TicketLink ── Zammad Ticket (external)
 - [x] **Phase 5**: Semantic search — pgvector + ollama embeddings, hybrid RRF ranking, context enrichment — 47 tools
 - [x] **Phase 6**: Proactive monitoring — background watchdog polls Uptime Kuma, detects UP/DOWN transitions, auto-creates/resolves incidents with TTR, links servers/services/runbooks via semantic search, input validation — 48 tools
 - [x] **Phase 7**: Zammad integration — live Zammad REST API queries, ticket CRUD with time accounting, ticket-to-entity linking, context tools enriched with ticket data — 56 tools
-
-### Planned
-
-- [ ] **Phase 8**: Scheduled briefings — daily/weekly operational summaries via Claude Code scheduled triggers or email
+- [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage — 59 tools
 
 ## License
 

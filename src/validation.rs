@@ -9,6 +9,7 @@ pub const HANDOFF_STATUSES: &[&str] = &["pending", "accepted", "completed"];
 pub const HANDOFF_PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
 pub const RUNBOOK_USAGES: &[&str] = &["followed", "not-applicable", "not-followed"];
 pub const SEARCH_MODES: &[&str] = &["fts", "semantic", "hybrid"];
+pub const BRIEFING_TYPES: &[&str] = &["daily", "weekly"];
 
 /// Validate a value against a list of allowed values.
 /// Returns Ok(()) if valid or None, Err(message) if invalid.
