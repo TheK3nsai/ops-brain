@@ -35,6 +35,14 @@ pub struct Config {
     #[arg(long, env = "UPTIME_KUMA_PASSWORD")]
     pub uptime_kuma_password: Option<String>,
 
+    /// Zammad API base URL (e.g. http://zammad-railsserver:3000 or https://tickets.kensai.cloud)
+    #[arg(long, env = "ZAMMAD_URL")]
+    pub zammad_url: Option<String>,
+
+    /// Zammad API token for authentication
+    #[arg(long, env = "ZAMMAD_API_TOKEN")]
+    pub zammad_api_token: Option<String>,
+
     /// Embedding API base URL (OpenAI-compatible). Default: local ollama.
     #[arg(long, env = "OPS_BRAIN_EMBEDDING_URL", default_value = "http://localhost:11434/v1/embeddings")]
     pub embedding_url: String,

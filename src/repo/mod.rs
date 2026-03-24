@@ -12,3 +12,4 @@ pub mod session_repo;
 pub mod handoff_repo;
 pub mod monitor_repo;
 pub mod embedding_repo;
+pub mod ticket_link_repo;

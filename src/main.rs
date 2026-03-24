@@ -8,6 +8,7 @@ mod repo;
 mod tools;
 mod validation;
 mod watchdog;
+mod zammad;
 
 use clap::Parser;
 use config::Config;
@@ -46,6 +47,20 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let zammad_config = match (&config.zammad_url, &config.zammad_api_token) {
+        (Some(url), Some(token)) => {
+            tracing::info!("Zammad integration configured: {}", url);
+            Some(zammad::ZammadConfig {
+                base_url: url.clone(),
+                api_token: token.clone(),
+            })
+        }
+        _ => {
+            tracing::info!("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)");
+            None
+        }
+    };
+
     let embedding_client = if config.embeddings_enabled.unwrap_or(true) {
         tracing::info!(
             "Embeddings configured: url={}, model={}",
@@ -82,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let server = OpsBrain::new(pool.clone(), kuma_config.clone(), embedding_client.clone());
+    let server = OpsBrain::new(pool.clone(), kuma_config.clone(), embedding_client.clone(), zammad_config.clone());
 
     match config.transport.as_str() {
         "stdio" => {
@@ -102,8 +117,9 @@ async fn main() -> anyhow::Result<()> {
 
             let kuma_config_http = kuma_config.clone();
             let embedding_client_http = embedding_client.clone();
+            let zammad_config_http = zammad_config.clone();
             let mcp_service = StreamableHttpService::new(
-                move || Ok(OpsBrain::new(pool.clone(), kuma_config_http.clone(), embedding_client_http.clone())),
+                move || Ok(OpsBrain::new(pool.clone(), kuma_config_http.clone(), embedding_client_http.clone(), zammad_config_http.clone())),
                 session_manager,
                 Default::default(),
             );

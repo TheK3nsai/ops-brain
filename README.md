@@ -12,7 +12,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
-## Tools (48)
+## Tools (56)
 
 ### Inventory (15)
 | Tool | Description |
@@ -84,6 +84,18 @@ get_situational_awareness(server_slug: "hvfs0")
 | `unlink_monitor` | Remove a monitor-to-entity mapping |
 | `list_watchdog_incidents` | List incidents auto-created by the proactive monitoring watchdog, filterable by status |
 
+### Zammad Ticketing (8)
+| Tool | Description |
+|------|-------------|
+| `list_tickets` | List Zammad tickets filtered by client, state, priority |
+| `get_ticket` | Get ticket by ID with full article history |
+| `create_ticket` | Create a ticket in Zammad, optionally link to ops-brain incident |
+| `update_ticket` | Update ticket state, priority, or title |
+| `add_ticket_note` | Add internal note with optional time accounting |
+| `search_tickets` | Full-text search across Zammad tickets (Elasticsearch syntax) |
+| `link_ticket` | Map a Zammad ticket to ops-brain incident/server/service |
+| `unlink_ticket` | Remove a ticket mapping |
+
 ### Semantic Search (2)
 | Tool | Description |
 |------|-------------|
@@ -103,6 +115,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | Search | PostgreSQL tsvector + GIN indexes (FTS), pgvector HNSW (semantic) |
 | Embeddings | ollama nomic-embed-text (768 dims) via OpenAI-compatible API |
 | Monitoring | Uptime Kuma /metrics (Prometheus format, on-demand scraping) |
+| Ticketing | Zammad REST API (Token auth, live queries) |
 | HTTP Client | reqwest (rustls-tls, json) |
 
 ## Setup
@@ -193,6 +206,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 # UPTIME_KUMA_PASSWORD=<password>          (if /metrics requires basic auth)
 # OPS_BRAIN_WATCHDOG_ENABLED=true          (enable proactive monitoring watchdog)
 # OPS_BRAIN_WATCHDOG_INTERVAL=60           (polling interval in seconds)
+# ZAMMAD_URL=http://zammad-railsserver:3000  (optional, for ticketing integration)
+# ZAMMAD_API_TOKEN=<token>                 (Zammad API token)
 
 # For semantic search, run an ollama container on the same Docker network:
 # docker run -d --name ollama --network traefik-net ollama/ollama
@@ -223,6 +238,11 @@ Session 1──N Handoff               N
 
 Monitor ──── Server (optional)
    └──────── Service (optional)
+
+TicketLink ── Zammad Ticket (external)
+   ├──────── Incident (optional)
+   ├──────── Server (optional)
+   └──────── Service (optional)
 ```
 
 ## Roadmap
@@ -235,10 +255,10 @@ Monitor ──── Server (optional)
 - [x] **Phase 4**: Monitoring integration — live Uptime Kuma /metrics scraping, monitor-to-entity mapping — 45 tools
 - [x] **Phase 5**: Semantic search — pgvector + ollama embeddings, hybrid RRF ranking, context enrichment — 47 tools
 - [x] **Phase 6**: Proactive monitoring — background watchdog polls Uptime Kuma, detects UP/DOWN transitions, auto-creates/resolves incidents with TTR, links servers/services/runbooks via semantic search, input validation — 48 tools
+- [x] **Phase 7**: Zammad integration — live Zammad REST API queries, ticket CRUD with time accounting, ticket-to-entity linking, context tools enriched with ticket data — 56 tools
 
 ### Planned
 
-- [ ] **Phase 7**: Zammad integration — link support tickets to ops-brain entities (servers, services, incidents), enrich tickets with situational awareness
 - [ ] **Phase 8**: Scheduled briefings — daily/weekly operational summaries via Claude Code scheduled triggers or email
 
 ## License

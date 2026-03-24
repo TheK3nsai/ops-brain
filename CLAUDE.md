@@ -8,7 +8,7 @@ Rust MCP server providing operational intelligence for IT infrastructure managem
 - **MCP SDK**: rmcp 1.2 (`#[tool_router]` macro pattern)
 - **Database**: PostgreSQL 18 via sqlx (runtime queries, not compile-time checked)
 - **Transport**: stdio (local) or streamable HTTP (remote, via axum)
-- **Binary**: `target/release/ops-brain` (11MB)
+- **Binary**: `target/release/ops-brain`
 
 ## Project Layout
 
@@ -21,7 +21,7 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct with ALL 47 #[tool] methods in one impl block
+    mod.rs           # OpsBrain struct with ALL 56 #[tool] methods in one impl block
     inventory.rs     # Parameter structs for inventory tools
     runbooks.rs      # Parameter structs for runbook tools
     knowledge.rs     # Parameter structs for knowledge tools
@@ -30,17 +30,19 @@ src/
     coordination.rs  # Parameter structs for session + handoff tools
     monitoring.rs    # Parameter structs for monitoring tools
     search.rs        # Parameter structs for semantic search tools
+    zammad.rs        # Parameter structs for Zammad ticketing tools
   embeddings.rs    # OpenAI embedding client + text preparation functions
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
-migrations/        # 16 sqlx migration files (auto-run on startup)
+  zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
+migrations/        # 18 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
 ## Architecture Constraints
 
 - All `#[tool]` methods MUST be in the single `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs` — rmcp macro requirement
-- Parameter structs go in sub-modules (inventory.rs, etc.) and are referenced from tool methods
+- Parameter structs go in sub-modules (inventory.rs, runbooks.rs, zammad.rs, etc.) and are referenced from tool methods
 - Tool errors return `Ok(CallToolResult::error(...))`, never `Err(McpError)`
 - Slugs are the public API (not UUIDs) — tools resolve slugs to IDs internally
 - Tracing writes to stderr (critical: stdout is the MCP stdio transport)
@@ -82,6 +84,8 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 | `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | Set to `false` to disable embeddings entirely |
 | `OPS_BRAIN_WATCHDOG_ENABLED` | `false` | Enable proactive monitoring watchdog |
 | `OPS_BRAIN_WATCHDOG_INTERVAL` | `60` | Watchdog polling interval in seconds |
+| `ZAMMAD_URL` | (none) | Zammad API base URL (e.g. `http://zammad-railsserver:3000`) |
+| `ZAMMAD_API_TOKEN` | (none) | Zammad API token for authentication |
 | `RUST_LOG` | `ops_brain=info` | Tracing filter |
 
 ## Phase Status
@@ -91,8 +95,8 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
 - **Phase 4** (monitoring integration): COMPLETE & DEPLOYED — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data. All 32 monitors linked. Uptime Kuma admin creds configured in production .env.
 - **Phase 5** (semantic search): COMPLETE & DEPLOYED — 2 new tools (semantic_search, backfill_embeddings), 47 total. pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data. All seed data backfilled (local + remote).
-- **Phase 6** (proactive monitoring): COMPLETE — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. 48 tools total. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
-- **Phase 7** (Zammad integration): PLANNED — Connect to Zammad ticketing on kensai.cloud. Link tickets to ops-brain entities, enrich ticket context with situational awareness.
+- **Phase 6** (proactive monitoring): COMPLETE & DEPLOYED — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
+- **Phase 7** (Zammad integration): COMPLETE — 8 new tools (list_tickets, get_ticket, create_ticket, update_ticket, add_ticket_note, search_tickets, link_ticket, unlink_ticket), 56 total. Live Zammad REST API queries via Token auth. Client mapping (zammad_org_id/group_id/customer_id on clients table). ticket_links table for linking tickets to incidents/servers/services. Context tools enriched with ticket data (get_client_overview shows recent tickets, get_situational_awareness and get_server_context show linked tickets). Env: `ZAMMAD_URL`, `ZAMMAD_API_TOKEN`.
 - **Phase 8** (scheduled briefings): PLANNED — Daily/weekly operational summaries. Open incidents, monitoring health, pending handoffs, recent changes. Delivered via Claude Code scheduled triggers or email.
 
 ## Deployment (kensai.cloud)
@@ -135,9 +139,28 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Severity logic**: domain-controller/dns/dhcp roles → critical; file-server/rds/database/backup → high; everything else → medium
 - **Tool**: `list_watchdog_incidents` — query auto-created incidents by status
 
+## Zammad Integration (Phase 7)
+
+- **Module**: `src/zammad.rs` — HTTP client for Zammad REST API
+- **Enable**: Set `ZAMMAD_URL` and `ZAMMAD_API_TOKEN`
+- **Auth**: `Token token={api_token}` header (NOT Bearer)
+- **Always uses `?expand=true`** for human-readable responses (state/priority/owner as names, not IDs)
+- **Client mapping**: `clients` table has `zammad_org_id`, `zammad_group_id`, `zammad_customer_id` columns
+- **Ticket links**: `ticket_links` table maps Zammad ticket IDs to ops-brain incidents/servers/services
+- **State IDs**: new=1, open=2, pending_reminder=3, closed=4
+- **Priority IDs**: low=1, normal=2, high=3
+- **Owner (Eduardo)**: user_id=3
+- **Clients**: HSR (org=2, group=2, customer=5), CPA (org=3, group=4, customer=6)
+- **Time accounting types**: 1=Maintenance, 2=On-site, 3=Remote, 4=On-site/Remote
+- **Tags**: soporte-usuario, infraestructura, instalacion, therefore, visitlink, office-365, redes, impresora, backup, monitoreo, configuracion, conectividad
+- **Tools**: `list_tickets`, `get_ticket`, `create_ticket`, `update_ticket`, `add_ticket_note`, `search_tickets`, `link_ticket`, `unlink_ticket`
+- **Context enrichment**: `get_client_overview` shows recent tickets, `get_situational_awareness` and `get_server_context` show linked tickets
+- **Internal URL** (Docker): `http://zammad-railsserver:3000` via `shared-db` network
+- **Public URL**: `https://tickets.kensai.cloud`
+
 ## Key Tool: get_situational_awareness
 
-The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug` and returns a comprehensive briefing: entity details, related entities, services, networks, recent incidents, relevant runbooks, vendor contacts, pending handoffs, knowledge entries, live monitoring status (if Uptime Kuma configured), and semantically related content (if embeddings configured).
+The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug` and returns a comprehensive briefing: entity details, related entities, services, networks, recent incidents, relevant runbooks, vendor contacts, pending handoffs, knowledge entries, live monitoring status (if Uptime Kuma configured), semantically related content (if embeddings configured), and linked Zammad tickets (if Zammad configured).
 
 ## Semantic Search
 

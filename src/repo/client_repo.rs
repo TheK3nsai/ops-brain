@@ -28,14 +28,20 @@ pub async fn upsert_client(
     name: &str,
     slug: &str,
     notes: Option<&str>,
+    zammad_org_id: Option<i32>,
+    zammad_group_id: Option<i32>,
+    zammad_customer_id: Option<i32>,
 ) -> Result<Client, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Client>(
-        "INSERT INTO clients (id, name, slug, notes)
-         VALUES ($1, $2, $3, $4)
+        "INSERT INTO clients (id, name, slug, notes, zammad_org_id, zammad_group_id, zammad_customer_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (slug) DO UPDATE SET
              name = EXCLUDED.name,
-             notes = EXCLUDED.notes,
+             notes = COALESCE(EXCLUDED.notes, clients.notes),
+             zammad_org_id = COALESCE(EXCLUDED.zammad_org_id, clients.zammad_org_id),
+             zammad_group_id = COALESCE(EXCLUDED.zammad_group_id, clients.zammad_group_id),
+             zammad_customer_id = COALESCE(EXCLUDED.zammad_customer_id, clients.zammad_customer_id),
              updated_at = NOW()
          RETURNING *",
     )
@@ -43,6 +49,9 @@ pub async fn upsert_client(
     .bind(name)
     .bind(slug)
     .bind(notes)
+    .bind(zammad_org_id)
+    .bind(zammad_group_id)
+    .bind(zammad_customer_id)
     .fetch_one(pool)
     .await
 }

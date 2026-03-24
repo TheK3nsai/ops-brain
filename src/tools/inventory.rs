@@ -68,6 +68,12 @@ pub struct UpsertClientParams {
     pub name: String,
     pub slug: String,
     pub notes: Option<String>,
+    /// Zammad organization ID for this client
+    pub zammad_org_id: Option<i32>,
+    /// Zammad default ticket group ID for this client
+    pub zammad_group_id: Option<i32>,
+    /// Zammad default customer ID for this client
+    pub zammad_customer_id: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

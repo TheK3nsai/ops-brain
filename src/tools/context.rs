@@ -36,6 +36,8 @@ pub struct SituationalAwareness {
     pub knowledge: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub monitoring: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub linked_tickets: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,4 +50,6 @@ pub struct ClientOverview {
     pub vendors: Vec<serde_json::Value>,
     pub recent_incidents: Vec<serde_json::Value>,
     pub pending_handoffs: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recent_tickets: Vec<serde_json::Value>,
 }

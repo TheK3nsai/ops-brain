@@ -2,10 +2,11 @@
 -- Eduardo's actual infrastructure
 
 -- Clients
-INSERT INTO clients (id, name, slug, notes) VALUES
-    ('019594a0-0001-7000-8000-000000000001', 'HSR-PR (Hospice)', 'hsr', 'Hospice del Sureste / Renacer, ~300 employees, ~400 patients'),
-    ('019594a0-0001-7000-8000-000000000002', 'CPA Firm', 'cpa', 'Small CPA firm, 4 employees, hundreds of tax season customers')
-ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, notes = EXCLUDED.notes;
+INSERT INTO clients (id, name, slug, notes, zammad_org_id, zammad_group_id, zammad_customer_id) VALUES
+    ('019594a0-0001-7000-8000-000000000001', 'HSR-PR (Hospice)', 'hsr', 'Hospice del Sureste / Renacer, ~300 employees, ~400 patients', 2, 2, 5),
+    ('019594a0-0001-7000-8000-000000000002', 'CPA Firm', 'cpa', 'Small CPA firm, 4 employees, hundreds of tax season customers', 3, 4, 6)
+ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, notes = EXCLUDED.notes,
+    zammad_org_id = EXCLUDED.zammad_org_id, zammad_group_id = EXCLUDED.zammad_group_id, zammad_customer_id = EXCLUDED.zammad_customer_id;
 
 -- Sites
 INSERT INTO sites (id, client_id, name, slug, address, wan_provider, notes) VALUES
