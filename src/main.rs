@@ -1,3 +1,4 @@
+mod api;
 mod auth;
 mod config;
 mod db;
@@ -115,6 +116,12 @@ async fn main() -> anyhow::Result<()> {
 
             let session_manager = Arc::new(LocalSessionManager::default());
 
+            let api_state = Arc::new(api::ApiState {
+                pool: pool.clone(),
+                kuma_config: kuma_config.clone(),
+                zammad_config: zammad_config.clone(),
+            });
+
             let kuma_config_http = kuma_config.clone();
             let embedding_client_http = embedding_client.clone();
             let zammad_config_http = zammad_config.clone();
@@ -124,8 +131,13 @@ async fn main() -> anyhow::Result<()> {
                 Default::default(),
             );
 
+            let api_routes = axum::Router::new()
+                .route("/briefing", axum::routing::post(api::generate_briefing))
+                .with_state(api_state);
+
             let app = axum::Router::new()
                 .route("/health", axum::routing::get(|| async { "OK" }))
+                .nest("/api", api_routes)
                 .nest_service("/mcp", mcp_service)
                 .layer(axum::middleware::from_fn_with_state(
                     config.auth_token.clone(),
