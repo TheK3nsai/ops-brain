@@ -33,3 +33,11 @@ pub struct UnlinkMonitorParams {
     /// The exact monitor name to remove the mapping for
     pub monitor_name: String,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListWatchdogIncidentsParams {
+    /// Filter by status: "open" or "resolved" (default: all)
+    pub status: Option<String>,
+    /// Maximum number of incidents to return (default: 20)
+    pub limit: Option<i64>,
+}

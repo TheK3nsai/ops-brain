@@ -8,7 +8,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ops-brain
-    restart: unless-stopped
+    restart: always
     deploy:
       resources:
         limits:
@@ -21,6 +21,16 @@ services:
       - OPS_BRAIN_LISTEN=0.0.0.0:3000
       - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN}
       - OPS_BRAIN_MIGRATE=true
+      # Uptime Kuma monitoring
+      - UPTIME_KUMA_URL=http://uptime-kuma:3001
+      - UPTIME_KUMA_USERNAME=${UPTIME_KUMA_USERNAME}
+      - UPTIME_KUMA_PASSWORD=${UPTIME_KUMA_PASSWORD}
+      # Embeddings (ollama on same Docker network)
+      - OPS_BRAIN_EMBEDDING_URL=http://ollama:11434/v1/embeddings
+      - OPS_BRAIN_EMBEDDING_MODEL=nomic-embed-text
+      # Proactive monitoring watchdog
+      - OPS_BRAIN_WATCHDOG_ENABLED=${OPS_BRAIN_WATCHDOG_ENABLED:-true}
+      - OPS_BRAIN_WATCHDOG_INTERVAL=${OPS_BRAIN_WATCHDOG_INTERVAL:-60}
       - RUST_LOG=ops_brain=info
     networks:
       - traefik-net

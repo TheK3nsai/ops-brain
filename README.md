@@ -12,7 +12,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
-## Tools (47)
+## Tools (48)
 
 ### Inventory (15)
 | Tool | Description |
@@ -74,7 +74,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `list_handoffs` | Filter by status, source/target machine |
 | `search_handoffs` | Search handoffs (mode: fts/semantic/hybrid) |
 
-### Monitoring (5)
+### Monitoring (6)
 | Tool | Description |
 |------|-------------|
 | `list_monitors` | All Uptime Kuma monitors with live status, filterable by up/down/pending/maintenance |
@@ -82,6 +82,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `get_monitoring_summary` | Quick health check — ALL_CLEAR or DEGRADED with down monitor list |
 | `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service |
 | `unlink_monitor` | Remove a monitor-to-entity mapping |
+| `list_watchdog_incidents` | List incidents auto-created by the proactive monitoring watchdog, filterable by status |
 
 ### Semantic Search (2)
 | Tool | Description |
@@ -190,6 +191,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 # UPTIME_KUMA_URL=http://uptime-kuma:3001  (optional, for monitoring integration)
 # UPTIME_KUMA_USERNAME=admin               (if /metrics requires basic auth)
 # UPTIME_KUMA_PASSWORD=<password>          (if /metrics requires basic auth)
+# OPS_BRAIN_WATCHDOG_ENABLED=true          (enable proactive monitoring watchdog)
+# OPS_BRAIN_WATCHDOG_INTERVAL=60           (polling interval in seconds)
 
 # For semantic search, run an ollama container on the same Docker network:
 # docker run -d --name ollama --network traefik-net ollama/ollama
@@ -231,10 +234,10 @@ Monitor ──── Server (optional)
 - [x] **Phase 3**: Incident lifecycle + cross-machine coordination (sessions, handoffs) — 40 tools
 - [x] **Phase 4**: Monitoring integration — live Uptime Kuma /metrics scraping, monitor-to-entity mapping — 45 tools
 - [x] **Phase 5**: Semantic search — pgvector + ollama embeddings, hybrid RRF ranking, context enrichment — 47 tools
+- [x] **Phase 6**: Proactive monitoring — background watchdog polls Uptime Kuma, detects UP/DOWN transitions, auto-creates/resolves incidents with TTR, links servers/services/runbooks via semantic search, input validation — 48 tools
 
 ### Planned
 
-- [ ] **Phase 6**: Proactive monitoring — scheduled watchdog that detects Uptime Kuma status changes, auto-creates incidents with linked servers/services/runbooks, and sends notifications
 - [ ] **Phase 7**: Zammad integration — link support tickets to ops-brain entities (servers, services, incidents), enrich tickets with situational awareness
 - [ ] **Phase 8**: Scheduled briefings — daily/weekly operational summaries via Claude Code scheduled triggers or email
 

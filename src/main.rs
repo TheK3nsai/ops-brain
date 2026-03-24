@@ -6,6 +6,8 @@ mod metrics;
 mod models;
 mod repo;
 mod tools;
+mod validation;
+mod watchdog;
 
 use clap::Parser;
 use config::Config;
@@ -59,6 +61,26 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Embeddings disabled via OPS_BRAIN_EMBEDDINGS_ENABLED=false");
         None
     };
+
+    // Spawn watchdog background task if enabled and Uptime Kuma is configured
+    if config.watchdog_enabled {
+        if let Some(ref kuma) = kuma_config {
+            tracing::info!(
+                interval = config.watchdog_interval_secs,
+                "Starting proactive monitoring watchdog"
+            );
+            tokio::spawn(watchdog::run(
+                pool.clone(),
+                kuma.clone(),
+                embedding_client.clone(),
+                config.watchdog_interval_secs,
+            ));
+        } else {
+            tracing::warn!(
+                "Watchdog enabled but UPTIME_KUMA_URL not set — watchdog will not start"
+            );
+        }
+    }
 
     let server = OpsBrain::new(pool.clone(), kuma_config.clone(), embedding_client.clone());
 

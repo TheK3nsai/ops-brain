@@ -50,4 +50,12 @@ pub struct Config {
     /// Enable embedding generation (default: true if embedding URL is reachable)
     #[arg(long, env = "OPS_BRAIN_EMBEDDINGS_ENABLED")]
     pub embeddings_enabled: Option<bool>,
+
+    /// Enable proactive monitoring watchdog (polls Uptime Kuma, auto-creates incidents)
+    #[arg(long, env = "OPS_BRAIN_WATCHDOG_ENABLED", default_value = "false")]
+    pub watchdog_enabled: bool,
+
+    /// Watchdog polling interval in seconds (default: 60)
+    #[arg(long, env = "OPS_BRAIN_WATCHDOG_INTERVAL", default_value = "60")]
+    pub watchdog_interval_secs: u64,
 }

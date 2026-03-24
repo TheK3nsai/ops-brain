@@ -32,6 +32,7 @@ src/
     search.rs        # Parameter structs for semantic search tools
   embeddings.rs    # OpenAI embedding client + text preparation functions
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
+  watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
 migrations/        # 16 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
@@ -79,6 +80,8 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 | `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
 | `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | API key for embedding service (not needed for ollama) |
 | `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | Set to `false` to disable embeddings entirely |
+| `OPS_BRAIN_WATCHDOG_ENABLED` | `false` | Enable proactive monitoring watchdog |
+| `OPS_BRAIN_WATCHDOG_INTERVAL` | `60` | Watchdog polling interval in seconds |
 | `RUST_LOG` | `ops_brain=info` | Tracing filter |
 
 ## Phase Status
@@ -88,7 +91,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
 - **Phase 4** (monitoring integration): COMPLETE & DEPLOYED — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data. All 32 monitors linked. Uptime Kuma admin creds configured in production .env.
 - **Phase 5** (semantic search): COMPLETE & DEPLOYED — 2 new tools (semantic_search, backfill_embeddings), 47 total. pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data. All seed data backfilled (local + remote).
-- **Phase 6** (proactive monitoring): PLANNED — Scheduled watchdog that polls Uptime Kuma, detects status changes (UP→DOWN transitions), auto-creates incidents with linked servers/services, surfaces relevant runbooks, and sends notifications. Turns ops-brain from reactive query tool into an active monitoring system.
+- **Phase 6** (proactive monitoring): COMPLETE — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. 48 tools total. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
 - **Phase 7** (Zammad integration): PLANNED — Connect to Zammad ticketing on kensai.cloud. Link tickets to ops-brain entities, enrich ticket context with situational awareness.
 - **Phase 8** (scheduled briefings): PLANNED — Daily/weekly operational summaries. Open incidents, monitoring health, pending handoffs, recent changes. Delivered via Claude Code scheduled triggers or email.
 
@@ -116,6 +119,21 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Internal URL**: `http://uptime-kuma:3001` (on `traefik-net` Docker network)
 - **Tools**: `list_monitors`, `get_monitor_status`, `get_monitoring_summary`, `link_monitor`, `unlink_monitor`
 - **Context enrichment**: `get_situational_awareness` and `get_server_context` include live monitoring for linked monitors
+
+## Watchdog (Phase 6)
+
+- **Module**: `src/watchdog.rs` — background tokio task, no new dependencies
+- **Enable**: `OPS_BRAIN_WATCHDOG_ENABLED=true` + `UPTIME_KUMA_URL` must be set
+- **Interval**: `OPS_BRAIN_WATCHDOG_INTERVAL=60` (seconds, default 60)
+- **Behavior**:
+  - Polls Uptime Kuma `/metrics` every interval
+  - Tracks monitor states in memory (HashMap)
+  - Detects UP→DOWN: auto-creates incident `[AUTO] Monitor DOWN: {name}` with severity from server roles, symptoms from monitor data, linked server/service from monitor mappings, suggested runbooks via semantic search
+  - Detects DOWN→UP: auto-resolves the incident with TTR
+  - On startup, recovers state from open `[AUTO]` incidents (survives restarts)
+  - Graceful: if Kuma unreachable or embedding API down, logs error and continues
+- **Severity logic**: domain-controller/dns/dhcp roles → critical; file-server/rds/database/backup → high; everything else → medium
+- **Tool**: `list_watchdog_incidents` — query auto-created incidents by status
 
 ## Key Tool: get_situational_awareness
 

@@ -643,6 +643,9 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let mode = p.mode.as_deref().unwrap_or("fts");
+        if let Err(msg) = crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES) {
+            return Ok(error_result(&msg));
+        }
         let result = match mode {
             "semantic" => {
                 let Some(emb) = self.get_query_embedding(&p.query).await else {
@@ -793,6 +796,9 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let mode = p.mode.as_deref().unwrap_or("fts");
+        if let Err(msg) = crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES) {
+            return Ok(error_result(&msg));
+        }
         let result = match mode {
             "semantic" => {
                 let Some(emb) = self.get_query_embedding(&p.query).await else {
@@ -1580,11 +1586,8 @@ impl OpsBrain {
         let p = params.0;
         let severity = p.severity.as_deref().unwrap_or("medium");
 
-        // Validate severity
-        if !["low", "medium", "high", "critical"].contains(&severity) {
-            return Ok(error_result(
-                "Invalid severity. Must be: low, medium, high, or critical",
-            ));
+        if let Err(msg) = crate::validation::validate_required(severity, "severity", crate::validation::INCIDENT_SEVERITIES) {
+            return Ok(error_result(&msg));
         }
 
         // Resolve client_slug
@@ -1667,20 +1670,11 @@ impl OpsBrain {
             Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.id))),
         };
 
-        // Validate status if provided
-        if let Some(ref status) = p.status {
-            if !["open", "resolved"].contains(&status.as_str()) {
-                return Ok(error_result("Invalid status. Must be: open or resolved"));
-            }
+        if let Err(msg) = crate::validation::validate_option(p.status.as_deref(), "status", crate::validation::INCIDENT_STATUSES) {
+            return Ok(error_result(&msg));
         }
-
-        // Validate severity if provided
-        if let Some(ref severity) = p.severity {
-            if !["low", "medium", "high", "critical"].contains(&severity.as_str()) {
-                return Ok(error_result(
-                    "Invalid severity. Must be: low, medium, high, or critical",
-                ));
-            }
+        if let Err(msg) = crate::validation::validate_option(p.severity.as_deref(), "severity", crate::validation::INCIDENT_SEVERITIES) {
+            return Ok(error_result(&msg));
         }
 
         match crate::repo::incident_repo::update_incident(
@@ -1764,6 +1758,14 @@ impl OpsBrain {
         let p = params.0;
         let limit = p.limit.unwrap_or(20);
 
+        // Validate filters
+        if let Err(msg) = crate::validation::validate_option(p.status.as_deref(), "status", crate::validation::INCIDENT_STATUSES) {
+            return Ok(error_result(&msg));
+        }
+        if let Err(msg) = crate::validation::validate_option(p.severity.as_deref(), "severity", crate::validation::INCIDENT_SEVERITIES) {
+            return Ok(error_result(&msg));
+        }
+
         // Resolve client_slug
         let client_id = match &p.client_slug {
             Some(slug) => {
@@ -1802,6 +1804,9 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let mode = p.mode.as_deref().unwrap_or("fts");
+        if let Err(msg) = crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES) {
+            return Ok(error_result(&msg));
+        }
         let result = match mode {
             "semantic" => {
                 let Some(emb) = self.get_query_embedding(&p.query).await else {
@@ -1898,11 +1903,8 @@ impl OpsBrain {
         if let Some(rb_links) = &p.runbook_links {
             for rb_link in rb_links {
                 let usage = rb_link.usage.as_deref().unwrap_or("followed");
-                if !["followed", "not-applicable", "not-followed"].contains(&usage) {
-                    return Ok(error_result(&format!(
-                        "Invalid runbook usage '{}'. Must be: followed, not-applicable, or not-followed",
-                        usage
-                    )));
+                if let Err(msg) = crate::validation::validate_required(usage, "runbook usage", crate::validation::RUNBOOK_USAGES) {
+                    return Ok(error_result(&msg));
                 }
                 match crate::repo::runbook_repo::get_runbook_by_slug(&self.pool, &rb_link.slug)
                     .await
@@ -2039,10 +2041,8 @@ impl OpsBrain {
         let p = params.0;
         let priority = p.priority.as_deref().unwrap_or("normal");
 
-        if !["low", "normal", "high", "critical"].contains(&priority) {
-            return Ok(error_result(
-                "Invalid priority. Must be: low, normal, high, or critical",
-            ));
+        if let Err(msg) = crate::validation::validate_required(priority, "priority", crate::validation::HANDOFF_PRIORITIES) {
+            return Ok(error_result(&msg));
         }
 
         // Resolve optional session ID
@@ -2151,6 +2151,10 @@ impl OpsBrain {
         let p = params.0;
         let limit = p.limit.unwrap_or(20);
 
+        if let Err(msg) = crate::validation::validate_option(p.status.as_deref(), "status", crate::validation::HANDOFF_STATUSES) {
+            return Ok(error_result(&msg));
+        }
+
         match crate::repo::handoff_repo::list_handoffs(
             &self.pool,
             p.status.as_deref(),
@@ -2176,6 +2180,9 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let mode = p.mode.as_deref().unwrap_or("fts");
+        if let Err(msg) = crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES) {
+            return Ok(error_result(&msg));
+        }
         let result = match mode {
             "semantic" => {
                 let Some(emb) = self.get_query_embedding(&p.query).await else {
@@ -2607,6 +2614,54 @@ impl OpsBrain {
                 p.monitor_name
             ))])),
             Ok(false) => Ok(not_found("Monitor mapping", &p.monitor_name)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "list_watchdog_incidents",
+        description = "List incidents auto-created by the proactive monitoring watchdog. \
+        These are incidents created when Uptime Kuma monitors transition to DOWN, \
+        and auto-resolved when they recover. Useful for reviewing outage history and patterns."
+    )]
+    async fn list_watchdog_incidents(
+        &self,
+        params: Parameters<monitoring::ListWatchdogIncidentsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let limit = p.limit.unwrap_or(20);
+        let prefix_pattern = format!("{}%", crate::watchdog::INCIDENT_PREFIX);
+
+        let query = match &p.status {
+            Some(status) => {
+                sqlx::query_as::<_, Incident>(
+                    "SELECT * FROM incidents WHERE title LIKE $1 AND status = $2 ORDER BY reported_at DESC LIMIT $3",
+                )
+                .bind(&prefix_pattern)
+                .bind(status)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            None => {
+                sqlx::query_as::<_, Incident>(
+                    "SELECT * FROM incidents WHERE title LIKE $1 ORDER BY reported_at DESC LIMIT $2",
+                )
+                .bind(&prefix_pattern)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+        };
+
+        match query {
+            Ok(incidents) => {
+                let result = serde_json::json!({
+                    "count": incidents.len(),
+                    "incidents": incidents,
+                });
+                Ok(json_result(&result))
+            }
             Err(e) => Ok(error_result(&format!("Database error: {e}"))),
         }
     }
