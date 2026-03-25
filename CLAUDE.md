@@ -38,7 +38,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 19 sqlx migration files (auto-run on startup)
+migrations/        # 22 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -101,23 +101,44 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 6** (proactive monitoring): COMPLETE & DEPLOYED — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
 - **Phase 7** (Zammad integration): COMPLETE — 8 new tools (list_tickets, get_ticket, create_ticket, update_ticket, add_ticket_note, search_tickets, link_ticket, unlink_ticket), 56 total. Live Zammad REST API queries via Token auth. Client mapping (zammad_org_id/group_id/customer_id on clients table). ticket_links table for linking tickets to incidents/servers/services. Context tools enriched with ticket data (get_client_overview shows recent tickets, get_situational_awareness and get_server_context show linked tickets). Env: `ZAMMAD_URL`, `ZAMMAD_API_TOKEN`.
 - **Phase 8** (scheduled briefings): COMPLETE & DEPLOYED — 3 new tools (generate_briefing, list_briefings, get_briefing), 59 total. REST API at `POST /api/briefing` (shared logic in `src/api.rs`). Aggregates monitoring health, open incidents (by severity), watchdog alerts, pending handoffs, and Zammad ticket activity into structured markdown summaries. Daily and weekly types. Weekly includes resolved incident stats (count, avg TTR) and watchdog auto-resolved count. Briefings stored in `briefings` table for historical review. Scheduled triggers deliver via Gmail: daily at 6 AM PR, weekly Monday 6 AM PR.
-- **Phase 9** (client-scope safety): PLANNED — see Safety Design Principles below.
+- **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping. 59 tools (no new tools — safety built into existing tools).
 
-## Safety Design Principles
+## Safety Design Principles (Phase 9 — Implemented)
 
 These principles govern how ops-brain handles multi-client data. The system serves a solo operator
 managing two clients (HSR hospice + CPA firm) with different compliance domains (HIPAA vs IRS/tax).
 Since there is no second pair of eyes, the system itself must act as the safety gate.
 
-1. **Default-deny cross-client surfacing**: Add `cross_client_safe` boolean (default: false) to runbooks and knowledge tables. Content scoped to client A must NOT surface in client B context unless explicitly marked safe. The entries you forget to tag are the ones with compliance implications.
+1. **Default-deny cross-client surfacing**: `cross_client_safe` boolean (default: false) on runbooks and knowledge tables. Content scoped to client A does NOT surface in client B context unless explicitly marked safe. The entries you forget to tag are the ones with compliance implications.
 
-2. **Withhold-by-default on scope mismatch**: When semantic search or context tools would surface cross-client content, **withhold the actual content** and return only a scope mismatch notice. Require an explicit `acknowledge_cross_client: true` parameter on a second call to release the result. Content that never reaches the context window can't influence reasoning. A gate, not a banner.
+2. **Withhold-by-default on scope mismatch**: When semantic search or context tools would surface cross-client content, the actual content is **withheld** and replaced with a scope mismatch notice. An explicit `acknowledge_cross_client: true` parameter on a second call releases the result. Content that never reaches the context window can't influence reasoning. A gate, not a banner.
 
-3. **Provenance in all results**: Every surfaced runbook, knowledge entry, or incident must include its owning client in the response. Briefings must attribute each data point to its source client.
+3. **Provenance in all results**: Every surfaced runbook and knowledge entry includes `_client_slug` and `_client_name` provenance fields. Global content (no client_id) shows `_client_name: "Global"`.
 
-4. **Audit trail**: Log which knowledge/runbook entries were surfaced in which tool calls, enabling retroactive review of cross-client bleed.
+4. **Audit trail**: `audit_log` table records every cross-client surfacing attempt (withheld/released/released_safe) with tool_name, requesting_client_id, entity_type, entity_id, owning_client_id, and timestamp.
 
-5. **Friction is a feature**: The system was built to reduce friction and enable fast context-switching. That same design goal works against error-catching. Safety friction (the acknowledgment gate) is the one place where slowing down pays for itself.
+5. **Friction is a feature**: The system was built to reduce friction and enable fast context-switching. Safety friction (the acknowledgment gate) is the one place where slowing down pays for itself.
+
+### Cross-Client Gate Behavior
+
+- `client_id IS NULL` → always allowed (global content)
+- Same client as requesting → always allowed
+- Different client + `cross_client_safe = true` → allowed (marked safe)
+- Different client + `cross_client_safe = false` + `acknowledge_cross_client = true` → released (audit logged)
+- Different client + `cross_client_safe = false` + no acknowledgment → **WITHHELD** (notice returned, audit logged)
+
+### Tools Affected by Cross-Client Gate
+
+- `get_situational_awareness` — gates runbooks + knowledge via resolved client_id
+- `get_server_context` — gates runbooks + knowledge via resolved client_id
+- `search_runbooks` — optional `client_slug` + `acknowledge_cross_client` params
+- `search_knowledge` — optional `client_slug` + `acknowledge_cross_client` params
+- `semantic_search` — gates runbook + knowledge results (incidents/handoffs not gated)
+- `list_runbooks` — optional `client_slug` filter (DB-level, shows client + global)
+- `create_runbook` — optional `client_slug` + `cross_client_safe` params
+- `update_runbook` — optional `cross_client_safe` param
+- `add_knowledge` — optional `cross_client_safe` param
+- Watchdog: runbook suggestions client-scoped (same-client + global only)
 
 ## Deployment (kensai.cloud)
 

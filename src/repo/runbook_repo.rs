@@ -26,6 +26,7 @@ pub async fn list_runbooks(
     service_id: Option<Uuid>,
     server_id: Option<Uuid>,
     tag: Option<&str>,
+    client_id: Option<Uuid>,
 ) -> Result<Vec<Runbook>, sqlx::Error> {
     let mut query = String::from("SELECT r.* FROM runbooks r");
     let mut conditions: Vec<String> = Vec::new();
@@ -47,6 +48,13 @@ pub async fn list_runbooks(
     }
     if tag.is_some() {
         conditions.push(format!("${param_idx} = ANY(r.tags)"));
+        param_idx += 1;
+    }
+    if client_id.is_some() {
+        // Show runbooks owned by this client OR global (no client)
+        conditions.push(format!(
+            "(r.client_id = ${param_idx} OR r.client_id IS NULL)"
+        ));
         let _ = param_idx;
     }
 
@@ -69,6 +77,9 @@ pub async fn list_runbooks(
     if let Some(v) = tag {
         q = q.bind(v);
     }
+    if let Some(v) = client_id {
+        q = q.bind(v);
+    }
 
     q.fetch_all(pool).await
 }
@@ -84,12 +95,14 @@ pub async fn create_runbook(
     estimated_minutes: Option<i32>,
     requires_reboot: bool,
     notes: Option<&str>,
+    client_id: Option<Uuid>,
+    cross_client_safe: bool,
 ) -> Result<Runbook, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Runbook>(
         "INSERT INTO runbooks (id, title, slug, category, content, version, tags,
-            estimated_minutes, requires_reboot, notes)
-         VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9)
+            estimated_minutes, requires_reboot, notes, client_id, cross_client_safe)
+         VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, $10, $11)
          RETURNING *",
     )
     .bind(id)
@@ -101,6 +114,8 @@ pub async fn create_runbook(
     .bind(estimated_minutes)
     .bind(requires_reboot)
     .bind(notes)
+    .bind(client_id)
+    .bind(cross_client_safe)
     .fetch_one(pool)
     .await
 }
@@ -116,6 +131,7 @@ pub async fn update_runbook(
     estimated_minutes: Option<Option<i32>>,
     requires_reboot: Option<bool>,
     notes: Option<&str>,
+    cross_client_safe: Option<bool>,
 ) -> Result<Runbook, sqlx::Error> {
     sqlx::query_as::<_, Runbook>(
         "UPDATE runbooks SET
@@ -126,6 +142,7 @@ pub async fn update_runbook(
             estimated_minutes = COALESCE($6, estimated_minutes),
             requires_reboot = COALESCE($7, requires_reboot),
             notes = COALESCE($8, notes),
+            cross_client_safe = COALESCE($9, cross_client_safe),
             version = version + 1,
             updated_at = NOW()
          WHERE id = $1 RETURNING *",
@@ -138,6 +155,7 @@ pub async fn update_runbook(
     .bind(estimated_minutes)
     .bind(requires_reboot)
     .bind(notes)
+    .bind(cross_client_safe)
     .fetch_one(pool)
     .await
 }

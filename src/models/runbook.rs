@@ -14,6 +14,8 @@ pub struct Runbook {
     pub estimated_minutes: Option<i32>,
     pub requires_reboot: bool,
     pub notes: Option<String>,
+    pub client_id: Option<Uuid>,
+    pub cross_client_safe: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

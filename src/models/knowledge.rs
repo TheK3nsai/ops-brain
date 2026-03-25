@@ -10,6 +10,7 @@ pub struct Knowledge {
     pub category: Option<String>,
     pub tags: Vec<String>,
     pub client_id: Option<Uuid>,
+    pub cross_client_safe: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

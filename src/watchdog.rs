@@ -216,14 +216,20 @@ async fn handle_down_transition(
     // Resolve server and client for the incident
     let (server_id, service_id, client_id, severity) = if let Some(ref mapping) = monitor_mapping {
         let server = if let Some(sid) = mapping.server_id {
-            crate::repo::server_repo::get_server(pool, sid).await.ok().flatten()
+            crate::repo::server_repo::get_server(pool, sid)
+                .await
+                .ok()
+                .flatten()
         } else {
             None
         };
 
         let client_id = if let Some(ref srv) = server {
             // Walk server → site → client
-            let site = crate::repo::site_repo::get_site(pool, srv.site_id).await.ok().flatten();
+            let site = crate::repo::site_repo::get_site(pool, srv.site_id)
+                .await
+                .ok()
+                .flatten();
             site.map(|s| s.client_id)
         } else {
             None
@@ -287,14 +293,27 @@ async fn handle_down_transition(
         let _ = crate::repo::incident_repo::link_incident_service(pool, incident.id, sid).await;
     }
 
-    // Find and log relevant runbooks via semantic search
-    suggest_runbooks(pool, embedding_client, &incident.id, monitor_name, &symptoms).await;
+    // Find and log relevant runbooks via semantic search (client-scoped)
+    suggest_runbooks(
+        pool,
+        embedding_client,
+        &incident.id,
+        monitor_name,
+        &symptoms,
+        client_id,
+    )
+    .await;
 
     // Embed the incident (best-effort)
     if let Some(ref client) = embedding_client {
         let text = crate::embeddings::prepare_incident_text(&incident);
         if let Ok(embedding) = client.embed_text(&text).await {
-            let _ = crate::repo::embedding_repo::store_incident_embedding(pool, incident.id, &embedding).await;
+            let _ = crate::repo::embedding_repo::store_incident_embedding(
+                pool,
+                incident.id,
+                &embedding,
+            )
+            .await;
         }
     }
 
@@ -373,12 +392,14 @@ fn determine_severity(server: Option<&crate::models::server::Server>) -> String 
 }
 
 /// Use semantic search to find relevant runbooks and log them as suggestions.
+/// Only suggests runbooks from the same client or global (no client) — prevents cross-client leakage.
 async fn suggest_runbooks(
     pool: &PgPool,
     embedding_client: &Option<EmbeddingClient>,
     incident_id: &Uuid,
     monitor_name: &str,
     symptoms: &str,
+    client_id: Option<Uuid>,
 ) {
     // Try semantic search first, fall back to FTS
     let query_text = format!("{monitor_name} {symptoms}");
@@ -389,14 +410,26 @@ async fn suggest_runbooks(
         None
     };
 
-    let runbooks = crate::repo::embedding_repo::hybrid_search_runbooks(
+    let all_runbooks = crate::repo::embedding_repo::hybrid_search_runbooks(
         pool,
         &query_text,
         embedding.as_deref(),
-        3,
+        10, // fetch more, then filter by client scope
     )
     .await
     .unwrap_or_default();
+
+    // Filter to same-client or global runbooks only
+    let runbooks: Vec<_> = all_runbooks
+        .into_iter()
+        .filter(|r| match (client_id, r.client_id) {
+            (_, None) => true,                            // Global runbook — always OK
+            (Some(req), Some(own)) if req == own => true, // Same client
+            (Some(_), Some(_)) => r.cross_client_safe,    // Different client — only if marked safe
+            (None, Some(_)) => true,                      // No requesting client — allow all
+        })
+        .take(3)
+        .collect();
 
     if !runbooks.is_empty() {
         let suggestions: Vec<String> = runbooks

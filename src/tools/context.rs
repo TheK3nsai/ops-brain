@@ -9,6 +9,8 @@ pub struct GetSituationalAwarenessParams {
     pub service_slug: Option<String>,
     /// Client slug to get context for
     pub client_slug: Option<String>,
+    /// Set to true to release cross-client runbooks/knowledge that were withheld due to scope mismatch
+    pub acknowledge_cross_client: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -19,6 +21,8 @@ pub struct GetClientOverviewParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetServerContextParams {
     pub server_slug: String,
+    /// Set to true to release cross-client runbooks/knowledge that were withheld due to scope mismatch
+    pub acknowledge_cross_client: Option<bool>,
 }
 
 // Response structures for context tools
@@ -38,6 +42,8 @@ pub struct SituationalAwareness {
     pub monitoring: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub linked_tickets: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cross_client_withheld: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]

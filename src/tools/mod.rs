@@ -17,6 +17,8 @@ use rmcp::{
 use serde::Serialize;
 use sqlx::PgPool;
 
+use std::collections::HashMap;
+
 use crate::embeddings::EmbeddingClient;
 use crate::metrics::UptimeKumaConfig;
 use crate::models::handoff::Handoff;
@@ -48,9 +50,175 @@ fn not_found(entity: &str, key: &str) -> CallToolResult {
     CallToolResult::error(vec![Content::text(format!("{entity} not found: {key}"))])
 }
 
+/// Result of cross-client scope filtering.
+struct CrossClientFilterResult {
+    /// Items that passed the gate (with _provenance fields injected)
+    pub allowed: Vec<serde_json::Value>,
+    /// Grouped notices about withheld content (for response)
+    pub withheld_notices: Vec<serde_json::Value>,
+    /// Individual (entity_id, owning_client_id, action) for audit logging
+    pub audit_entries: Vec<(uuid::Uuid, Option<uuid::Uuid>, String)>,
+}
+
+/// Partition items into allowed and withheld based on cross-client scope.
+///
+/// Rules:
+/// - No requesting client → all items allowed (no scope to enforce)
+/// - Item client_id is NULL → allowed (global content)
+/// - Item client_id == requesting → allowed (same client)
+/// - Item client_id != requesting + cross_client_safe=true → allowed
+/// - Item client_id != requesting + cross_client_safe=false + acknowledge=true → allowed (released)
+/// - Item client_id != requesting + cross_client_safe=false + acknowledge=false → WITHHELD
+fn filter_cross_client(
+    items: Vec<serde_json::Value>,
+    entity_type: &str,
+    requesting_client_id: Option<uuid::Uuid>,
+    acknowledge: bool,
+    client_lookup: &HashMap<uuid::Uuid, (String, String)>, // client_id -> (slug, name)
+) -> CrossClientFilterResult {
+    let Some(req_cid) = requesting_client_id else {
+        // No requesting client scope — all items are allowed, inject provenance
+        let allowed = items
+            .into_iter()
+            .map(|mut item| {
+                inject_provenance(&mut item, client_lookup);
+                item
+            })
+            .collect();
+        return CrossClientFilterResult {
+            allowed,
+            withheld_notices: Vec::new(),
+            audit_entries: Vec::new(),
+        };
+    };
+
+    let mut allowed = Vec::new();
+    let mut withheld_by_client: HashMap<uuid::Uuid, Vec<uuid::Uuid>> = HashMap::new();
+    let mut audit_entries = Vec::new();
+
+    for mut item in items {
+        let item_client_id = item
+            .get("client_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+        let cross_client_safe = item
+            .get("cross_client_safe")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let entity_id = item
+            .get("id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+        match item_client_id {
+            // Global content (no client_id) — always allowed
+            None => {
+                inject_provenance(&mut item, client_lookup);
+                allowed.push(item);
+            }
+            // Same client — allowed
+            Some(cid) if cid == req_cid => {
+                inject_provenance(&mut item, client_lookup);
+                allowed.push(item);
+            }
+            // Different client but marked safe — allowed
+            Some(cid) if cross_client_safe => {
+                inject_provenance(&mut item, client_lookup);
+                allowed.push(item);
+                if let Some(eid) = entity_id {
+                    audit_entries.push((eid, Some(cid), "released_safe".to_string()));
+                }
+            }
+            // Different client, not safe, but acknowledged — released
+            Some(cid) if acknowledge => {
+                inject_provenance(&mut item, client_lookup);
+                allowed.push(item);
+                if let Some(eid) = entity_id {
+                    audit_entries.push((eid, Some(cid), "released".to_string()));
+                }
+            }
+            // Different client, not safe, not acknowledged — WITHHELD
+            Some(cid) => {
+                if let Some(eid) = entity_id {
+                    withheld_by_client.entry(cid).or_default().push(eid);
+                    audit_entries.push((eid, Some(cid), "withheld".to_string()));
+                }
+            }
+        }
+    }
+
+    // Build grouped withheld notices
+    let withheld_notices: Vec<serde_json::Value> = withheld_by_client
+        .into_iter()
+        .map(|(cid, entity_ids)| {
+            let (slug, name) = client_lookup
+                .get(&cid)
+                .cloned()
+                .unwrap_or_else(|| ("unknown".to_string(), "Unknown".to_string()));
+            serde_json::json!({
+                "entity_type": entity_type,
+                "count": entity_ids.len(),
+                "owning_client_slug": slug,
+                "owning_client_name": name,
+                "message": format!(
+                    "{} {}(s) from client '{}' withheld — cross-client scope mismatch. Re-call with acknowledge_cross_client: true to release.",
+                    entity_ids.len(), entity_type, name
+                )
+            })
+        })
+        .collect();
+
+    CrossClientFilterResult {
+        allowed,
+        withheld_notices,
+        audit_entries,
+    }
+}
+
+/// Inject _provenance fields (client slug + name) into a JSON item.
+fn inject_provenance(
+    item: &mut serde_json::Value,
+    client_lookup: &HashMap<uuid::Uuid, (String, String)>,
+) {
+    if let Some(obj) = item.as_object_mut() {
+        let client_id = obj
+            .get("client_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        match client_id {
+            Some(cid) => {
+                if let Some((slug, name)) = client_lookup.get(&cid) {
+                    obj.insert(
+                        "_client_slug".to_string(),
+                        serde_json::Value::String(slug.clone()),
+                    );
+                    obj.insert(
+                        "_client_name".to_string(),
+                        serde_json::Value::String(name.clone()),
+                    );
+                }
+            }
+            None => {
+                obj.insert("_client_slug".to_string(), serde_json::Value::Null);
+                obj.insert(
+                    "_client_name".to_string(),
+                    serde_json::Value::String("Global".to_string()),
+                );
+            }
+        }
+    }
+}
+
 #[tool_router]
 impl OpsBrain {
-    pub fn new(pool: PgPool, kuma_config: Option<UptimeKumaConfig>, embedding_client: Option<EmbeddingClient>, zammad_config: Option<ZammadConfig>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        kuma_config: Option<UptimeKumaConfig>,
+        embedding_client: Option<EmbeddingClient>,
+        zammad_config: Option<ZammadConfig>,
+    ) -> Self {
         Self {
             pool,
             kuma_config,
@@ -68,10 +236,30 @@ impl OpsBrain {
         match client.embed_text(text).await {
             Ok(embedding) => {
                 let result = match table {
-                    "runbooks" => crate::repo::embedding_repo::store_runbook_embedding(&self.pool, id, &embedding).await,
-                    "knowledge" => crate::repo::embedding_repo::store_knowledge_embedding(&self.pool, id, &embedding).await,
-                    "incidents" => crate::repo::embedding_repo::store_incident_embedding(&self.pool, id, &embedding).await,
-                    "handoffs" => crate::repo::embedding_repo::store_handoff_embedding(&self.pool, id, &embedding).await,
+                    "runbooks" => {
+                        crate::repo::embedding_repo::store_runbook_embedding(
+                            &self.pool, id, &embedding,
+                        )
+                        .await
+                    }
+                    "knowledge" => {
+                        crate::repo::embedding_repo::store_knowledge_embedding(
+                            &self.pool, id, &embedding,
+                        )
+                        .await
+                    }
+                    "incidents" => {
+                        crate::repo::embedding_repo::store_incident_embedding(
+                            &self.pool, id, &embedding,
+                        )
+                        .await
+                    }
+                    "handoffs" => {
+                        crate::repo::embedding_repo::store_handoff_embedding(
+                            &self.pool, id, &embedding,
+                        )
+                        .await
+                    }
                     _ => return,
                 };
                 if let Err(e) = result {
@@ -96,6 +284,42 @@ impl OpsBrain {
         }
     }
 
+    /// Build a client_id -> (slug, name) lookup from the database.
+    async fn build_client_lookup(&self) -> HashMap<uuid::Uuid, (String, String)> {
+        match crate::repo::client_repo::list_clients(&self.pool).await {
+            Ok(clients) => clients
+                .into_iter()
+                .map(|c| (c.id, (c.slug, c.name)))
+                .collect(),
+            Err(e) => {
+                tracing::warn!("Failed to build client lookup: {e}");
+                HashMap::new()
+            }
+        }
+    }
+
+    /// Write audit log entries for cross-client filtering results.
+    async fn log_audit_entries(
+        &self,
+        tool_name: &str,
+        requesting_client_id: Option<uuid::Uuid>,
+        entity_type: &str,
+        entries: &[(uuid::Uuid, Option<uuid::Uuid>, String)],
+    ) {
+        for (entity_id, owning_client_id, action) in entries {
+            crate::repo::audit_log_repo::log_access(
+                &self.pool,
+                tool_name,
+                requesting_client_id,
+                entity_type,
+                *entity_id,
+                *owning_client_id,
+                action,
+            )
+            .await;
+        }
+    }
+
     // ===== INVENTORY: READ TOOLS =====
 
     #[tool(
@@ -107,16 +331,14 @@ impl OpsBrain {
         params: Parameters<inventory::GetServerParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        let server = match crate::repo::server_repo::get_server_by_slug(&self.pool, &p.slug).await
-        {
+        let server = match crate::repo::server_repo::get_server_by_slug(&self.pool, &p.slug).await {
             Ok(Some(s)) => s,
             Ok(None) => return Ok(not_found("Server", &p.slug)),
             Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
         };
-        let services =
-            crate::repo::service_repo::get_services_for_server(&self.pool, server.id)
-                .await
-                .unwrap_or_default();
+        let services = crate::repo::service_repo::get_services_for_server(&self.pool, server.id)
+            .await
+            .unwrap_or_default();
         let site = crate::repo::site_repo::get_site(&self.pool, server.site_id)
             .await
             .ok()
@@ -158,13 +380,11 @@ impl OpsBrain {
 
         // Resolve site_slug to site_id
         let site_id = match &p.site_slug {
-            Some(slug) => {
-                match crate::repo::site_repo::get_site_by_slug(&self.pool, slug).await {
-                    Ok(Some(s)) => Some(s.id),
-                    Ok(None) => return Ok(not_found("Site", slug)),
-                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-                }
-            }
+            Some(slug) => match crate::repo::site_repo::get_site_by_slug(&self.pool, slug).await {
+                Ok(Some(s)) => Some(s.id),
+                Ok(None) => return Ok(not_found("Site", slug)),
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            },
             None => None,
         };
 
@@ -237,15 +457,10 @@ impl OpsBrain {
             Ok(None) => return Ok(not_found("Site", &p.slug)),
             Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
         };
-        let servers = crate::repo::server_repo::list_servers(
-            &self.pool,
-            None,
-            Some(site.id),
-            None,
-            None,
-        )
-        .await
-        .unwrap_or_default();
+        let servers =
+            crate::repo::server_repo::list_servers(&self.pool, None, Some(site.id), None, None)
+                .await
+                .unwrap_or_default();
         let networks = crate::repo::network_repo::list_networks(&self.pool, Some(site.id))
             .await
             .unwrap_or_default();
@@ -296,13 +511,11 @@ impl OpsBrain {
 
         // Otherwise filter by site_slug
         let site_id = match &p.site_slug {
-            Some(slug) => {
-                match crate::repo::site_repo::get_site_by_slug(&self.pool, slug).await {
-                    Ok(Some(s)) => Some(s.id),
-                    Ok(None) => return Ok(not_found("Site", slug)),
-                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-                }
-            }
+            Some(slug) => match crate::repo::site_repo::get_site_by_slug(&self.pool, slug).await {
+                Ok(Some(s)) => Some(s.id),
+                Ok(None) => return Ok(not_found("Site", slug)),
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            },
             None => None,
         };
 
@@ -414,12 +627,11 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
 
-        let site =
-            match crate::repo::site_repo::get_site_by_slug(&self.pool, &p.site_slug).await {
-                Ok(Some(s)) => s,
-                Ok(None) => return Ok(not_found("Site", &p.site_slug)),
-                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-            };
+        let site = match crate::repo::site_repo::get_site_by_slug(&self.pool, &p.site_slug).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return Ok(not_found("Site", &p.site_slug)),
+            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+        };
 
         // Resolve optional hypervisor_slug
         let hypervisor_id = match &p.hypervisor_slug {
@@ -602,6 +814,18 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
 
+        // Resolve optional client_slug
+        let client_id = match &p.client_slug {
+            Some(slug) => {
+                match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
+                    Ok(Some(c)) => Some(c.id),
+                    Ok(None) => return Ok(not_found("Client", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
+
         // Resolve optional service_slug
         let service_id = match &p.service_slug {
             Some(slug) => {
@@ -632,6 +856,7 @@ impl OpsBrain {
             service_id,
             server_id,
             p.tag.as_deref(),
+            client_id,
         )
         .await
         {
@@ -651,24 +876,77 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let mode = p.mode.as_deref().unwrap_or("fts");
-        if let Err(msg) = crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES) {
+        if let Err(msg) =
+            crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
+        {
             return Ok(error_result(&msg));
         }
+
+        // Resolve optional client_slug for cross-client gate
+        let requesting_client_id = match &p.client_slug {
+            Some(slug) => {
+                match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
+                    Ok(Some(c)) => Some(c.id),
+                    Ok(None) => return Ok(not_found("Client", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
+        let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
+
         let result = match mode {
             "semantic" => {
                 let Some(emb) = self.get_query_embedding(&p.query).await else {
-                    return Ok(error_result("Semantic search unavailable (OPENAI_API_KEY not set)"));
+                    return Ok(error_result(
+                        "Semantic search unavailable (OPENAI_API_KEY not set)",
+                    ));
                 };
                 crate::repo::embedding_repo::vector_search_runbooks(&self.pool, &emb, 20).await
             }
             "hybrid" => {
                 let emb = self.get_query_embedding(&p.query).await;
-                crate::repo::embedding_repo::hybrid_search_runbooks(&self.pool, &p.query, emb.as_deref(), 20).await
+                crate::repo::embedding_repo::hybrid_search_runbooks(
+                    &self.pool,
+                    &p.query,
+                    emb.as_deref(),
+                    20,
+                )
+                .await
             }
             _ => crate::repo::search_repo::search_runbooks(&self.pool, &p.query).await,
         };
         match result {
-            Ok(runbooks) => Ok(json_result(&runbooks)),
+            Ok(runbooks) => {
+                let items: Vec<serde_json::Value> = runbooks
+                    .iter()
+                    .filter_map(|r| serde_json::to_value(r).ok())
+                    .collect();
+                let client_lookup = self.build_client_lookup().await;
+                let filtered = filter_cross_client(
+                    items,
+                    "runbook",
+                    requesting_client_id,
+                    acknowledge,
+                    &client_lookup,
+                );
+
+                // Log audit entries
+                self.log_audit_entries(
+                    "search_runbooks",
+                    requesting_client_id,
+                    "runbook",
+                    &filtered.audit_entries,
+                )
+                .await;
+
+                let mut response = serde_json::json!({ "runbooks": filtered.allowed });
+                if !filtered.withheld_notices.is_empty() {
+                    response["cross_client_withheld"] =
+                        serde_json::json!(filtered.withheld_notices);
+                }
+                Ok(json_result(&response))
+            }
             Err(e) => Ok(error_result(&format!("Search error: {e}"))),
         }
     }
@@ -684,6 +962,19 @@ impl OpsBrain {
         let p = params.0;
         let tags = p.tags.unwrap_or_default();
         let requires_reboot = p.requires_reboot.unwrap_or(false);
+        let cross_client_safe = p.cross_client_safe.unwrap_or(false);
+
+        // Resolve optional client_slug
+        let client_id = match &p.client_slug {
+            Some(slug) => {
+                match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
+                    Ok(Some(c)) => Some(c.id),
+                    Ok(None) => return Ok(not_found("Client", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
 
         match crate::repo::runbook_repo::create_runbook(
             &self.pool,
@@ -695,6 +986,8 @@ impl OpsBrain {
             p.estimated_minutes,
             requires_reboot,
             p.notes.as_deref(),
+            client_id,
+            cross_client_safe,
         )
         .await
         {
@@ -737,6 +1030,7 @@ impl OpsBrain {
             estimated_minutes,
             p.requires_reboot,
             p.notes.as_deref(),
+            p.cross_client_safe,
         )
         .await
         {
@@ -761,6 +1055,7 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let tags = p.tags.unwrap_or_default();
+        let cross_client_safe = p.cross_client_safe.unwrap_or(false);
 
         // Resolve optional client_slug
         let client_id = match &p.client_slug {
@@ -781,6 +1076,7 @@ impl OpsBrain {
             p.category.as_deref(),
             &tags,
             client_id,
+            cross_client_safe,
         )
         .await
         {
@@ -804,24 +1100,76 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let mode = p.mode.as_deref().unwrap_or("fts");
-        if let Err(msg) = crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES) {
+        if let Err(msg) =
+            crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
+        {
             return Ok(error_result(&msg));
         }
+
+        // Resolve optional client_slug for cross-client gate
+        let requesting_client_id = match &p.client_slug {
+            Some(slug) => {
+                match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
+                    Ok(Some(c)) => Some(c.id),
+                    Ok(None) => return Ok(not_found("Client", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
+        let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
+
         let result = match mode {
             "semantic" => {
                 let Some(emb) = self.get_query_embedding(&p.query).await else {
-                    return Ok(error_result("Semantic search unavailable (OPENAI_API_KEY not set)"));
+                    return Ok(error_result(
+                        "Semantic search unavailable (OPENAI_API_KEY not set)",
+                    ));
                 };
                 crate::repo::embedding_repo::vector_search_knowledge(&self.pool, &emb, 20).await
             }
             "hybrid" => {
                 let emb = self.get_query_embedding(&p.query).await;
-                crate::repo::embedding_repo::hybrid_search_knowledge(&self.pool, &p.query, emb.as_deref(), 20).await
+                crate::repo::embedding_repo::hybrid_search_knowledge(
+                    &self.pool,
+                    &p.query,
+                    emb.as_deref(),
+                    20,
+                )
+                .await
             }
             _ => crate::repo::knowledge_repo::search_knowledge(&self.pool, &p.query).await,
         };
         match result {
-            Ok(entries) => Ok(json_result(&entries)),
+            Ok(entries) => {
+                let items: Vec<serde_json::Value> = entries
+                    .iter()
+                    .filter_map(|k| serde_json::to_value(k).ok())
+                    .collect();
+                let client_lookup = self.build_client_lookup().await;
+                let filtered = filter_cross_client(
+                    items,
+                    "knowledge",
+                    requesting_client_id,
+                    acknowledge,
+                    &client_lookup,
+                );
+
+                self.log_audit_entries(
+                    "search_knowledge",
+                    requesting_client_id,
+                    "knowledge",
+                    &filtered.audit_entries,
+                )
+                .await;
+
+                let mut response = serde_json::json!({ "knowledge": filtered.allowed });
+                if !filtered.withheld_notices.is_empty() {
+                    response["cross_client_withheld"] =
+                        serde_json::json!(filtered.withheld_notices);
+                }
+                Ok(json_result(&response))
+            }
             Err(e) => Ok(error_result(&format!("Search error: {e}"))),
         }
     }
@@ -881,6 +1229,8 @@ impl OpsBrain {
             ));
         }
 
+        let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
+
         let mut awareness = context::SituationalAwareness {
             server: None,
             site: None,
@@ -894,6 +1244,7 @@ impl OpsBrain {
             knowledge: Vec::new(),
             monitoring: Vec::new(),
             linked_tickets: Vec::new(),
+            cross_client_withheld: Vec::new(),
         };
 
         let mut client_id: Option<uuid::Uuid> = None;
@@ -955,6 +1306,7 @@ impl OpsBrain {
                     None,
                     Some(server.id),
                     None,
+                    None,
                 )
                 .await
                 {
@@ -1011,6 +1363,7 @@ impl OpsBrain {
                     &self.pool,
                     None,
                     Some(svc.id),
+                    None,
                     None,
                     None,
                 )
@@ -1093,9 +1446,11 @@ impl OpsBrain {
             // Merge with existing incidents (avoid duplicates by ID)
             for inc in &server_incidents {
                 if let Ok(val) = serde_json::to_value(inc) {
-                    if !awareness.recent_incidents.iter().any(|existing| {
-                        existing.get("id") == val.get("id")
-                    }) {
+                    if !awareness
+                        .recent_incidents
+                        .iter()
+                        .any(|existing| existing.get("id") == val.get("id"))
+                    {
                         awareness.recent_incidents.push(val);
                     }
                 }
@@ -1117,9 +1472,11 @@ impl OpsBrain {
 
             for inc in &service_incidents {
                 if let Ok(val) = serde_json::to_value(inc) {
-                    if !awareness.recent_incidents.iter().any(|existing| {
-                        existing.get("id") == val.get("id")
-                    }) {
+                    if !awareness
+                        .recent_incidents
+                        .iter()
+                        .any(|existing| existing.get("id") == val.get("id"))
+                    {
                         awareness.recent_incidents.push(val);
                     }
                 }
@@ -1145,9 +1502,11 @@ impl OpsBrain {
         {
             for entry in &general_knowledge {
                 if let Ok(val) = serde_json::to_value(entry) {
-                    if !awareness.knowledge.iter().any(|existing| {
-                        existing.get("id") == val.get("id")
-                    }) {
+                    if !awareness
+                        .knowledge
+                        .iter()
+                        .any(|existing| existing.get("id") == val.get("id"))
+                    {
                         awareness.knowledge.push(val);
                     }
                 }
@@ -1181,20 +1540,34 @@ impl OpsBrain {
                 let context_query = context_parts.join(" ");
                 if let Some(emb) = self.get_query_embedding(&context_query).await {
                     // Find semantically related runbooks
-                    if let Ok(related_runbooks) = crate::repo::embedding_repo::vector_search_runbooks(&self.pool, &emb, 5).await {
+                    if let Ok(related_runbooks) =
+                        crate::repo::embedding_repo::vector_search_runbooks(&self.pool, &emb, 5)
+                            .await
+                    {
                         for rb in &related_runbooks {
                             if let Ok(val) = serde_json::to_value(rb) {
-                                if !awareness.relevant_runbooks.iter().any(|existing| existing.get("id") == val.get("id")) {
+                                if !awareness
+                                    .relevant_runbooks
+                                    .iter()
+                                    .any(|existing| existing.get("id") == val.get("id"))
+                                {
                                     awareness.relevant_runbooks.push(val);
                                 }
                             }
                         }
                     }
                     // Find semantically related knowledge
-                    if let Ok(related_knowledge) = crate::repo::embedding_repo::vector_search_knowledge(&self.pool, &emb, 5).await {
+                    if let Ok(related_knowledge) =
+                        crate::repo::embedding_repo::vector_search_knowledge(&self.pool, &emb, 5)
+                            .await
+                    {
                         for k in &related_knowledge {
                             if let Ok(val) = serde_json::to_value(k) {
-                                if !awareness.knowledge.iter().any(|existing| existing.get("id") == val.get("id")) {
+                                if !awareness
+                                    .knowledge
+                                    .iter()
+                                    .any(|existing| existing.get("id") == val.get("id"))
+                                {
                                     awareness.knowledge.push(val);
                                 }
                             }
@@ -1202,6 +1575,49 @@ impl OpsBrain {
                     }
                 }
             }
+        }
+
+        // ── Cross-client scope gate for runbooks and knowledge ──
+        {
+            let client_lookup = self.build_client_lookup().await;
+
+            let rb_filtered = filter_cross_client(
+                std::mem::take(&mut awareness.relevant_runbooks),
+                "runbook",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            awareness.relevant_runbooks = rb_filtered.allowed;
+            awareness
+                .cross_client_withheld
+                .extend(rb_filtered.withheld_notices);
+            self.log_audit_entries(
+                "get_situational_awareness",
+                client_id,
+                "runbook",
+                &rb_filtered.audit_entries,
+            )
+            .await;
+
+            let kn_filtered = filter_cross_client(
+                std::mem::take(&mut awareness.knowledge),
+                "knowledge",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            awareness.knowledge = kn_filtered.allowed;
+            awareness
+                .cross_client_withheld
+                .extend(kn_filtered.withheld_notices);
+            self.log_audit_entries(
+                "get_situational_awareness",
+                client_id,
+                "knowledge",
+                &kn_filtered.audit_entries,
+            )
+            .await;
         }
 
         // Fetch live monitoring data for linked servers/services
@@ -1246,7 +1662,9 @@ impl OpsBrain {
         // Zammad linked tickets for this server/service
         if self.zammad_config.is_some() {
             if let Some(srv_id) = server_id {
-                if let Ok(links) = crate::repo::ticket_link_repo::get_links_for_server(&self.pool, srv_id).await {
+                if let Ok(links) =
+                    crate::repo::ticket_link_repo::get_links_for_server(&self.pool, srv_id).await
+                {
                     for link in &links {
                         if let Ok(val) = serde_json::to_value(link) {
                             awareness.linked_tickets.push(val);
@@ -1255,7 +1673,9 @@ impl OpsBrain {
                 }
             }
             if let Some(svc_id) = service_id {
-                if let Ok(links) = crate::repo::ticket_link_repo::get_links_for_service(&self.pool, svc_id).await {
+                if let Ok(links) =
+                    crate::repo::ticket_link_repo::get_links_for_service(&self.pool, svc_id).await
+                {
                     for link in &links {
                         if let Ok(val) = serde_json::to_value(link) {
                             awareness.linked_tickets.push(val);
@@ -1289,15 +1709,10 @@ impl OpsBrain {
             .await
             .unwrap_or_default();
 
-        let servers = crate::repo::server_repo::list_servers(
-            &self.pool,
-            Some(client.id),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap_or_default();
+        let servers =
+            crate::repo::server_repo::list_servers(&self.pool, Some(client.id), None, None, None)
+                .await
+                .unwrap_or_default();
 
         // Collect all service IDs from all servers
         let mut all_services = Vec::new();
@@ -1407,6 +1822,7 @@ impl OpsBrain {
         params: Parameters<context::GetServerContextParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
+        let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
 
         let server =
             match crate::repo::server_repo::get_server_by_slug(&self.pool, &p.server_slug).await {
@@ -1415,10 +1831,9 @@ impl OpsBrain {
                 Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
             };
 
-        let services =
-            crate::repo::service_repo::get_services_for_server(&self.pool, server.id)
-                .await
-                .unwrap_or_default();
+        let services = crate::repo::service_repo::get_services_for_server(&self.pool, server.id)
+            .await
+            .unwrap_or_default();
 
         let site = crate::repo::site_repo::get_site(&self.pool, server.site_id)
             .await
@@ -1491,6 +1906,7 @@ impl OpsBrain {
             None,
             Some(server.id),
             None,
+            None,
         )
         .await
         .unwrap_or_default();
@@ -1508,6 +1924,7 @@ impl OpsBrain {
                 &self.pool,
                 None,
                 Some(svc.id),
+                None,
                 None,
                 None,
             )
@@ -1536,7 +1953,11 @@ impl OpsBrain {
         };
         let mut seen_knowledge_ids: std::collections::HashSet<uuid::Uuid> = all_knowledge
             .iter()
-            .filter_map(|v| v.get("id").and_then(|id| id.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()))
+            .filter_map(|v| {
+                v.get("id")
+                    .and_then(|id| id.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            })
             .collect();
 
         // Semantic enrichment: find related runbooks/knowledge beyond explicit links
@@ -1550,7 +1971,9 @@ impl OpsBrain {
             }
             let context_query = context_parts.join(" ");
             if let Some(emb) = self.get_query_embedding(&context_query).await {
-                if let Ok(related_runbooks) = crate::repo::embedding_repo::vector_search_runbooks(&self.pool, &emb, 5).await {
+                if let Ok(related_runbooks) =
+                    crate::repo::embedding_repo::vector_search_runbooks(&self.pool, &emb, 5).await
+                {
                     for rb in &related_runbooks {
                         if seen_runbook_ids.insert(rb.id) {
                             if let Ok(val) = serde_json::to_value(rb) {
@@ -1559,7 +1982,9 @@ impl OpsBrain {
                         }
                     }
                 }
-                if let Ok(related_knowledge) = crate::repo::embedding_repo::vector_search_knowledge(&self.pool, &emb, 5).await {
+                if let Ok(related_knowledge) =
+                    crate::repo::embedding_repo::vector_search_knowledge(&self.pool, &emb, 5).await
+                {
                     for k in &related_knowledge {
                         if seen_knowledge_ids.insert(k.id) {
                             if let Ok(val) = serde_json::to_value(k) {
@@ -1569,6 +1994,46 @@ impl OpsBrain {
                     }
                 }
             }
+        }
+
+        // ── Cross-client scope gate for runbooks and knowledge ──
+        let mut cross_client_withheld: Vec<serde_json::Value> = Vec::new();
+        {
+            let client_lookup = self.build_client_lookup().await;
+
+            let rb_filtered = filter_cross_client(
+                std::mem::take(&mut all_runbooks),
+                "runbook",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            all_runbooks = rb_filtered.allowed;
+            cross_client_withheld.extend(rb_filtered.withheld_notices);
+            self.log_audit_entries(
+                "get_server_context",
+                client_id,
+                "runbook",
+                &rb_filtered.audit_entries,
+            )
+            .await;
+
+            let kn_filtered = filter_cross_client(
+                std::mem::take(&mut all_knowledge),
+                "knowledge",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            all_knowledge = kn_filtered.allowed;
+            cross_client_withheld.extend(kn_filtered.withheld_notices);
+            self.log_audit_entries(
+                "get_server_context",
+                client_id,
+                "knowledge",
+                &kn_filtered.audit_entries,
+            )
+            .await;
         }
 
         // Fetch live monitoring data for this server and its services
@@ -1610,7 +2075,9 @@ impl OpsBrain {
         // Zammad linked tickets for this server
         let mut linked_tickets: Vec<serde_json::Value> = Vec::new();
         if self.zammad_config.is_some() {
-            if let Ok(links) = crate::repo::ticket_link_repo::get_links_for_server(&self.pool, server.id).await {
+            if let Ok(links) =
+                crate::repo::ticket_link_repo::get_links_for_server(&self.pool, server.id).await
+            {
                 for link in &links {
                     if let Ok(val) = serde_json::to_value(link) {
                         linked_tickets.push(val);
@@ -1634,6 +2101,9 @@ impl OpsBrain {
         if !linked_tickets.is_empty() {
             result["linked_tickets"] = serde_json::json!(linked_tickets);
         }
+        if !cross_client_withheld.is_empty() {
+            result["cross_client_withheld"] = serde_json::json!(cross_client_withheld);
+        }
 
         Ok(json_result(&result))
     }
@@ -1651,7 +2121,11 @@ impl OpsBrain {
         let p = params.0;
         let severity = p.severity.as_deref().unwrap_or("medium");
 
-        if let Err(msg) = crate::validation::validate_required(severity, "severity", crate::validation::INCIDENT_SEVERITIES) {
+        if let Err(msg) = crate::validation::validate_required(
+            severity,
+            "severity",
+            crate::validation::INCIDENT_SEVERITIES,
+        ) {
             return Ok(error_result(&msg));
         }
 
@@ -1735,10 +2209,18 @@ impl OpsBrain {
             Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.id))),
         };
 
-        if let Err(msg) = crate::validation::validate_option(p.status.as_deref(), "status", crate::validation::INCIDENT_STATUSES) {
+        if let Err(msg) = crate::validation::validate_option(
+            p.status.as_deref(),
+            "status",
+            crate::validation::INCIDENT_STATUSES,
+        ) {
             return Ok(error_result(&msg));
         }
-        if let Err(msg) = crate::validation::validate_option(p.severity.as_deref(), "severity", crate::validation::INCIDENT_SEVERITIES) {
+        if let Err(msg) = crate::validation::validate_option(
+            p.severity.as_deref(),
+            "severity",
+            crate::validation::INCIDENT_SEVERITIES,
+        ) {
             return Ok(error_result(&msg));
         }
 
@@ -1824,10 +2306,18 @@ impl OpsBrain {
         let limit = p.limit.unwrap_or(20);
 
         // Validate filters
-        if let Err(msg) = crate::validation::validate_option(p.status.as_deref(), "status", crate::validation::INCIDENT_STATUSES) {
+        if let Err(msg) = crate::validation::validate_option(
+            p.status.as_deref(),
+            "status",
+            crate::validation::INCIDENT_STATUSES,
+        ) {
             return Ok(error_result(&msg));
         }
-        if let Err(msg) = crate::validation::validate_option(p.severity.as_deref(), "severity", crate::validation::INCIDENT_SEVERITIES) {
+        if let Err(msg) = crate::validation::validate_option(
+            p.severity.as_deref(),
+            "severity",
+            crate::validation::INCIDENT_SEVERITIES,
+        ) {
             return Ok(error_result(&msg));
         }
 
@@ -1869,19 +2359,29 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let mode = p.mode.as_deref().unwrap_or("fts");
-        if let Err(msg) = crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES) {
+        if let Err(msg) =
+            crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
+        {
             return Ok(error_result(&msg));
         }
         let result = match mode {
             "semantic" => {
                 let Some(emb) = self.get_query_embedding(&p.query).await else {
-                    return Ok(error_result("Semantic search unavailable (OPENAI_API_KEY not set)"));
+                    return Ok(error_result(
+                        "Semantic search unavailable (OPENAI_API_KEY not set)",
+                    ));
                 };
                 crate::repo::embedding_repo::vector_search_incidents(&self.pool, &emb, 20).await
             }
             "hybrid" => {
                 let emb = self.get_query_embedding(&p.query).await;
-                crate::repo::embedding_repo::hybrid_search_incidents(&self.pool, &p.query, emb.as_deref(), 20).await
+                crate::repo::embedding_repo::hybrid_search_incidents(
+                    &self.pool,
+                    &p.query,
+                    emb.as_deref(),
+                    20,
+                )
+                .await
             }
             _ => crate::repo::incident_repo::search_incidents(&self.pool, &p.query).await,
         };
@@ -1968,7 +2468,11 @@ impl OpsBrain {
         if let Some(rb_links) = &p.runbook_links {
             for rb_link in rb_links {
                 let usage = rb_link.usage.as_deref().unwrap_or("followed");
-                if let Err(msg) = crate::validation::validate_required(usage, "runbook usage", crate::validation::RUNBOOK_USAGES) {
+                if let Err(msg) = crate::validation::validate_required(
+                    usage,
+                    "runbook usage",
+                    crate::validation::RUNBOOK_USAGES,
+                ) {
                     return Ok(error_result(&msg));
                 }
                 match crate::repo::runbook_repo::get_runbook_by_slug(&self.pool, &rb_link.slug)
@@ -2038,8 +2542,12 @@ impl OpsBrain {
         params: Parameters<coordination::StartSessionParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        match crate::repo::session_repo::start_session(&self.pool, &p.machine_id, &p.machine_hostname)
-            .await
+        match crate::repo::session_repo::start_session(
+            &self.pool,
+            &p.machine_id,
+            &p.machine_hostname,
+        )
+        .await
         {
             Ok(session) => Ok(json_result(&session)),
             Err(e) => Ok(error_result(&format!("Database error: {e}"))),
@@ -2106,7 +2614,11 @@ impl OpsBrain {
         let p = params.0;
         let priority = p.priority.as_deref().unwrap_or("normal");
 
-        if let Err(msg) = crate::validation::validate_required(priority, "priority", crate::validation::HANDOFF_PRIORITIES) {
+        if let Err(msg) = crate::validation::validate_required(
+            priority,
+            "priority",
+            crate::validation::HANDOFF_PRIORITIES,
+        ) {
             return Ok(error_result(&msg));
         }
 
@@ -2174,10 +2686,7 @@ impl OpsBrain {
         }
     }
 
-    #[tool(
-        name = "complete_handoff",
-        description = "Mark a handoff as completed"
-    )]
+    #[tool(name = "complete_handoff", description = "Mark a handoff as completed")]
     async fn complete_handoff(
         &self,
         params: Parameters<coordination::UpdateHandoffStatusParams>,
@@ -2216,7 +2725,11 @@ impl OpsBrain {
         let p = params.0;
         let limit = p.limit.unwrap_or(20);
 
-        if let Err(msg) = crate::validation::validate_option(p.status.as_deref(), "status", crate::validation::HANDOFF_STATUSES) {
+        if let Err(msg) = crate::validation::validate_option(
+            p.status.as_deref(),
+            "status",
+            crate::validation::HANDOFF_STATUSES,
+        ) {
             return Ok(error_result(&msg));
         }
 
@@ -2245,19 +2758,29 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let mode = p.mode.as_deref().unwrap_or("fts");
-        if let Err(msg) = crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES) {
+        if let Err(msg) =
+            crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
+        {
             return Ok(error_result(&msg));
         }
         let result = match mode {
             "semantic" => {
                 let Some(emb) = self.get_query_embedding(&p.query).await else {
-                    return Ok(error_result("Semantic search unavailable (OPENAI_API_KEY not set)"));
+                    return Ok(error_result(
+                        "Semantic search unavailable (OPENAI_API_KEY not set)",
+                    ));
                 };
                 crate::repo::embedding_repo::vector_search_handoffs(&self.pool, &emb, 20).await
             }
             "hybrid" => {
                 let emb = self.get_query_embedding(&p.query).await;
-                crate::repo::embedding_repo::hybrid_search_handoffs(&self.pool, &p.query, emb.as_deref(), 20).await
+                crate::repo::embedding_repo::hybrid_search_handoffs(
+                    &self.pool,
+                    &p.query,
+                    emb.as_deref(),
+                    20,
+                )
+                .await
             }
             _ => crate::repo::handoff_repo::search_handoffs(&self.pool, &p.query).await,
         };
@@ -2291,45 +2814,168 @@ impl OpsBrain {
             ]
         });
 
+        // Resolve optional client_slug for cross-client gate
+        let requesting_client_id = match &p.client_slug {
+            Some(slug) => {
+                match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
+                    Ok(Some(c)) => Some(c.id),
+                    Ok(None) => return Ok(not_found("Client", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
+            None => None,
+        };
+        let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
+
         let query_embedding = self.get_query_embedding(&p.query).await;
         let emb_ref = query_embedding.as_deref();
 
         let mut results = serde_json::Map::new();
+        let client_lookup = self.build_client_lookup().await;
+        let mut all_withheld: Vec<serde_json::Value> = Vec::new();
 
-        // Run searches for requested tables
+        // Run searches for requested tables — gate runbooks and knowledge
         if tables.iter().any(|t| t == "runbooks") {
-            match crate::repo::embedding_repo::hybrid_search_runbooks(&self.pool, &p.query, emb_ref, limit).await {
-                Ok(items) => { results.insert("runbooks".to_string(), serde_json::to_value(&items).unwrap_or_default()); }
-                Err(e) => { results.insert("runbooks_error".to_string(), serde_json::Value::String(e.to_string())); }
+            match crate::repo::embedding_repo::hybrid_search_runbooks(
+                &self.pool, &p.query, emb_ref, limit,
+            )
+            .await
+            {
+                Ok(items) => {
+                    let json_items: Vec<serde_json::Value> = items
+                        .iter()
+                        .filter_map(|r| serde_json::to_value(r).ok())
+                        .collect();
+                    let filtered = filter_cross_client(
+                        json_items,
+                        "runbook",
+                        requesting_client_id,
+                        acknowledge,
+                        &client_lookup,
+                    );
+                    results.insert(
+                        "runbooks".to_string(),
+                        serde_json::to_value(&filtered.allowed).unwrap_or_default(),
+                    );
+                    all_withheld.extend(filtered.withheld_notices);
+                    self.log_audit_entries(
+                        "semantic_search",
+                        requesting_client_id,
+                        "runbook",
+                        &filtered.audit_entries,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    results.insert(
+                        "runbooks_error".to_string(),
+                        serde_json::Value::String(e.to_string()),
+                    );
+                }
             }
         }
         if tables.iter().any(|t| t == "knowledge") {
-            match crate::repo::embedding_repo::hybrid_search_knowledge(&self.pool, &p.query, emb_ref, limit).await {
-                Ok(items) => { results.insert("knowledge".to_string(), serde_json::to_value(&items).unwrap_or_default()); }
-                Err(e) => { results.insert("knowledge_error".to_string(), serde_json::Value::String(e.to_string())); }
+            match crate::repo::embedding_repo::hybrid_search_knowledge(
+                &self.pool, &p.query, emb_ref, limit,
+            )
+            .await
+            {
+                Ok(items) => {
+                    let json_items: Vec<serde_json::Value> = items
+                        .iter()
+                        .filter_map(|k| serde_json::to_value(k).ok())
+                        .collect();
+                    let filtered = filter_cross_client(
+                        json_items,
+                        "knowledge",
+                        requesting_client_id,
+                        acknowledge,
+                        &client_lookup,
+                    );
+                    results.insert(
+                        "knowledge".to_string(),
+                        serde_json::to_value(&filtered.allowed).unwrap_or_default(),
+                    );
+                    all_withheld.extend(filtered.withheld_notices);
+                    self.log_audit_entries(
+                        "semantic_search",
+                        requesting_client_id,
+                        "knowledge",
+                        &filtered.audit_entries,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    results.insert(
+                        "knowledge_error".to_string(),
+                        serde_json::Value::String(e.to_string()),
+                    );
+                }
             }
         }
+        // Incidents and handoffs are NOT gated (factual records, already client-scoped)
         if tables.iter().any(|t| t == "incidents") {
-            match crate::repo::embedding_repo::hybrid_search_incidents(&self.pool, &p.query, emb_ref, limit).await {
-                Ok(items) => { results.insert("incidents".to_string(), serde_json::to_value(&items).unwrap_or_default()); }
-                Err(e) => { results.insert("incidents_error".to_string(), serde_json::Value::String(e.to_string())); }
+            match crate::repo::embedding_repo::hybrid_search_incidents(
+                &self.pool, &p.query, emb_ref, limit,
+            )
+            .await
+            {
+                Ok(items) => {
+                    results.insert(
+                        "incidents".to_string(),
+                        serde_json::to_value(&items).unwrap_or_default(),
+                    );
+                }
+                Err(e) => {
+                    results.insert(
+                        "incidents_error".to_string(),
+                        serde_json::Value::String(e.to_string()),
+                    );
+                }
             }
         }
         if tables.iter().any(|t| t == "handoffs") {
-            match crate::repo::embedding_repo::hybrid_search_handoffs(&self.pool, &p.query, emb_ref, limit).await {
-                Ok(items) => { results.insert("handoffs".to_string(), serde_json::to_value(&items).unwrap_or_default()); }
-                Err(e) => { results.insert("handoffs_error".to_string(), serde_json::Value::String(e.to_string())); }
+            match crate::repo::embedding_repo::hybrid_search_handoffs(
+                &self.pool, &p.query, emb_ref, limit,
+            )
+            .await
+            {
+                Ok(items) => {
+                    results.insert(
+                        "handoffs".to_string(),
+                        serde_json::to_value(&items).unwrap_or_default(),
+                    );
+                }
+                Err(e) => {
+                    results.insert(
+                        "handoffs_error".to_string(),
+                        serde_json::Value::String(e.to_string()),
+                    );
+                }
             }
         }
 
+        if !all_withheld.is_empty() {
+            results.insert(
+                "cross_client_withheld".to_string(),
+                serde_json::to_value(&all_withheld).unwrap_or_default(),
+            );
+        }
+
         if query_embedding.is_none() && self.embedding_client.is_some() {
-            results.insert("_note".to_string(), serde_json::Value::String(
-                "Embedding API call failed — results are FTS-only".to_string(),
-            ));
+            results.insert(
+                "_note".to_string(),
+                serde_json::Value::String(
+                    "Embedding API call failed — results are FTS-only".to_string(),
+                ),
+            );
         } else if self.embedding_client.is_none() {
-            results.insert("_note".to_string(), serde_json::Value::String(
-                "OPENAI_API_KEY not set — results are FTS-only".to_string(),
-            ));
+            results.insert(
+                "_note".to_string(),
+                serde_json::Value::String(
+                    "OPENAI_API_KEY not set — results are FTS-only".to_string(),
+                ),
+            );
         }
 
         Ok(json_result(&serde_json::Value::Object(results)))
@@ -2346,7 +2992,9 @@ impl OpsBrain {
         params: Parameters<search::BackfillEmbeddingsParams>,
     ) -> Result<CallToolResult, McpError> {
         let Some(ref client) = self.embedding_client else {
-            return Ok(error_result("OPENAI_API_KEY not set — cannot generate embeddings"));
+            return Ok(error_result(
+                "OPENAI_API_KEY not set — cannot generate embeddings",
+            ));
         };
 
         let p = params.0;
@@ -2364,12 +3012,24 @@ impl OpsBrain {
 
             match *table {
                 "runbooks" => {
-                    if let Ok(rows) = crate::repo::embedding_repo::get_runbooks_without_embeddings(&self.pool, batch_size).await {
-                        let texts: Vec<String> = rows.iter().map(crate::embeddings::prepare_runbook_text).collect();
+                    if let Ok(rows) = crate::repo::embedding_repo::get_runbooks_without_embeddings(
+                        &self.pool, batch_size,
+                    )
+                    .await
+                    {
+                        let texts: Vec<String> = rows
+                            .iter()
+                            .map(crate::embeddings::prepare_runbook_text)
+                            .collect();
                         match client.embed_texts(&texts).await {
                             Ok(embeddings) => {
                                 for (row, emb) in rows.iter().zip(embeddings.iter()) {
-                                    if crate::repo::embedding_repo::store_runbook_embedding(&self.pool, row.id, emb).await.is_ok() {
+                                    if crate::repo::embedding_repo::store_runbook_embedding(
+                                        &self.pool, row.id, emb,
+                                    )
+                                    .await
+                                    .is_ok()
+                                    {
                                         processed += 1;
                                     } else {
                                         failed += 1;
@@ -2377,18 +3037,33 @@ impl OpsBrain {
                                 }
                             }
                             Err(e) => {
-                                summary.insert(format!("{table}_error"), serde_json::Value::String(e.to_string()));
+                                summary.insert(
+                                    format!("{table}_error"),
+                                    serde_json::Value::String(e.to_string()),
+                                );
                             }
                         }
                     }
                 }
                 "knowledge" => {
-                    if let Ok(rows) = crate::repo::embedding_repo::get_knowledge_without_embeddings(&self.pool, batch_size).await {
-                        let texts: Vec<String> = rows.iter().map(crate::embeddings::prepare_knowledge_text).collect();
+                    if let Ok(rows) = crate::repo::embedding_repo::get_knowledge_without_embeddings(
+                        &self.pool, batch_size,
+                    )
+                    .await
+                    {
+                        let texts: Vec<String> = rows
+                            .iter()
+                            .map(crate::embeddings::prepare_knowledge_text)
+                            .collect();
                         match client.embed_texts(&texts).await {
                             Ok(embeddings) => {
                                 for (row, emb) in rows.iter().zip(embeddings.iter()) {
-                                    if crate::repo::embedding_repo::store_knowledge_embedding(&self.pool, row.id, emb).await.is_ok() {
+                                    if crate::repo::embedding_repo::store_knowledge_embedding(
+                                        &self.pool, row.id, emb,
+                                    )
+                                    .await
+                                    .is_ok()
+                                    {
                                         processed += 1;
                                     } else {
                                         failed += 1;
@@ -2396,18 +3071,33 @@ impl OpsBrain {
                                 }
                             }
                             Err(e) => {
-                                summary.insert(format!("{table}_error"), serde_json::Value::String(e.to_string()));
+                                summary.insert(
+                                    format!("{table}_error"),
+                                    serde_json::Value::String(e.to_string()),
+                                );
                             }
                         }
                     }
                 }
                 "incidents" => {
-                    if let Ok(rows) = crate::repo::embedding_repo::get_incidents_without_embeddings(&self.pool, batch_size).await {
-                        let texts: Vec<String> = rows.iter().map(crate::embeddings::prepare_incident_text).collect();
+                    if let Ok(rows) = crate::repo::embedding_repo::get_incidents_without_embeddings(
+                        &self.pool, batch_size,
+                    )
+                    .await
+                    {
+                        let texts: Vec<String> = rows
+                            .iter()
+                            .map(crate::embeddings::prepare_incident_text)
+                            .collect();
                         match client.embed_texts(&texts).await {
                             Ok(embeddings) => {
                                 for (row, emb) in rows.iter().zip(embeddings.iter()) {
-                                    if crate::repo::embedding_repo::store_incident_embedding(&self.pool, row.id, emb).await.is_ok() {
+                                    if crate::repo::embedding_repo::store_incident_embedding(
+                                        &self.pool, row.id, emb,
+                                    )
+                                    .await
+                                    .is_ok()
+                                    {
                                         processed += 1;
                                     } else {
                                         failed += 1;
@@ -2415,18 +3105,33 @@ impl OpsBrain {
                                 }
                             }
                             Err(e) => {
-                                summary.insert(format!("{table}_error"), serde_json::Value::String(e.to_string()));
+                                summary.insert(
+                                    format!("{table}_error"),
+                                    serde_json::Value::String(e.to_string()),
+                                );
                             }
                         }
                     }
                 }
                 "handoffs" => {
-                    if let Ok(rows) = crate::repo::embedding_repo::get_handoffs_without_embeddings(&self.pool, batch_size).await {
-                        let texts: Vec<String> = rows.iter().map(crate::embeddings::prepare_handoff_text).collect();
+                    if let Ok(rows) = crate::repo::embedding_repo::get_handoffs_without_embeddings(
+                        &self.pool, batch_size,
+                    )
+                    .await
+                    {
+                        let texts: Vec<String> = rows
+                            .iter()
+                            .map(crate::embeddings::prepare_handoff_text)
+                            .collect();
                         match client.embed_texts(&texts).await {
                             Ok(embeddings) => {
                                 for (row, emb) in rows.iter().zip(embeddings.iter()) {
-                                    if crate::repo::embedding_repo::store_handoff_embedding(&self.pool, row.id, emb).await.is_ok() {
+                                    if crate::repo::embedding_repo::store_handoff_embedding(
+                                        &self.pool, row.id, emb,
+                                    )
+                                    .await
+                                    .is_ok()
+                                    {
                                         processed += 1;
                                     } else {
                                         failed += 1;
@@ -2434,27 +3139,52 @@ impl OpsBrain {
                                 }
                             }
                             Err(e) => {
-                                summary.insert(format!("{table}_error"), serde_json::Value::String(e.to_string()));
+                                summary.insert(
+                                    format!("{table}_error"),
+                                    serde_json::Value::String(e.to_string()),
+                                );
                             }
                         }
                     }
                 }
                 _ => {
-                    summary.insert(format!("{table}_error"), serde_json::Value::String("Unknown table".to_string()));
+                    summary.insert(
+                        format!("{table}_error"),
+                        serde_json::Value::String("Unknown table".to_string()),
+                    );
                     continue;
                 }
             }
 
-            summary.insert(format!("{table}_processed"), serde_json::Value::Number(processed.into()));
-            summary.insert(format!("{table}_failed"), serde_json::Value::Number(failed.into()));
+            summary.insert(
+                format!("{table}_processed"),
+                serde_json::Value::Number(processed.into()),
+            );
+            summary.insert(
+                format!("{table}_failed"),
+                serde_json::Value::Number(failed.into()),
+            );
         }
 
         // Get remaining counts
-        if let Ok(counts) = crate::repo::embedding_repo::count_missing_embeddings(&self.pool).await {
-            summary.insert("remaining_runbooks".to_string(), serde_json::Value::Number(counts.runbooks.into()));
-            summary.insert("remaining_knowledge".to_string(), serde_json::Value::Number(counts.knowledge.into()));
-            summary.insert("remaining_incidents".to_string(), serde_json::Value::Number(counts.incidents.into()));
-            summary.insert("remaining_handoffs".to_string(), serde_json::Value::Number(counts.handoffs.into()));
+        if let Ok(counts) = crate::repo::embedding_repo::count_missing_embeddings(&self.pool).await
+        {
+            summary.insert(
+                "remaining_runbooks".to_string(),
+                serde_json::Value::Number(counts.runbooks.into()),
+            );
+            summary.insert(
+                "remaining_knowledge".to_string(),
+                serde_json::Value::Number(counts.knowledge.into()),
+            );
+            summary.insert(
+                "remaining_incidents".to_string(),
+                serde_json::Value::Number(counts.incidents.into()),
+            );
+            summary.insert(
+                "remaining_handoffs".to_string(),
+                serde_json::Value::Number(counts.handoffs.into()),
+            );
         }
 
         Ok(json_result(&serde_json::Value::Object(summary)))
@@ -2474,7 +3204,11 @@ impl OpsBrain {
         let p = params.0;
         let kuma_config = match &self.kuma_config {
             Some(c) => c,
-            None => return Ok(error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)")),
+            None => {
+                return Ok(error_result(
+                    "Uptime Kuma not configured (set UPTIME_KUMA_URL)",
+                ))
+            }
         };
 
         let summary = match crate::metrics::fetch_metrics(kuma_config).await {
@@ -2499,8 +3233,10 @@ impl OpsBrain {
             let mapping = mappings.iter().find(|m| m.monitor_name == monitor.name);
             let mut val = serde_json::to_value(monitor).unwrap_or_default();
             if let Some(mapping) = mapping {
-                val["linked_server_id"] = serde_json::to_value(mapping.server_id).unwrap_or_default();
-                val["linked_service_id"] = serde_json::to_value(mapping.service_id).unwrap_or_default();
+                val["linked_server_id"] =
+                    serde_json::to_value(mapping.server_id).unwrap_or_default();
+                val["linked_service_id"] =
+                    serde_json::to_value(mapping.service_id).unwrap_or_default();
                 val["mapping_notes"] = serde_json::to_value(&mapping.notes).unwrap_or_default();
             }
             results.push(val);
@@ -2530,7 +3266,11 @@ impl OpsBrain {
         let p = params.0;
         let kuma_config = match &self.kuma_config {
             Some(c) => c,
-            None => return Ok(error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)")),
+            None => {
+                return Ok(error_result(
+                    "Uptime Kuma not configured (set UPTIME_KUMA_URL)",
+                ))
+            }
         };
 
         let summary = match crate::metrics::fetch_metrics(kuma_config).await {
@@ -2583,7 +3323,11 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let kuma_config = match &self.kuma_config {
             Some(c) => c,
-            None => return Ok(error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)")),
+            None => {
+                return Ok(error_result(
+                    "Uptime Kuma not configured (set UPTIME_KUMA_URL)",
+                ))
+            }
         };
 
         let summary = match crate::metrics::fetch_metrics(kuma_config).await {
@@ -2743,15 +3487,20 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let zammad = match &self.zammad_config {
             Some(c) => c,
-            None => return Ok(error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)")),
+            None => {
+                return Ok(error_result(
+                    "Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)",
+                ))
+            }
         };
         let p = params.0;
 
-        let client = match crate::repo::client_repo::get_client_by_slug(&self.pool, &p.client_slug).await {
-            Ok(Some(c)) => c,
-            Ok(None) => return Ok(not_found("Client", &p.client_slug)),
-            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-        };
+        let client =
+            match crate::repo::client_repo::get_client_by_slug(&self.pool, &p.client_slug).await {
+                Ok(Some(c)) => c,
+                Ok(None) => return Ok(not_found("Client", &p.client_slug)),
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            };
 
         let org_id = match client.zammad_org_id {
             Some(id) => id,
@@ -2794,7 +3543,11 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let zammad = match &self.zammad_config {
             Some(c) => c,
-            None => return Ok(error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)")),
+            None => {
+                return Ok(error_result(
+                    "Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)",
+                ))
+            }
         };
         let p = params.0;
 
@@ -2808,10 +3561,11 @@ impl OpsBrain {
             Err(e) => return Ok(error_result(&e)),
         };
 
-        let link = crate::repo::ticket_link_repo::get_link_by_ticket_id(&self.pool, p.ticket_id as i32)
-            .await
-            .ok()
-            .flatten();
+        let link =
+            crate::repo::ticket_link_repo::get_link_by_ticket_id(&self.pool, p.ticket_id as i32)
+                .await
+                .ok()
+                .flatten();
 
         let result = serde_json::json!({
             "ticket": ticket,
@@ -2831,15 +3585,20 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let zammad = match &self.zammad_config {
             Some(c) => c,
-            None => return Ok(error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)")),
+            None => {
+                return Ok(error_result(
+                    "Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)",
+                ))
+            }
         };
         let p = params.0;
 
-        let client = match crate::repo::client_repo::get_client_by_slug(&self.pool, &p.client_slug).await {
-            Ok(Some(c)) => c,
-            Ok(None) => return Ok(not_found("Client", &p.client_slug)),
-            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-        };
+        let client =
+            match crate::repo::client_repo::get_client_by_slug(&self.pool, &p.client_slug).await {
+                Ok(Some(c)) => c,
+                Ok(None) => return Ok(not_found("Client", &p.client_slug)),
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            };
 
         let (group_id, customer_id, org_id) = match (client.zammad_group_id, client.zammad_customer_id, client.zammad_org_id) {
             (Some(g), Some(c), org) => (g as i64, c as i64, org.map(|o| o as i64)),
@@ -2852,7 +3611,11 @@ impl OpsBrain {
         let state_id = match &p.state {
             Some(s) => match crate::zammad::state_name_to_id(s) {
                 Some(id) => Some(id),
-                None => return Ok(error_result(&format!("Unknown state: '{s}'. Use: new, open, pending_reminder, closed"))),
+                None => {
+                    return Ok(error_result(&format!(
+                        "Unknown state: '{s}'. Use: new, open, pending_reminder, closed"
+                    )))
+                }
             },
             None => None,
         };
@@ -2860,7 +3623,11 @@ impl OpsBrain {
         let priority_id = match &p.priority {
             Some(pr) => match crate::zammad::priority_name_to_id(pr) {
                 Some(id) => Some(id),
-                None => return Ok(error_result(&format!("Unknown priority: '{pr}'. Use: low, normal, high"))),
+                None => {
+                    return Ok(error_result(&format!(
+                        "Unknown priority: '{pr}'. Use: low, normal, high"
+                    )))
+                }
             },
             None => None,
         };
@@ -2917,14 +3684,22 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let zammad = match &self.zammad_config {
             Some(c) => c,
-            None => return Ok(error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)")),
+            None => {
+                return Ok(error_result(
+                    "Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)",
+                ))
+            }
         };
         let p = params.0;
 
         let state_id = match &p.state {
             Some(s) => match crate::zammad::state_name_to_id(s) {
                 Some(id) => Some(id),
-                None => return Ok(error_result(&format!("Unknown state: '{s}'. Use: new, open, pending_reminder, closed"))),
+                None => {
+                    return Ok(error_result(&format!(
+                        "Unknown state: '{s}'. Use: new, open, pending_reminder, closed"
+                    )))
+                }
             },
             None => None,
         };
@@ -2932,7 +3707,11 @@ impl OpsBrain {
         let priority_id = match &p.priority {
             Some(pr) => match crate::zammad::priority_name_to_id(pr) {
                 Some(id) => Some(id),
-                None => return Ok(error_result(&format!("Unknown priority: '{pr}'. Use: low, normal, high"))),
+                None => {
+                    return Ok(error_result(&format!(
+                        "Unknown priority: '{pr}'. Use: low, normal, high"
+                    )))
+                }
             },
             None => None,
         };
@@ -2960,7 +3739,11 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let zammad = match &self.zammad_config {
             Some(c) => c,
-            None => return Ok(error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)")),
+            None => {
+                return Ok(error_result(
+                    "Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)",
+                ))
+            }
         };
         let p = params.0;
 
@@ -2990,7 +3773,11 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let zammad = match &self.zammad_config {
             Some(c) => c,
-            None => return Ok(error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)")),
+            None => {
+                return Ok(error_result(
+                    "Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)",
+                ))
+            }
         };
         let p = params.0;
         let limit = p.limit.unwrap_or(20);
@@ -3026,33 +3813,35 @@ impl OpsBrain {
 
         let incident_id = match &p.incident_id {
             Some(id_str) => match uuid::Uuid::parse_str(id_str) {
-                Ok(id) => {
-                    match crate::repo::incident_repo::get_incident(&self.pool, id).await {
-                        Ok(Some(_)) => Some(id),
-                        Ok(None) => return Ok(not_found("Incident", id_str)),
-                        Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-                    }
-                }
+                Ok(id) => match crate::repo::incident_repo::get_incident(&self.pool, id).await {
+                    Ok(Some(_)) => Some(id),
+                    Ok(None) => return Ok(not_found("Incident", id_str)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                },
                 Err(_) => return Ok(error_result(&format!("Invalid incident UUID: {}", id_str))),
             },
             None => None,
         };
 
         let server_id = match &p.server_slug {
-            Some(slug) => match crate::repo::server_repo::get_server_by_slug(&self.pool, slug).await {
-                Ok(Some(s)) => Some(s.id),
-                Ok(None) => return Ok(not_found("Server", slug)),
-                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-            },
+            Some(slug) => {
+                match crate::repo::server_repo::get_server_by_slug(&self.pool, slug).await {
+                    Ok(Some(s)) => Some(s.id),
+                    Ok(None) => return Ok(not_found("Server", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
             None => None,
         };
 
         let service_id = match &p.service_slug {
-            Some(slug) => match crate::repo::service_repo::get_service_by_slug(&self.pool, slug).await {
-                Ok(Some(s)) => Some(s.id),
-                Ok(None) => return Ok(not_found("Service", slug)),
-                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-            },
+            Some(slug) => {
+                match crate::repo::service_repo::get_service_by_slug(&self.pool, slug).await {
+                    Ok(Some(s)) => Some(s.id),
+                    Ok(None) => return Ok(not_found("Service", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
             None => None,
         };
 
@@ -3080,7 +3869,9 @@ impl OpsBrain {
         params: Parameters<zammad::UnlinkTicketParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        match crate::repo::ticket_link_repo::delete_link(&self.pool, p.zammad_ticket_id as i32).await {
+        match crate::repo::ticket_link_repo::delete_link(&self.pool, p.zammad_ticket_id as i32)
+            .await
+        {
             Ok(true) => {
                 let result = serde_json::json!({
                     "status": "unlinked",
@@ -3120,11 +3911,13 @@ impl OpsBrain {
         }
 
         let client = match &p.client_slug {
-            Some(slug) => match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
-                Ok(Some(c)) => Some(c),
-                Ok(None) => return Ok(not_found("Client", slug)),
-                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
-            },
+            Some(slug) => {
+                match crate::repo::client_repo::get_client_by_slug(&self.pool, slug).await {
+                    Ok(Some(c)) => Some(c),
+                    Ok(None) => return Ok(not_found("Client", slug)),
+                    Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+                }
+            }
             None => None,
         };
 
@@ -3218,10 +4011,7 @@ impl OpsBrain {
 impl ServerHandler for OpsBrain {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "ops-brain",
-                env!("CARGO_PKG_VERSION"),
-            ))
+            .with_server_info(Implementation::new("ops-brain", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Operational intelligence server for IT infrastructure management. \
                  Use get_situational_awareness for comprehensive context about any \

@@ -288,9 +288,7 @@ TicketLink ── Zammad Ticket (external)
 - [x] **Phase 7**: Zammad integration — live Zammad REST API queries, ticket CRUD with time accounting, ticket-to-entity linking, context tools enriched with ticket data — 56 tools
 - [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools
 
-### Planned
-
-- [ ] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing, withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution in all results, audit trail for cross-client data access. Ensures HIPAA (HSR) and tax-regulatory (CPA) content cannot silently cross-pollinate.
+- [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions — 59 tools
 
 ## License
 

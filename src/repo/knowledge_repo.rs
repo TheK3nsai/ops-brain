@@ -10,11 +10,12 @@ pub async fn add_knowledge(
     category: Option<&str>,
     tags: &[String],
     client_id: Option<Uuid>,
+    cross_client_safe: bool,
 ) -> Result<Knowledge, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Knowledge>(
-        "INSERT INTO knowledge (id, title, content, category, tags, client_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        "INSERT INTO knowledge (id, title, content, category, tags, client_id, cross_client_safe)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *",
     )
     .bind(id)
@@ -23,6 +24,7 @@ pub async fn add_knowledge(
     .bind(category)
     .bind(tags)
     .bind(client_id)
+    .bind(cross_client_safe)
     .fetch_one(pool)
     .await
 }
@@ -69,10 +71,7 @@ pub async fn list_knowledge(
     q.fetch_all(pool).await
 }
 
-pub async fn search_knowledge(
-    pool: &PgPool,
-    query: &str,
-) -> Result<Vec<Knowledge>, sqlx::Error> {
+pub async fn search_knowledge(pool: &PgPool, query: &str) -> Result<Vec<Knowledge>, sqlx::Error> {
     sqlx::query_as::<_, Knowledge>(
         "SELECT * FROM knowledge
          WHERE search_vector @@ plainto_tsquery('english', $1)
