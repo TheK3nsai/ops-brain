@@ -138,6 +138,8 @@ Since there is no second pair of eyes, the system itself must act as the safety 
 - `create_runbook` — optional `client_slug` + `cross_client_safe` params
 - `update_runbook` — optional `cross_client_safe` param
 - `add_knowledge` — optional `cross_client_safe` param
+- `update_knowledge` — optional `cross_client_safe` param
+- `delete_knowledge` — deletes by ID (no cross-client gate needed, operates on explicit ID)
 - Watchdog: runbook suggestions client-scoped (same-client + global only)
 
 ## Deployment (kensai.cloud)
@@ -151,13 +153,14 @@ Since there is no second pair of eyes, the system itself must act as the safety 
 
 ### Multi-Instance Claude Code Configuration
 
-The remote HTTP transport allows any Claude Code instance to connect. Cross-client safety is enforced
-by the tools (via resolved client context), not by which machine you're on.
+All Claude Code instances connect to the single remote deployment. The remote database on kensai.cloud
+is the **single source of truth** — there is no local database for production use. Cross-client safety
+is enforced by the tools (via resolved client context), not by which machine you're on.
 
-- **stealth** (local): stdio transport in `~/.claude.json` — runs local binary, connects to local PostgreSQL
-- **All other machines** (HSR infra, CPA infra, kensai.cloud): http transport to `https://ops.kensai.cloud/mcp`
+- **All machines** (stealth, HSR infra, CPA infra, kensai.cloud): http transport to `https://ops.kensai.cloud/mcp`
+- **Development only**: local stdio transport with local PostgreSQL for testing new code before deploying
 
-Remote config (add to `~/.claude.json` on each machine):
+Config for all machines (in `~/.claude.json`):
 ```json
 {
   "mcpServers": {
@@ -262,3 +265,24 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Never apply schema changes outside of migration files** — if you do, sqlx will try to re-run the migration and fail (e.g. "column already exists"). Fix: insert the migration record manually with the correct SHA-384 checksum: `INSERT INTO _sqlx_migrations (version, description, installed_on, success, checksum, execution_time) VALUES (<version>, '<desc>', now(), true, decode('<sha384>', 'hex'), 0);`
 - **"connection closed: initialize request"** on manual `./target/release/ops-brain` run is normal — means no MCP client is connected via stdio, not an actual error
 - **Migration count**: update the comment in this file's Project Layout section when adding new migrations
+- **upsert_server replaces ALL fields** — it's not a partial update. Must pass every field or they get nulled. Always read the current server data before upserting.
+- **seed.sql is foundational only** — clients, sites, networks. All other data comes from live CC sessions. Never add fictional/placeholder data to seed.sql.
+- **SSH to kensai.cloud**: use `ssh kensai.cloud` (Host alias), NOT `ssh ssh.kensai.cloud -p 22022`. The alias picks up the correct key, port, and user from `~/.ssh/config`.
+
+## Next Steps
+
+### Code — New Tools
+- **`delete_server`**: Accept server ID, check FK references (server_services, monitors, incident_servers, runbook_servers, ticket_links), refuse if referenced or cascade with confirmation. Follow `delete_knowledge` pattern.
+- **`delete_service`**: Same pattern. Stale entries like "Veeam Backup (NOT IN USE)" can't currently be removed without direct SQL.
+- **`delete_vendor`**: Remote DB has duplicate vendor entries (e.g., two Cloudflare, two Dell, two Splashtop) from different CC sessions creating them independently. Need a way to merge/delete.
+
+### Data Quality
+- **Vendor deduplication**: 19 vendors on remote, several duplicates. Need to merge and link to correct clients.
+- **CPA network missing**: 192.168.0.0/24 not in networks table (HSR and Eduardo home are there).
+- **Embedding backfill**: Knowledge and incidents pushed from local to remote don't have embeddings yet. Run `backfill_embeddings` from a remote CC instance.
+- **Historical incidents**: 5 incidents still reference fictional hostnames (HVDC01, HVRDS01, HVFS01) in their text. Low priority — they're marked resolved/historical.
+
+### Infrastructure Audits (On-Site / SSH)
+- **Backup audit**: Verify what backup solution is actually running at HSR (Veeam? WSB? Synology Active Backup?) and CPA. The "Backup Infrastructure" runbook has action items.
+- **ESXi hardware specs**: ESXi-1 and ESXi-2 are in inventory but hardware/CPU/RAM/storage are unknown. Need ESXi web client or SSH access to fill in.
+- **Server 2016 EOL**: SR-SERVER and HSR-SERVER run Server 2016 (extended support ends Oct 2026). Migration planning needed.
