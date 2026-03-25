@@ -10,6 +10,7 @@ pub async fn get_handoff(pool: &PgPool, id: Uuid) -> Result<Option<Handoff>, sql
         .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_handoff(
     pool: &PgPool,
     from_session_id: Option<Uuid>,

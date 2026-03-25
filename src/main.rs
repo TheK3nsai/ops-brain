@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Repo/model functions used by integration tests via lib.rs
+
 mod api;
 mod auth;
 mod config;

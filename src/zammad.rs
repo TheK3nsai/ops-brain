@@ -437,7 +437,10 @@ mod tests {
             base_url: "http://localhost:3000".to_string(),
             api_token: "test".to_string(),
         };
-        assert_eq!(api_url(&config, "/tickets"), "http://localhost:3000/api/v1/tickets");
+        assert_eq!(
+            api_url(&config, "/tickets"),
+            "http://localhost:3000/api/v1/tickets"
+        );
         assert_eq!(
             api_url(&config, "/tickets/123"),
             "http://localhost:3000/api/v1/tickets/123"
@@ -450,7 +453,10 @@ mod tests {
             base_url: "http://localhost:3000/".to_string(),
             api_token: "test".to_string(),
         };
-        assert_eq!(api_url(&config, "/tickets"), "http://localhost:3000/api/v1/tickets");
+        assert_eq!(
+            api_url(&config, "/tickets"),
+            "http://localhost:3000/api/v1/tickets"
+        );
     }
 
     // Deserialization

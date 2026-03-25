@@ -26,7 +26,13 @@ mod client_tests {
         let slug = format!("test-client-{}", Uuid::now_v7());
 
         let client = ops_brain::repo::client_repo::upsert_client(
-            &pool, "Test Client", &slug, Some("test notes"), None, None, None,
+            &pool,
+            "Test Client",
+            &slug,
+            Some("test notes"),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -62,14 +68,26 @@ mod client_tests {
         let pool = pool().await;
         let slug = format!("upsert-test-{}", Uuid::now_v7());
 
-        let c1 = ops_brain::repo::client_repo::upsert_client(
-            &pool, "Original", &slug, Some("v1"), None, None, None,
+        let _c1 = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Original",
+            &slug,
+            Some("v1"),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
 
         let c2 = ops_brain::repo::client_repo::upsert_client(
-            &pool, "Updated", &slug, Some("v2"), Some(10), None, None,
+            &pool,
+            "Updated",
+            &slug,
+            Some("v2"),
+            Some(10),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -91,7 +109,9 @@ mod client_tests {
     #[tokio::test]
     async fn list_clients() {
         let pool = pool().await;
-        let clients = ops_brain::repo::client_repo::list_clients(&pool).await.unwrap();
+        let clients = ops_brain::repo::client_repo::list_clients(&pool)
+            .await
+            .unwrap();
         // Should at least return without error (may have seed data)
         let _ = clients.len();
     }
@@ -154,7 +174,13 @@ mod runbook_tests {
         let rb_slug = format!("scoped-rb-{}", Uuid::now_v7());
 
         let client = ops_brain::repo::client_repo::upsert_client(
-            &pool, "Test Client", &client_slug, None, None, None, None,
+            &pool,
+            "Test Client",
+            &client_slug,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -410,37 +436,50 @@ mod incident_tests {
         let pool = pool().await;
 
         let i1 = ops_brain::repo::incident_repo::create_incident(
-            &pool, "Filter Test Open", "high", None, None, None,
+            &pool,
+            "Filter Test Open",
+            "high",
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
 
         let i2 = ops_brain::repo::incident_repo::create_incident(
-            &pool, "Filter Test Critical", "critical", None, None, None,
+            &pool,
+            "Filter Test Critical",
+            "critical",
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
 
         // List by severity
         let critical = ops_brain::repo::incident_repo::list_incidents(
-            &pool, None, None, Some("critical"), 100,
+            &pool,
+            None,
+            None,
+            Some("critical"),
+            100,
         )
         .await
         .unwrap();
         assert!(critical.iter().any(|i| i.id == i2.id));
 
         // List by status
-        let open = ops_brain::repo::incident_repo::list_incidents(
-            &pool, None, Some("open"), None, 100,
-        )
-        .await
-        .unwrap();
+        let open =
+            ops_brain::repo::incident_repo::list_incidents(&pool, None, Some("open"), None, 100)
+                .await
+                .unwrap();
         assert!(open.iter().any(|i| i.id == i1.id));
         assert!(open.iter().any(|i| i.id == i2.id));
 
         // Cleanup
         sqlx::query("DELETE FROM incidents WHERE id = ANY($1)")
-            .bind(&[i1.id, i2.id])
+            .bind([i1.id, i2.id])
             .execute(&pool)
             .await
             .unwrap();
@@ -457,26 +496,25 @@ mod coordination_tests {
         let pool = pool().await;
         let machine_id = format!("test-{}", Uuid::now_v7());
 
-        let session = ops_brain::repo::session_repo::start_session(
-            &pool, &machine_id, "test-host",
-        )
-        .await
-        .unwrap();
+        let session = ops_brain::repo::session_repo::start_session(&pool, &machine_id, "test-host")
+            .await
+            .unwrap();
 
         assert!(session.ended_at.is_none());
         assert_eq!(session.machine_hostname, "test-host");
 
         // List active sessions
-        let active = ops_brain::repo::session_repo::list_sessions(
-            &pool, Some(&machine_id), true, 10,
-        )
-        .await
-        .unwrap();
+        let active =
+            ops_brain::repo::session_repo::list_sessions(&pool, Some(&machine_id), true, 10)
+                .await
+                .unwrap();
         assert!(active.iter().any(|s| s.id == session.id));
 
         // End session
         let ended = ops_brain::repo::session_repo::end_session(
-            &pool, session.id, Some("Completed testing"),
+            &pool,
+            session.id,
+            Some("Completed testing"),
         )
         .await
         .unwrap();
@@ -513,27 +551,24 @@ mod coordination_tests {
         assert_eq!(handoff.to_machine.as_deref(), Some("cloudlab"));
 
         // Accept
-        let accepted = ops_brain::repo::handoff_repo::update_handoff_status(
-            &pool, handoff.id, "accepted",
-        )
-        .await
-        .unwrap();
+        let accepted =
+            ops_brain::repo::handoff_repo::update_handoff_status(&pool, handoff.id, "accepted")
+                .await
+                .unwrap();
         assert_eq!(accepted.status, "accepted");
 
         // Complete
-        let completed = ops_brain::repo::handoff_repo::update_handoff_status(
-            &pool, handoff.id, "completed",
-        )
-        .await
-        .unwrap();
+        let completed =
+            ops_brain::repo::handoff_repo::update_handoff_status(&pool, handoff.id, "completed")
+                .await
+                .unwrap();
         assert_eq!(completed.status, "completed");
 
         // List by status
-        let pending = ops_brain::repo::handoff_repo::list_handoffs(
-            &pool, Some("pending"), None, None, 10,
-        )
-        .await
-        .unwrap();
+        let pending =
+            ops_brain::repo::handoff_repo::list_handoffs(&pool, Some("pending"), None, None, 10)
+                .await
+                .unwrap();
         assert!(!pending.iter().any(|h| h.id == handoff.id));
 
         // Cleanup
@@ -559,13 +594,25 @@ mod audit_log_tests {
         let slug_own = format!("audit-own-{}", Uuid::now_v7());
 
         let req_client = ops_brain::repo::client_repo::upsert_client(
-            &pool, "Requesting Client", &slug_req, None, None, None, None,
+            &pool,
+            "Requesting Client",
+            &slug_req,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
 
         let own_client = ops_brain::repo::client_repo::upsert_client(
-            &pool, "Owning Client", &slug_own, None, None, None, None,
+            &pool,
+            "Owning Client",
+            &slug_own,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -604,7 +651,7 @@ mod audit_log_tests {
             .await
             .unwrap();
         sqlx::query("DELETE FROM clients WHERE id = ANY($1)")
-            .bind(&[req_client.id, own_client.id])
+            .bind([req_client.id, own_client.id])
             .execute(&pool)
             .await
             .unwrap();
@@ -631,7 +678,10 @@ mod briefing_tests {
 
         assert_eq!(briefing.briefing_type, "daily");
         assert!(briefing.client_id.is_none());
-        assert_eq!(briefing.content, "# Daily Briefing\n\nAll systems operational.");
+        assert_eq!(
+            briefing.content,
+            "# Daily Briefing\n\nAll systems operational."
+        );
 
         // Get by ID
         let fetched = ops_brain::repo::briefing_repo::get_briefing(&pool, briefing.id)
@@ -652,5 +702,296 @@ mod briefing_tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+}
+
+// ===== Delete Tools =====
+
+mod delete_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn delete_server_basic() {
+        let pool = pool().await;
+        let client_slug = format!("del-srv-client-{}", Uuid::now_v7());
+        let site_slug = format!("del-srv-site-{}", Uuid::now_v7());
+        let server_slug = format!("del-srv-{}", Uuid::now_v7());
+
+        let client = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Delete Test Client",
+            &client_slug,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let site = ops_brain::repo::site_repo::upsert_site(
+            &pool,
+            client.id,
+            "Delete Test Site",
+            &site_slug,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let server = ops_brain::repo::server_repo::upsert_server(
+            &pool,
+            site.id,
+            "DEL-TEST-SRV",
+            &server_slug,
+            Some("Windows Server 2022"),
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            "active",
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Check references (should be empty)
+        let refs = ops_brain::repo::server_repo::count_server_references(&pool, server.id)
+            .await
+            .unwrap();
+        assert!(refs.is_empty());
+
+        // Delete
+        let deleted = ops_brain::repo::server_repo::delete_server(&pool, server.id)
+            .await
+            .unwrap();
+        assert!(deleted);
+
+        // Verify gone
+        let found = ops_brain::repo::server_repo::get_server_by_slug(&pool, &server_slug)
+            .await
+            .unwrap();
+        assert!(found.is_none());
+
+        // Cleanup
+        sqlx::query("DELETE FROM sites WHERE id = $1")
+            .bind(site.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM clients WHERE id = $1")
+            .bind(client.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_server_with_service_link() {
+        let pool = pool().await;
+        let client_slug = format!("del-link-client-{}", Uuid::now_v7());
+        let site_slug = format!("del-link-site-{}", Uuid::now_v7());
+        let server_slug = format!("del-link-srv-{}", Uuid::now_v7());
+        let service_slug = format!("del-link-svc-{}", Uuid::now_v7());
+
+        let client = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Link Test Client",
+            &client_slug,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let site = ops_brain::repo::site_repo::upsert_site(
+            &pool,
+            client.id,
+            "Link Test Site",
+            &site_slug,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let server = ops_brain::repo::server_repo::upsert_server(
+            &pool,
+            site.id,
+            "DEL-LINK-SRV",
+            &server_slug,
+            None,
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            "active",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let service = ops_brain::repo::service_repo::upsert_service(
+            &pool,
+            "Test Service for Delete",
+            &service_slug,
+            Some("test"),
+            None,
+            "low",
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Link server to service
+        ops_brain::repo::service_repo::link_server_service(
+            &pool, server.id, service.id, None, None,
+        )
+        .await
+        .unwrap();
+
+        // Check references — should show 1 linked service
+        let refs = ops_brain::repo::server_repo::count_server_references(&pool, server.id)
+            .await
+            .unwrap();
+        assert!(refs
+            .iter()
+            .any(|(name, count)| name == "linked services" && *count == 1));
+
+        // Delete — CASCADE should remove server_services link
+        let deleted = ops_brain::repo::server_repo::delete_server(&pool, server.id)
+            .await
+            .unwrap();
+        assert!(deleted);
+
+        // Service should still exist
+        let svc = ops_brain::repo::service_repo::get_service_by_slug(&pool, &service_slug)
+            .await
+            .unwrap();
+        assert!(svc.is_some());
+
+        // Cleanup
+        sqlx::query("DELETE FROM services WHERE id = $1")
+            .bind(service.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM sites WHERE id = $1")
+            .bind(site.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM clients WHERE id = $1")
+            .bind(client.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_service_basic() {
+        let pool = pool().await;
+        let slug = format!("del-svc-{}", Uuid::now_v7());
+
+        let service = ops_brain::repo::service_repo::upsert_service(
+            &pool,
+            "Delete Test Service",
+            &slug,
+            Some("test"),
+            None,
+            "low",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let refs = ops_brain::repo::service_repo::count_service_references(&pool, service.id)
+            .await
+            .unwrap();
+        assert!(refs.is_empty());
+
+        let deleted = ops_brain::repo::service_repo::delete_service(&pool, service.id)
+            .await
+            .unwrap();
+        assert!(deleted);
+
+        let found = ops_brain::repo::service_repo::get_service_by_slug(&pool, &slug)
+            .await
+            .unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_vendor_basic() {
+        let pool = pool().await;
+        let name = format!("Delete Test Vendor {}", Uuid::now_v7());
+
+        let vendor = ops_brain::repo::vendor_repo::upsert_vendor(
+            &pool,
+            &name,
+            Some("test"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let refs = ops_brain::repo::vendor_repo::count_vendor_references(&pool, vendor.id)
+            .await
+            .unwrap();
+        assert!(refs.is_empty());
+
+        let deleted = ops_brain::repo::vendor_repo::delete_vendor(&pool, vendor.id)
+            .await
+            .unwrap();
+        assert!(deleted);
+
+        let found = ops_brain::repo::vendor_repo::get_vendor_by_name(&pool, &name)
+            .await
+            .unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_returns_false() {
+        let pool = pool().await;
+        let fake_id = Uuid::now_v7();
+
+        let result = ops_brain::repo::server_repo::delete_server(&pool, fake_id)
+            .await
+            .unwrap();
+        assert!(!result);
+
+        let result = ops_brain::repo::service_repo::delete_service(&pool, fake_id)
+            .await
+            .unwrap();
+        assert!(!result);
+
+        let result = ops_brain::repo::vendor_repo::delete_vendor(&pool, fake_id)
+            .await
+            .unwrap();
+        assert!(!result);
     }
 }

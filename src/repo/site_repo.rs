@@ -33,6 +33,7 @@ pub async fn list_sites(pool: &PgPool, client_id: Option<Uuid>) -> Result<Vec<Si
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_site(
     pool: &PgPool,
     client_id: Uuid,

@@ -255,6 +255,9 @@ mod tests {
         };
 
         let text = prepare_handoff_text(&handoff);
-        assert_eq!(text, "Continue DNS migration\n\nNeed to update remaining A records");
+        assert_eq!(
+            text,
+            "Continue DNS migration\n\nNeed to update remaining A records"
+        );
     }
 }

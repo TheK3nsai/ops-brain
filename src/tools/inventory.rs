@@ -130,6 +130,30 @@ pub struct UpsertVendorParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteServerParams {
+    /// Server slug to delete
+    pub slug: String,
+    /// Must be true to confirm deletion. If false/omitted, returns a preview of what would be affected.
+    pub confirm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteServiceParams {
+    /// Service slug to delete
+    pub slug: String,
+    /// Must be true to confirm deletion. If false/omitted, returns a preview of what would be affected.
+    pub confirm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteVendorParams {
+    /// Vendor name to delete (case-insensitive match)
+    pub name: String,
+    /// Must be true to confirm deletion. If false/omitted, returns a preview of what would be affected.
+    pub confirm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct LinkServerServiceParams {
     pub server_slug: String,
     pub service_slug: String,

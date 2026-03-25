@@ -55,6 +55,39 @@ pub async fn list_vendors(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Count references to a vendor across junction tables.
+pub async fn count_vendor_references(
+    pool: &PgPool,
+    vendor_id: Uuid,
+) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    let row: (i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT COUNT(*) FROM vendor_clients WHERE vendor_id = $1),
+            (SELECT COUNT(*) FROM incident_vendors WHERE vendor_id = $1)",
+    )
+    .bind(vendor_id)
+    .fetch_one(pool)
+    .await?;
+
+    let mut refs = Vec::new();
+    if row.0 > 0 {
+        refs.push(("client links".to_string(), row.0));
+    }
+    if row.1 > 0 {
+        refs.push(("incident links".to_string(), row.1));
+    }
+    Ok(refs)
+}
+
+pub async fn delete_vendor(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM vendors WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_vendor(
     pool: &PgPool,
     name: &str,

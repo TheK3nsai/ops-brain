@@ -284,6 +284,7 @@ fn ticket_summary(tickets: &[crate::zammad::ZammadTicket]) -> briefings::TicketS
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_markdown(
     is_weekly: bool,
     client_name: &str,

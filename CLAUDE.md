@@ -23,7 +23,7 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct with ALL 59 #[tool] methods in one impl block
+    mod.rs           # OpsBrain struct with ALL 64 #[tool] methods in one impl block
     inventory.rs     # Parameter structs for inventory tools
     runbooks.rs      # Parameter structs for runbook tools
     knowledge.rs     # Parameter structs for knowledge tools
@@ -101,7 +101,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 - **Phase 6** (proactive monitoring): COMPLETE & DEPLOYED — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
 - **Phase 7** (Zammad integration): COMPLETE — 8 new tools (list_tickets, get_ticket, create_ticket, update_ticket, add_ticket_note, search_tickets, link_ticket, unlink_ticket), 56 total. Live Zammad REST API queries via Token auth. Client mapping (zammad_org_id/group_id/customer_id on clients table). ticket_links table for linking tickets to incidents/servers/services. Context tools enriched with ticket data (get_client_overview shows recent tickets, get_situational_awareness and get_server_context show linked tickets). Env: `ZAMMAD_URL`, `ZAMMAD_API_TOKEN`.
 - **Phase 8** (scheduled briefings): COMPLETE & DEPLOYED — 3 new tools (generate_briefing, list_briefings, get_briefing), 59 total. REST API at `POST /api/briefing` (shared logic in `src/api.rs`). Aggregates monitoring health, open incidents (by severity), watchdog alerts, pending handoffs, and Zammad ticket activity into structured markdown summaries. Daily and weekly types. Weekly includes resolved incident stats (count, avg TTR) and watchdog auto-resolved count. Briefings stored in `briefings` table for historical review. Scheduled triggers deliver via Gmail: daily at 6 AM PR, weekly Monday 6 AM PR.
-- **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping. 61 tools (59 existing + update_knowledge + delete_knowledge added for data maintenance).
+- **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping. 64 tools (59 base + update_knowledge + delete_knowledge + delete_server + delete_service + delete_vendor).
 
 ## Safety Design Principles (Phase 9 — Implemented)
 
@@ -272,9 +272,9 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 ## Next Steps
 
 ### Code — New Tools
-- **`delete_server`**: Accept server ID, check FK references (server_services, monitors, incident_servers, runbook_servers, ticket_links), refuse if referenced or cascade with confirmation. Follow `delete_knowledge` pattern.
-- **`delete_service`**: Same pattern. Stale entries like "Veeam Backup (NOT IN USE)" can't currently be removed without direct SQL.
-- **`delete_vendor`**: Remote DB has duplicate vendor entries (e.g., two Cloudflare, two Dell, two Splashtop) from different CC sessions creating them independently. Need a way to merge/delete.
+- **`delete_server`**: DONE — accepts slug, shows preview of linked entities, requires confirm=true. CASCADE handles junction tables.
+- **`delete_service`**: DONE — same pattern as delete_server.
+- **`delete_vendor`**: DONE — accepts name (case-insensitive), same preview+confirm pattern.
 
 ### Data Quality
 - **Vendor deduplication**: 19 vendors on remote, several duplicates. Need to merge and link to correct clients.
@@ -286,3 +286,151 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Backup audit**: Verify what backup solution is actually running at HSR (Veeam? WSB? Synology Active Backup?) and CPA. The "Backup Infrastructure" runbook has action items.
 - **ESXi hardware specs**: ESXi-1 and ESXi-2 are in inventory but hardware/CPU/RAM/storage are unknown. Need ESXi web client or SSH access to fill in.
 - **Server 2016 EOL**: SR-SERVER and HSR-SERVER run Server 2016 (extended support ends Oct 2026). Migration planning needed.
+
+## CI Pipeline
+
+GitHub Actions runs on every push to `main` and every PR. Two jobs:
+
+1. **check** — Format + Lint + Test (PostgreSQL 18 + pgvector service container)
+   - `cargo fmt --all -- --check`
+   - `cargo clippy --all-targets -- -D warnings`
+   - `cargo test` (unit + integration — migrations auto-run, seed data NOT loaded)
+2. **audit** — `cargo-audit` for known vulnerabilities in dependencies
+
+CI must pass before merging. If clippy or tests fail, fix locally with `just check` before pushing.
+
+## Contributing (For All CC Instances)
+
+This section is for any Claude Code instance that wants to contribute code to ops-brain. Whether you're running on HV-FS0, kensai-cloud, stealth, or CPA-SRV — follow these rules so we can all act as one.
+
+### Branch Naming
+
+```
+<type>/<short-description>
+```
+
+Types: `feat/`, `fix/`, `refactor/`, `docs/`, `chore/`
+
+Examples: `feat/delete-server-tool`, `fix/vendor-dedup-slug`, `docs/runbook-template`
+
+### Commit Messages
+
+```
+<type>: <imperative description>
+
+<optional body — explain why, not what>
+```
+
+Types: `feat`, `fix`, `refactor`, `docs`, `chore`, `test`
+
+Examples:
+- `feat: add delete_server tool with cascade safety`
+- `fix: handle null embedding in hybrid search`
+- `chore: update pgvector to 0.5`
+
+### How to Add a New Tool (End-to-End Recipe)
+
+This is the most common contribution. Follow these steps in order:
+
+**1. Migration (if schema changes needed)**
+
+Create a new file in `migrations/` with the next sequence number:
+```
+migrations/YYYYMMDDHHMMSS_description.sql
+```
+- Use `IF NOT EXISTS` / `CREATE OR REPLACE` for idempotency
+- Never modify existing migration files — checksums are SHA-384 and will break
+
+**2. Model (if new table/columns)**
+
+Add or update struct in `src/models/`. Must derive:
+```rust
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+```
+
+**3. Repository function**
+
+Add to the appropriate `src/repo/*.rs`. Pattern:
+```rust
+pub async fn delete_thing(pool: &PgPool, id: &Uuid) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM things WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+```
+- Always use runtime `sqlx::query` / `sqlx::query_as` (not compile-time macros)
+- Return `Result<T>` with `anyhow`
+
+**4. Parameter struct**
+
+Add to the appropriate `src/tools/*.rs` (NOT mod.rs). Pattern:
+```rust
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DeleteThingParams {
+    /// The slug of the thing to delete
+    pub slug: String,
+    /// Must be true to confirm deletion (safety gate)
+    pub confirm: bool,
+}
+```
+
+**5. Tool method**
+
+Add to the `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs`. Pattern:
+```rust
+#[tool(description = "Delete a thing by slug. Requires confirm=true. Refuses if referenced by other entities.")]
+async fn delete_thing(&self, #[tool(aggr)] params: DeleteThingParams) -> Result<CallToolResult, McpError> {
+    // 1. Resolve slug to entity
+    // 2. Check for FK references (safety gate)
+    // 3. Require confirm=true
+    // 4. Delete
+    // 5. Return success message
+}
+```
+- Tools MUST be in the single `#[tool_router] impl OpsBrain` block — rmcp macro requirement
+- Return `Ok(CallToolResult::error(...))` for user-facing errors, never `Err()`
+- Use `self.pool` for DB access
+
+**6. Integration test**
+
+Add to `tests/integration.rs`. Pattern:
+```rust
+#[tokio::test]
+async fn test_delete_thing() {
+    let pool = common::test_pool().await;
+    // 1. Create test data
+    // 2. Call delete
+    // 3. Assert it's gone
+    // 4. Assert FK safety gate works
+}
+```
+
+**7. Update counts**
+
+- Update tool count in `CLAUDE.md` (Quick Reference, Phase Status, Project Layout comment)
+- Update tool count in `README.md`
+
+### PR Checklist
+
+Before opening a PR, verify:
+
+- [ ] `cargo fmt --all -- --check` passes (no formatting issues)
+- [ ] `cargo clippy --all-targets -- -D warnings` passes (no warnings)
+- [ ] `cargo test` passes (all unit + integration tests)
+- [ ] New tools have integration tests
+- [ ] CLAUDE.md updated if tool count changed
+- [ ] README.md updated if tool count changed
+- [ ] No hardcoded credentials, URLs, or tokens
+- [ ] Migration files are idempotent (`IF NOT EXISTS`, etc.)
+- [ ] Cross-client safety considered: if the tool touches runbooks/knowledge, does it need `client_slug` and `acknowledge_cross_client` params?
+
+### What NOT to Do
+
+- **Don't modify existing migrations** — checksum mismatch will break deployments
+- **Don't use compile-time sqlx macros** — we use runtime queries for flexibility
+- **Don't add tools outside the `#[tool_router]` impl block** — rmcp requires them all in one place
+- **Don't write to stdout** — it's the MCP stdio transport. Use `tracing::info!()` (goes to stderr)
+- **Don't add fictional/placeholder data to seed.sql** — only foundational structure
+- **Don't merge without CI green** — the pipeline exists to protect us all

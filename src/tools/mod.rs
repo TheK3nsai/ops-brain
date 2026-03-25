@@ -4071,6 +4071,191 @@ impl OpsBrain {
             Err(e) => Ok(error_result(&format!("Database error: {e}"))),
         }
     }
+
+    // ── Delete tools (inventory cleanup) ──────────────────────────────
+
+    #[tool(
+        name = "delete_server",
+        description = "Delete a server by slug. Without confirm=true, returns a preview of linked entities that would be affected. \
+        Junction table links (incidents, runbooks, services, monitors, tickets) are cascade-deleted or set null. \
+        Child VMs referencing this server as hypervisor will have hypervisor_id set to null."
+    )]
+    async fn delete_server(
+        &self,
+        params: Parameters<inventory::DeleteServerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let params = params.0;
+        let server =
+            match crate::repo::server_repo::get_server_by_slug(&self.pool, &params.slug).await {
+                Ok(Some(s)) => s,
+                Ok(None) => return Ok(not_found("Server", &params.slug)),
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            };
+
+        let refs =
+            match crate::repo::server_repo::count_server_references(&self.pool, server.id).await {
+                Ok(r) => r,
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            };
+
+        if params.confirm != Some(true) {
+            let mut preview = serde_json::json!({
+                "action": "delete_server",
+                "server": server.hostname,
+                "slug": server.slug,
+                "status": server.status,
+                "confirmed": false,
+                "message": "Pass confirm=true to proceed with deletion.",
+            });
+            if !refs.is_empty() {
+                let ref_map: serde_json::Map<String, serde_json::Value> = refs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
+                    .collect();
+                preview["linked_entities"] = serde_json::Value::Object(ref_map);
+                preview["warning"] =
+                    "Junction table links will be CASCADE-deleted or SET NULL.".into();
+            } else {
+                preview["linked_entities"] = serde_json::json!("none");
+            }
+            return Ok(json_result(&preview));
+        }
+
+        match crate::repo::server_repo::delete_server(&self.pool, server.id).await {
+            Ok(true) => Ok(json_result(&serde_json::json!({
+                "deleted": true,
+                "server": server.hostname,
+                "slug": server.slug,
+                "cascade_summary": refs.iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }))),
+            Ok(false) => Ok(not_found("Server", &params.slug)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "delete_service",
+        description = "Delete a service by slug. Without confirm=true, returns a preview of linked entities that would be affected. \
+        Junction table links (servers, incidents, runbooks, monitors, tickets) are cascade-deleted or set null."
+    )]
+    async fn delete_service(
+        &self,
+        params: Parameters<inventory::DeleteServiceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let params = params.0;
+        let service =
+            match crate::repo::service_repo::get_service_by_slug(&self.pool, &params.slug).await {
+                Ok(Some(s)) => s,
+                Ok(None) => return Ok(not_found("Service", &params.slug)),
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            };
+
+        let refs = match crate::repo::service_repo::count_service_references(&self.pool, service.id)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+        };
+
+        if params.confirm != Some(true) {
+            let mut preview = serde_json::json!({
+                "action": "delete_service",
+                "service": service.name,
+                "slug": service.slug,
+                "confirmed": false,
+                "message": "Pass confirm=true to proceed with deletion.",
+            });
+            if !refs.is_empty() {
+                let ref_map: serde_json::Map<String, serde_json::Value> = refs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
+                    .collect();
+                preview["linked_entities"] = serde_json::Value::Object(ref_map);
+                preview["warning"] =
+                    "Junction table links will be CASCADE-deleted or SET NULL.".into();
+            } else {
+                preview["linked_entities"] = serde_json::json!("none");
+            }
+            return Ok(json_result(&preview));
+        }
+
+        match crate::repo::service_repo::delete_service(&self.pool, service.id).await {
+            Ok(true) => Ok(json_result(&serde_json::json!({
+                "deleted": true,
+                "service": service.name,
+                "slug": service.slug,
+                "cascade_summary": refs.iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }))),
+            Ok(false) => Ok(not_found("Service", &params.slug)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "delete_vendor",
+        description = "Delete a vendor by name (case-insensitive). Without confirm=true, returns a preview of linked entities. \
+        Client links and incident links are cascade-deleted."
+    )]
+    async fn delete_vendor(
+        &self,
+        params: Parameters<inventory::DeleteVendorParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let params = params.0;
+        let vendor =
+            match crate::repo::vendor_repo::get_vendor_by_name(&self.pool, &params.name).await {
+                Ok(Some(v)) => v,
+                Ok(None) => return Ok(not_found("Vendor", &params.name)),
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            };
+
+        let refs =
+            match crate::repo::vendor_repo::count_vendor_references(&self.pool, vendor.id).await {
+                Ok(r) => r,
+                Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+            };
+
+        if params.confirm != Some(true) {
+            let mut preview = serde_json::json!({
+                "action": "delete_vendor",
+                "vendor": vendor.name,
+                "id": vendor.id.to_string(),
+                "confirmed": false,
+                "message": "Pass confirm=true to proceed with deletion.",
+            });
+            if !refs.is_empty() {
+                let ref_map: serde_json::Map<String, serde_json::Value> = refs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
+                    .collect();
+                preview["linked_entities"] = serde_json::Value::Object(ref_map);
+                preview["warning"] =
+                    "Client links and incident links will be CASCADE-deleted.".into();
+            } else {
+                preview["linked_entities"] = serde_json::json!("none");
+            }
+            return Ok(json_result(&preview));
+        }
+
+        match crate::repo::vendor_repo::delete_vendor(&self.pool, vendor.id).await {
+            Ok(true) => Ok(json_result(&serde_json::json!({
+                "deleted": true,
+                "vendor": vendor.name,
+                "id": vendor.id.to_string(),
+                "cascade_summary": refs.iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }))),
+            Ok(false) => Ok(not_found("Vendor", &params.name)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
 }
 
 #[tool_handler]
@@ -4100,11 +4285,7 @@ mod tests {
     use std::collections::HashMap;
     use uuid::Uuid;
 
-    fn make_item(
-        id: Uuid,
-        client_id: Option<Uuid>,
-        cross_client_safe: bool,
-    ) -> serde_json::Value {
+    fn make_item(id: Uuid, client_id: Option<Uuid>, cross_client_safe: bool) -> serde_json::Value {
         let mut obj = serde_json::json!({
             "id": id.to_string(),
             "title": "Test Item",
@@ -4248,10 +4429,10 @@ mod tests {
     fn filter_mixed_items() {
         let (hsr_id, cpa_id, lookup) = make_lookup();
         let items = vec![
-            make_item(Uuid::now_v7(), None, false),              // global → allowed
-            make_item(Uuid::now_v7(), Some(cpa_id), false),      // same client → allowed
-            make_item(Uuid::now_v7(), Some(hsr_id), true),       // diff client, safe → allowed
-            make_item(Uuid::now_v7(), Some(hsr_id), false),      // diff client, not safe → withheld
+            make_item(Uuid::now_v7(), None, false), // global → allowed
+            make_item(Uuid::now_v7(), Some(cpa_id), false), // same client → allowed
+            make_item(Uuid::now_v7(), Some(hsr_id), true), // diff client, safe → allowed
+            make_item(Uuid::now_v7(), Some(hsr_id), false), // diff client, not safe → withheld
         ];
 
         let result = filter_cross_client(items, "runbook", Some(cpa_id), false, &lookup);

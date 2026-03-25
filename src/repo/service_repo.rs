@@ -40,6 +40,50 @@ pub async fn list_services(
     }
 }
 
+/// Count references to a service across junction tables.
+pub async fn count_service_references(
+    pool: &PgPool,
+    service_id: Uuid,
+) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    let row: (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT COUNT(*) FROM server_services WHERE service_id = $1),
+            (SELECT COUNT(*) FROM incident_services WHERE service_id = $1),
+            (SELECT COUNT(*) FROM runbook_services WHERE service_id = $1),
+            (SELECT COUNT(*) FROM monitors WHERE service_id = $1),
+            (SELECT COUNT(*) FROM ticket_links WHERE service_id = $1)",
+    )
+    .bind(service_id)
+    .fetch_one(pool)
+    .await?;
+
+    let mut refs = Vec::new();
+    if row.0 > 0 {
+        refs.push(("linked servers".to_string(), row.0));
+    }
+    if row.1 > 0 {
+        refs.push(("incident links".to_string(), row.1));
+    }
+    if row.2 > 0 {
+        refs.push(("runbook links".to_string(), row.2));
+    }
+    if row.3 > 0 {
+        refs.push(("monitor mappings".to_string(), row.3));
+    }
+    if row.4 > 0 {
+        refs.push(("ticket links".to_string(), row.4));
+    }
+    Ok(refs)
+}
+
+pub async fn delete_service(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM services WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn upsert_service(
     pool: &PgPool,
     name: &str,

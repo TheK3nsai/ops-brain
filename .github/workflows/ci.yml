@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Test database (service container)
+  DATABASE_URL: postgresql://ops_brain:ops_brain@localhost:5432/ops_brain_test
+  # Disable optional services in tests
+  OPS_BRAIN_EMBEDDINGS_ENABLED: "false"
+  OPS_BRAIN_WATCHDOG_ENABLED: "false"
+
+jobs:
+  check:
+    name: Format + Lint + Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: ops_brain
+          POSTGRES_PASSWORD: ops_brain
+          POSTGRES_DB: ops_brain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ops_brain -d ops_brain_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Enable pgvector extension
+        run: |
+          PGPASSWORD=ops_brain psql -h localhost -U ops_brain -d ops_brain_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

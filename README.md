@@ -12,9 +12,9 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
-## Tools (59)
+## Tools (64)
 
-### Inventory (15)
+### Inventory (18)
 | Tool | Description |
 |------|-------------|
 | `get_server` | Server details + services, site, networks |
@@ -26,6 +26,9 @@ get_situational_awareness(server_slug: "hvfs0")
 | `upsert_client` / `upsert_site` / `upsert_server` | Create or update records |
 | `upsert_service` / `upsert_vendor` | Create or update records |
 | `link_server_service` | Associate a service with a server |
+| `delete_server` | Delete server by slug with preview + confirm safety gate |
+| `delete_service` | Delete service by slug with preview + confirm safety gate |
+| `delete_vendor` | Delete vendor by name with preview + confirm safety gate |
 
 ### Runbooks (5)
 | Tool | Description |
@@ -312,9 +315,9 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 5**: Semantic search — pgvector + ollama embeddings, hybrid RRF ranking, context enrichment — 47 tools
 - [x] **Phase 6**: Proactive monitoring — background watchdog polls Uptime Kuma, detects UP/DOWN transitions, auto-creates/resolves incidents with TTR, links servers/services/runbooks via semantic search, input validation — 48 tools
 - [x] **Phase 7**: Zammad integration — live Zammad REST API queries, ticket CRUD with time accounting, ticket-to-entity linking, context tools enriched with ticket data — 56 tools
-- [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools
+- [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools (before Phase 9 additions)
 
-- [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions — 59 tools
+- [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions — 64 tools
 
 ## License
 
