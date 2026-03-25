@@ -16,12 +16,10 @@ pub async fn list_networks(
 ) -> Result<Vec<Network>, sqlx::Error> {
     match site_id {
         Some(sid) => {
-            sqlx::query_as::<_, Network>(
-                "SELECT * FROM networks WHERE site_id = $1 ORDER BY name",
-            )
-            .bind(sid)
-            .fetch_all(pool)
-            .await
+            sqlx::query_as::<_, Network>("SELECT * FROM networks WHERE site_id = $1 ORDER BY name")
+                .bind(sid)
+                .fetch_all(pool)
+                .await
         }
         None => {
             sqlx::query_as::<_, Network>("SELECT * FROM networks ORDER BY name")

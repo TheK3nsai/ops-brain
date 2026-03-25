@@ -38,18 +38,19 @@ pub async fn generate_briefing(
     if !["daily", "weekly"].contains(&briefing_type.as_str()) {
         return Err((
             StatusCode::BAD_REQUEST,
-            format!("Invalid type: '{}'. Use 'daily' or 'weekly'.", req.briefing_type),
+            format!(
+                "Invalid type: '{}'. Use 'daily' or 'weekly'.",
+                req.briefing_type
+            ),
         ));
     }
 
     let client = match &req.client_slug {
-        Some(slug) => {
-            match crate::repo::client_repo::get_client_by_slug(&state.pool, slug).await {
-                Ok(Some(c)) => Some(c),
-                Ok(None) => return Err((StatusCode::NOT_FOUND, format!("Client not found: {slug}"))),
-                Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}"))),
-            }
-        }
+        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&state.pool, slug).await {
+            Ok(Some(c)) => Some(c),
+            Ok(None) => return Err((StatusCode::NOT_FOUND, format!("Client not found: {slug}"))),
+            Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}"))),
+        },
         None => None,
     };
 
@@ -90,7 +91,12 @@ pub async fn generate_briefing_inner(
                     .map(|m| m.name.clone())
                     .collect();
                 briefings::MonitoringSummaryData {
-                    status: if summary.down == 0 { "ALL_CLEAR" } else { "DEGRADED" }.to_string(),
+                    status: if summary.down == 0 {
+                        "ALL_CLEAR"
+                    } else {
+                        "DEGRADED"
+                    }
+                    .to_string(),
                     total: summary.total,
                     up: summary.up,
                     down: summary.down,
@@ -103,7 +109,11 @@ pub async fn generate_briefing_inner(
                 tracing::warn!("Briefing: failed to fetch monitoring: {e}");
                 briefings::MonitoringSummaryData {
                     status: "UNAVAILABLE".to_string(),
-                    total: 0, up: 0, down: 0, pending: 0, maintenance: 0,
+                    total: 0,
+                    up: 0,
+                    down: 0,
+                    pending: 0,
+                    maintenance: 0,
                     down_monitors: vec![],
                 }
             }
@@ -111,15 +121,20 @@ pub async fn generate_briefing_inner(
     } else {
         briefings::MonitoringSummaryData {
             status: "NOT_CONFIGURED".to_string(),
-            total: 0, up: 0, down: 0, pending: 0, maintenance: 0,
+            total: 0,
+            up: 0,
+            down: 0,
+            pending: 0,
+            maintenance: 0,
             down_monitors: vec![],
         }
     };
 
     // ── Open incidents ──
-    let open_incidents = crate::repo::incident_repo::list_incidents(pool, client_id, Some("open"), None, 100)
-        .await
-        .unwrap_or_default();
+    let open_incidents =
+        crate::repo::incident_repo::list_incidents(pool, client_id, Some("open"), None, 100)
+            .await
+            .unwrap_or_default();
 
     let mut by_severity = std::collections::HashMap::new();
     for inc in &open_incidents {
@@ -147,9 +162,10 @@ pub async fn generate_briefing_inner(
     };
 
     // ── Pending handoffs ──
-    let pending_handoffs = crate::repo::handoff_repo::list_handoffs(pool, Some("pending"), None, None, 20)
-        .await
-        .unwrap_or_default();
+    let pending_handoffs =
+        crate::repo::handoff_repo::list_handoffs(pool, Some("pending"), None, None, 20)
+            .await
+            .unwrap_or_default();
 
     let handoff_data = briefings::HandoffSummaryData {
         pending_count: pending_handoffs.len(),
@@ -160,7 +176,8 @@ pub async fn generate_briefing_inner(
     let ticket_data = if let Some(zammad) = zammad_config {
         if let Some(c) = client {
             if let Some(org_id) = c.zammad_org_id {
-                let open_query = format!("organization.id:{org_id} AND (state.name:new OR state.name:open)");
+                let open_query =
+                    format!("organization.id:{org_id} AND (state.name:new OR state.name:open)");
                 let open_tickets = crate::zammad::search_tickets(zammad, &open_query, 100)
                     .await
                     .unwrap_or_default();
@@ -169,9 +186,10 @@ pub async fn generate_briefing_inner(
                 None
             }
         } else {
-            let open_tickets = crate::zammad::search_tickets(zammad, "state.name:new OR state.name:open", 100)
-                .await
-                .unwrap_or_default();
+            let open_tickets =
+                crate::zammad::search_tickets(zammad, "state.name:new OR state.name:open", 100)
+                    .await
+                    .unwrap_or_default();
             Some(ticket_summary(&open_tickets))
         }
     } else {
@@ -283,14 +301,23 @@ fn build_markdown(
         if is_weekly { "Weekly" } else { "Daily" },
         client_name
     ));
-    md.push_str(&format!("*Generated: {}*\n\n", now.format("%Y-%m-%d %H:%M UTC")));
+    md.push_str(&format!(
+        "*Generated: {}*\n\n",
+        now.format("%Y-%m-%d %H:%M UTC")
+    ));
 
     // Monitoring
     md.push_str("## Monitoring\n\n");
     match monitoring.status.as_str() {
-        "ALL_CLEAR" => md.push_str(&format!("**ALL CLEAR** — {}/{} monitors up\n\n", monitoring.up, monitoring.total)),
+        "ALL_CLEAR" => md.push_str(&format!(
+            "**ALL CLEAR** — {}/{} monitors up\n\n",
+            monitoring.up, monitoring.total
+        )),
         "DEGRADED" => {
-            md.push_str(&format!("**DEGRADED** — {} DOWN out of {} monitors\n\n", monitoring.down, monitoring.total));
+            md.push_str(&format!(
+                "**DEGRADED** — {} DOWN out of {} monitors\n\n",
+                monitoring.down, monitoring.total
+            ));
             for name in &monitoring.down_monitors {
                 md.push_str(&format!("- DOWN: {name}\n"));
             }
@@ -307,7 +334,10 @@ fn build_markdown(
     if incidents.open_total == 0 {
         md.push_str("No open incidents.\n\n");
     } else {
-        md.push_str(&format!("**{} open incident(s)**\n\n", incidents.open_total));
+        md.push_str(&format!(
+            "**{} open incident(s)**\n\n",
+            incidents.open_total
+        ));
         for sev in &["critical", "high", "medium", "low"] {
             if let Some(&count) = incidents.by_severity.get(*sev) {
                 md.push_str(&format!("- {sev}: {count}\n"));
@@ -318,7 +348,10 @@ fn build_markdown(
         }
         md.push('\n');
         if incidents.watchdog_open > 0 {
-            md.push_str(&format!("{} auto-detected (watchdog) incident(s) still open\n\n", incidents.watchdog_open));
+            md.push_str(&format!(
+                "{} auto-detected (watchdog) incident(s) still open\n\n",
+                incidents.watchdog_open
+            ));
         }
     }
 
@@ -327,7 +360,10 @@ fn build_markdown(
     if handoffs.pending_count == 0 {
         md.push_str("No pending handoffs.\n\n");
     } else {
-        md.push_str(&format!("**{} pending handoff(s)**\n\n", handoffs.pending_count));
+        md.push_str(&format!(
+            "**{} pending handoff(s)**\n\n",
+            handoffs.pending_count
+        ));
         for title in &handoffs.pending_titles {
             md.push_str(&format!("- {title}\n"));
         }
@@ -340,7 +376,10 @@ fn build_markdown(
         if tickets.open_count == 0 {
             md.push_str("No open tickets.\n\n");
         } else {
-            md.push_str(&format!("**{} open ticket(s)** ({} new)\n\n", tickets.open_count, tickets.new_count));
+            md.push_str(&format!(
+                "**{} open ticket(s)** ({} new)\n\n",
+                tickets.open_count, tickets.new_count
+            ));
             for (pri, count) in &tickets.by_priority {
                 md.push_str(&format!("- {pri}: {count}\n"));
             }
@@ -356,7 +395,10 @@ fn build_markdown(
             md.push_str(&format!("- Avg time to resolve: {:.0} min\n", avg));
         }
         if stats.watchdog_resolved > 0 {
-            md.push_str(&format!("- Watchdog auto-resolved: {}\n", stats.watchdog_resolved));
+            md.push_str(&format!(
+                "- Watchdog auto-resolved: {}\n",
+                stats.watchdog_resolved
+            ));
         }
         md.push('\n');
     }

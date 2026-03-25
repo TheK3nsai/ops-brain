@@ -172,11 +172,7 @@ fn auth_header(config: &ZammadConfig) -> String {
 }
 
 fn api_url(config: &ZammadConfig, path: &str) -> String {
-    format!(
-        "{}/api/v1{}",
-        config.base_url.trim_end_matches('/'),
-        path
-    )
+    format!("{}/api/v1{}", config.base_url.trim_end_matches('/'), path)
 }
 
 /// Search Zammad tickets. Uses Elasticsearch query syntax.
@@ -213,10 +209,7 @@ pub async fn search_tickets(
 }
 
 /// Get a single ticket by ID
-pub async fn get_ticket(
-    config: &ZammadConfig,
-    ticket_id: i64,
-) -> Result<ZammadTicket, String> {
+pub async fn get_ticket(config: &ZammadConfig, ticket_id: i64) -> Result<ZammadTicket, String> {
     let client = build_client(config);
     let url = api_url(config, &format!("/tickets/{ticket_id}"));
 
@@ -231,7 +224,9 @@ pub async fn get_ticket(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Zammad GET ticket {ticket_id} returned HTTP {status}: {body}"));
+        return Err(format!(
+            "Zammad GET ticket {ticket_id} returned HTTP {status}: {body}"
+        ));
     }
 
     response
@@ -258,7 +253,9 @@ pub async fn get_ticket_articles(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Zammad GET articles for ticket {ticket_id} returned HTTP {status}: {body}"));
+        return Err(format!(
+            "Zammad GET articles for ticket {ticket_id} returned HTTP {status}: {body}"
+        ));
     }
 
     response
@@ -319,7 +316,9 @@ pub async fn update_ticket(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Zammad PUT ticket {ticket_id} returned HTTP {status}: {body}"));
+        return Err(format!(
+            "Zammad PUT ticket {ticket_id} returned HTTP {status}: {body}"
+        ));
     }
 
     response

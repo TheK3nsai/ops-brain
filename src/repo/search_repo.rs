@@ -18,10 +18,7 @@ pub struct SearchResults {
     pub handoffs: Vec<Handoff>,
 }
 
-pub async fn search_inventory(
-    pool: &PgPool,
-    query: &str,
-) -> Result<SearchResults, sqlx::Error> {
+pub async fn search_inventory(pool: &PgPool, query: &str) -> Result<SearchResults, sqlx::Error> {
     let (servers, services, runbooks, knowledge, incidents, handoffs) = tokio::try_join!(
         sqlx::query_as::<_, Server>(
             "SELECT * FROM servers
@@ -83,10 +80,7 @@ pub async fn search_inventory(
     })
 }
 
-pub async fn search_runbooks(
-    pool: &PgPool,
-    query: &str,
-) -> Result<Vec<Runbook>, sqlx::Error> {
+pub async fn search_runbooks(pool: &PgPool, query: &str) -> Result<Vec<Runbook>, sqlx::Error> {
     sqlx::query_as::<_, Runbook>(
         "SELECT * FROM runbooks
          WHERE search_vector @@ plainto_tsquery('english', $1)

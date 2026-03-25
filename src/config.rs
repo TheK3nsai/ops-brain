@@ -44,11 +44,19 @@ pub struct Config {
     pub zammad_api_token: Option<String>,
 
     /// Embedding API base URL (OpenAI-compatible). Default: local ollama.
-    #[arg(long, env = "OPS_BRAIN_EMBEDDING_URL", default_value = "http://localhost:11434/v1/embeddings")]
+    #[arg(
+        long,
+        env = "OPS_BRAIN_EMBEDDING_URL",
+        default_value = "http://localhost:11434/v1/embeddings"
+    )]
     pub embedding_url: String,
 
     /// Embedding model name (default: nomic-embed-text for ollama)
-    #[arg(long, env = "OPS_BRAIN_EMBEDDING_MODEL", default_value = "nomic-embed-text")]
+    #[arg(
+        long,
+        env = "OPS_BRAIN_EMBEDDING_MODEL",
+        default_value = "nomic-embed-text"
+    )]
     pub embedding_model: String,
 
     /// API key for embedding service (optional — not needed for local ollama)

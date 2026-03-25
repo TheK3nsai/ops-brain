@@ -13,7 +13,11 @@ pub const BRIEFING_TYPES: &[&str] = &["daily", "weekly"];
 
 /// Validate a value against a list of allowed values.
 /// Returns Ok(()) if valid or None, Err(message) if invalid.
-pub fn validate_option(value: Option<&str>, field_name: &str, allowed: &[&str]) -> Result<(), String> {
+pub fn validate_option(
+    value: Option<&str>,
+    field_name: &str,
+    allowed: &[&str],
+) -> Result<(), String> {
     if let Some(v) = value {
         let lower = v.to_lowercase();
         if !allowed.contains(&lower.as_str()) {

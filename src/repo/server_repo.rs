@@ -10,10 +10,7 @@ pub async fn get_server(pool: &PgPool, id: Uuid) -> Result<Option<Server>, sqlx:
         .await
 }
 
-pub async fn get_server_by_slug(
-    pool: &PgPool,
-    slug: &str,
-) -> Result<Option<Server>, sqlx::Error> {
+pub async fn get_server_by_slug(pool: &PgPool, slug: &str) -> Result<Option<Server>, sqlx::Error> {
     sqlx::query_as::<_, Server>("SELECT * FROM servers WHERE slug = $1")
         .bind(slug)
         .fetch_optional(pool)

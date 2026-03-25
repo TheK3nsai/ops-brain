@@ -253,7 +253,11 @@ monitor_cert_is_valid{monitor_name="Nextcloud",monitor_type="http",monitor_url="
         assert_eq!(result.up, 2);
         assert_eq!(result.down, 1);
 
-        let nc = result.monitors.iter().find(|m| m.name == "Nextcloud").unwrap();
+        let nc = result
+            .monitors
+            .iter()
+            .find(|m| m.name == "Nextcloud")
+            .unwrap();
         assert_eq!(nc.status, 1);
         assert_eq!(nc.status_text, "up");
         assert_eq!(nc.response_time_ms, Some(145.0));
@@ -268,7 +272,9 @@ monitor_cert_is_valid{monitor_name="Nextcloud",monitor_type="http",monitor_url="
 
     #[test]
     fn test_parse_labels() {
-        let labels = parse_labels(r#"monitor_name="Test Server",monitor_type="http",monitor_url="https://example.com""#);
+        let labels = parse_labels(
+            r#"monitor_name="Test Server",monitor_type="http",monitor_url="https://example.com""#,
+        );
         assert_eq!(labels.get("monitor_name").unwrap(), "Test Server");
         assert_eq!(labels.get("monitor_type").unwrap(), "http");
         assert_eq!(labels.get("monitor_url").unwrap(), "https://example.com");
@@ -277,6 +283,9 @@ monitor_cert_is_valid{monitor_name="Nextcloud",monitor_type="http",monitor_url="
     #[test]
     fn test_parse_labels_escaped_quotes() {
         let labels = parse_labels(r#"monitor_name="Test \"Quoted\" Server",monitor_type="http""#);
-        assert_eq!(labels.get("monitor_name").unwrap(), r#"Test "Quoted" Server"#);
+        assert_eq!(
+            labels.get("monitor_name").unwrap(),
+            r#"Test "Quoted" Server"#
+        );
     }
 }

@@ -24,8 +24,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("ops_brain=info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("ops_brain=info")),
         )
         .init();
 
@@ -98,7 +97,12 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let server = OpsBrain::new(pool.clone(), kuma_config.clone(), embedding_client.clone(), zammad_config.clone());
+    let server = OpsBrain::new(
+        pool.clone(),
+        kuma_config.clone(),
+        embedding_client.clone(),
+        zammad_config.clone(),
+    );
 
     match config.transport.as_str() {
         "stdio" => {
@@ -108,11 +112,10 @@ async fn main() -> anyhow::Result<()> {
             service.waiting().await?;
         }
         "http" => {
-            use std::sync::Arc;
             use rmcp::transport::streamable_http_server::{
-                session::local::LocalSessionManager,
-                tower::StreamableHttpService,
+                session::local::LocalSessionManager, tower::StreamableHttpService,
             };
+            use std::sync::Arc;
 
             let session_manager = Arc::new(LocalSessionManager::default());
 
@@ -126,7 +129,14 @@ async fn main() -> anyhow::Result<()> {
             let embedding_client_http = embedding_client.clone();
             let zammad_config_http = zammad_config.clone();
             let mcp_service = StreamableHttpService::new(
-                move || Ok(OpsBrain::new(pool.clone(), kuma_config_http.clone(), embedding_client_http.clone(), zammad_config_http.clone())),
+                move || {
+                    Ok(OpsBrain::new(
+                        pool.clone(),
+                        kuma_config_http.clone(),
+                        embedding_client_http.clone(),
+                        zammad_config_http.clone(),
+                    ))
+                },
                 session_manager,
                 Default::default(),
             );

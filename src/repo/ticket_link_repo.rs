@@ -45,12 +45,10 @@ pub async fn get_link_by_ticket_id(
     pool: &PgPool,
     zammad_ticket_id: i32,
 ) -> Result<Option<TicketLink>, sqlx::Error> {
-    sqlx::query_as::<_, TicketLink>(
-        "SELECT * FROM ticket_links WHERE zammad_ticket_id = $1",
-    )
-    .bind(zammad_ticket_id)
-    .fetch_optional(pool)
-    .await
+    sqlx::query_as::<_, TicketLink>("SELECT * FROM ticket_links WHERE zammad_ticket_id = $1")
+        .bind(zammad_ticket_id)
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn get_links_for_incident(

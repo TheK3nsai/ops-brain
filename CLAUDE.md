@@ -149,6 +149,29 @@ Since there is no second pair of eyes, the system itself must act as the safety 
 - **Auth**: Bearer token in `OPS_BRAIN_AUTH_TOKEN` env var
 - **Health**: `GET /health` (unauthenticated, used by Docker healthcheck)
 
+### Multi-Instance Claude Code Configuration
+
+The remote HTTP transport allows any Claude Code instance to connect. Cross-client safety is enforced
+by the tools (via resolved client context), not by which machine you're on.
+
+- **stealth** (local): stdio transport in `~/.claude.json` — runs local binary, connects to local PostgreSQL
+- **All other machines** (HSR infra, CPA infra, kensai.cloud): streamable-http transport to `https://ops.kensai.cloud/mcp`
+
+Remote config (add to `~/.claude.json` on each machine):
+```json
+{
+  "mcpServers": {
+    "ops-brain": {
+      "type": "streamable-http",
+      "url": "https://ops.kensai.cloud/mcp",
+      "headers": {
+        "Authorization": "Bearer <OPS_BRAIN_AUTH_TOKEN>"
+      }
+    }
+  }
+}
+```
+
 ## REST API (Phase 8)
 
 - **Endpoint**: `POST /api/briefing`

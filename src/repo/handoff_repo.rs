@@ -99,10 +99,7 @@ pub async fn list_handoffs(
     q.fetch_all(pool).await
 }
 
-pub async fn search_handoffs(
-    pool: &PgPool,
-    query: &str,
-) -> Result<Vec<Handoff>, sqlx::Error> {
+pub async fn search_handoffs(pool: &PgPool, query: &str) -> Result<Vec<Handoff>, sqlx::Error> {
     sqlx::query_as::<_, Handoff>(
         "SELECT * FROM handoffs
          WHERE search_vector @@ plainto_tsquery('english', $1)

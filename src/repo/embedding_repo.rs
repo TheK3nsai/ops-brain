@@ -353,7 +353,9 @@ pub struct MissingEmbeddingCounts {
     pub handoffs: i64,
 }
 
-pub async fn count_missing_embeddings(pool: &PgPool) -> Result<MissingEmbeddingCounts, sqlx::Error> {
+pub async fn count_missing_embeddings(
+    pool: &PgPool,
+) -> Result<MissingEmbeddingCounts, sqlx::Error> {
     let (runbooks, knowledge, incidents, handoffs) = tokio::try_join!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM runbooks WHERE embedding IS NULL")
             .fetch_one(pool),

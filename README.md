@@ -30,23 +30,23 @@ get_situational_awareness(server_slug: "hvfs0")
 ### Runbooks (5)
 | Tool | Description |
 |------|-------------|
-| `get_runbook` / `list_runbooks` | Retrieve by slug or filter by category/service/server/tag |
-| `search_runbooks` | Search runbook content (mode: fts/semantic/hybrid) |
-| `create_runbook` / `update_runbook` | CRUD with auto-versioning |
+| `get_runbook` / `list_runbooks` | Retrieve by slug or filter by category/service/server/tag/client |
+| `search_runbooks` | Search runbook content (mode: fts/semantic/hybrid). Supports `client_slug` scoping + `acknowledge_cross_client` gate |
+| `create_runbook` / `update_runbook` | CRUD with auto-versioning. Supports `client_slug` ownership + `cross_client_safe` flag |
 
 ### Knowledge (3)
 | Tool | Description |
 |------|-------------|
-| `add_knowledge` | Store operational facts, gotchas, tips |
-| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid) |
+| `add_knowledge` | Store operational facts, gotchas, tips. Supports `cross_client_safe` flag |
+| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid). Supports `client_slug` scoping + `acknowledge_cross_client` gate |
 | `list_knowledge` | Filter by category or client |
 
 ### Context (3)
 | Tool | Description |
 |------|-------------|
-| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client (includes live monitoring + semantically related content) |
+| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Cross-client runbooks/knowledge auto-gated via resolved client; use `acknowledge_cross_client` to release |
 | `get_client_overview` | Full client briefing with all related data |
-| `get_server_context` | Everything about a specific server (includes live monitoring + semantically related runbooks/knowledge) |
+| `get_server_context` | Everything about a specific server. Cross-client runbooks/knowledge auto-gated; use `acknowledge_cross_client` to release |
 
 ### Incidents (6)
 | Tool | Description |
@@ -106,7 +106,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ### Semantic Search (2)
 | Tool | Description |
 |------|-------------|
-| `semantic_search` | AI-powered cross-table search — finds conceptually related content even without exact keyword matches |
+| `semantic_search` | AI-powered cross-table search — finds conceptually related content. Supports `client_slug` scoping + `acknowledge_cross_client` gate for runbooks/knowledge |
 | `backfill_embeddings` | Generate embeddings for existing records (batch, with progress reporting) |
 
 ## REST API
@@ -274,6 +274,32 @@ TicketLink ── Zammad Ticket (external)
    ├──────── Server (optional)
    └──────── Service (optional)
 ```
+
+## Client-Scope Safety (Phase 9)
+
+ops-brain serves a solo operator managing two clients with different compliance domains (HIPAA hospice vs IRS/tax CPA). Since there is no second pair of eyes, the system itself acts as the safety gate to prevent cross-client data leakage.
+
+### How It Works
+
+- **Runbooks** and **knowledge entries** can be assigned to a client via `client_slug` (unset = global)
+- A `cross_client_safe` flag (default: false) controls whether content can surface outside its owning client
+- **Context tools** (`get_situational_awareness`, `get_server_context`) automatically resolve the client from the server/service chain and gate runbooks/knowledge
+- **Search tools** accept optional `client_slug` to explicitly scope results
+- When cross-client content is detected without acknowledgment, the **actual content is withheld** — only a notice with count and owning client is returned
+- Pass `acknowledge_cross_client: true` on a second call to release withheld content
+- Every cross-client access attempt is logged in the `audit_log` table
+- All surfaced items include `_client_slug` and `_client_name` provenance fields
+- The watchdog only suggests same-client or global runbooks for auto-created incidents
+
+### Gate Rules
+
+| Condition | Result |
+|-----------|--------|
+| `client_id IS NULL` (global) | Always allowed |
+| Same client as requesting context | Always allowed |
+| Different client + `cross_client_safe = true` | Allowed |
+| Different client + `acknowledge_cross_client = true` | Released (audit logged) |
+| Different client + no acknowledgment | **Withheld** (audit logged) |
 
 ## Roadmap
 

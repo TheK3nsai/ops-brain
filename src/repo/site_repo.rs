@@ -17,18 +17,13 @@ pub async fn get_site_by_slug(pool: &PgPool, slug: &str) -> Result<Option<Site>,
         .await
 }
 
-pub async fn list_sites(
-    pool: &PgPool,
-    client_id: Option<Uuid>,
-) -> Result<Vec<Site>, sqlx::Error> {
+pub async fn list_sites(pool: &PgPool, client_id: Option<Uuid>) -> Result<Vec<Site>, sqlx::Error> {
     match client_id {
         Some(cid) => {
-            sqlx::query_as::<_, Site>(
-                "SELECT * FROM sites WHERE client_id = $1 ORDER BY name",
-            )
-            .bind(cid)
-            .fetch_all(pool)
-            .await
+            sqlx::query_as::<_, Site>("SELECT * FROM sites WHERE client_id = $1 ORDER BY name")
+                .bind(cid)
+                .fetch_all(pool)
+                .await
         }
         None => {
             sqlx::query_as::<_, Site>("SELECT * FROM sites ORDER BY name")

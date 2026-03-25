@@ -1,9 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::State, http::StatusCode, middleware::Next, response::Response};
 
 /// Constant-time token comparison to prevent timing attacks.
 pub fn validate_token(token: &str, expected: &str) -> bool {
