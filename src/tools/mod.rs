@@ -4274,7 +4274,14 @@ impl ServerHandler for OpsBrain {
                  for Zammad ticketing integration — create_ticket and add_ticket_note for \
                  ticket management with time accounting. Use generate_briefing for \
                  daily/weekly operational summaries aggregating monitoring, incidents, \
-                 handoffs, and tickets.",
+                 handoffs, and tickets. \
+                 \
+                 IMPORTANT: You are part of a multi-CC team. Run search_knowledge with \
+                 query 'CC roles specialties' to understand your role and how to contribute. \
+                 Run search_knowledge with query 'how to contribute' for the full contributor guide. \
+                 Always add_knowledge for gotchas and lessons learned, create_handoff when \
+                 another CC should pick up work, and use get_situational_awareness before \
+                 making infrastructure changes.",
             )
     }
 }
