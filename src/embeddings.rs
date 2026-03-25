@@ -113,3 +113,148 @@ pub fn prepare_incident_text(i: &Incident) -> String {
 pub fn prepare_handoff_text(h: &Handoff) -> String {
     format!("{}\n\n{}", h.title, h.body)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    #[test]
+    fn prepare_runbook_text_with_notes() {
+        let runbook = Runbook {
+            id: Uuid::now_v7(),
+            title: "Reset AD Password".to_string(),
+            slug: "reset-ad-password".to_string(),
+            category: Some("active-directory".to_string()),
+            content: "Step 1: Open ADUC\nStep 2: Find user".to_string(),
+            version: 1,
+            tags: vec!["ad".to_string()],
+            estimated_minutes: Some(5),
+            requires_reboot: false,
+            notes: Some("Use RSAT tools on RDS server".to_string()),
+            client_id: None,
+            cross_client_safe: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let text = prepare_runbook_text(&runbook);
+        assert!(text.starts_with("Reset AD Password"));
+        assert!(text.contains("Step 1: Open ADUC"));
+        assert!(text.contains("Use RSAT tools on RDS server"));
+    }
+
+    #[test]
+    fn prepare_runbook_text_without_notes() {
+        let runbook = Runbook {
+            id: Uuid::now_v7(),
+            title: "Title".to_string(),
+            slug: "title".to_string(),
+            category: None,
+            content: "Content".to_string(),
+            version: 1,
+            tags: vec![],
+            estimated_minutes: None,
+            requires_reboot: false,
+            notes: None,
+            client_id: None,
+            cross_client_safe: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let text = prepare_runbook_text(&runbook);
+        assert_eq!(text, "Title\n\nContent");
+    }
+
+    #[test]
+    fn prepare_knowledge_text_format() {
+        let knowledge = Knowledge {
+            id: Uuid::now_v7(),
+            title: "VPN Setup Guide".to_string(),
+            content: "Configure WireGuard tunnel".to_string(),
+            category: Some("networking".to_string()),
+            tags: vec![],
+            client_id: None,
+            cross_client_safe: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let text = prepare_knowledge_text(&knowledge);
+        assert_eq!(text, "VPN Setup Guide\n\nConfigure WireGuard tunnel");
+    }
+
+    #[test]
+    fn prepare_incident_text_full() {
+        let incident = Incident {
+            id: Uuid::now_v7(),
+            title: "Server Outage".to_string(),
+            status: "resolved".to_string(),
+            severity: "critical".to_string(),
+            client_id: None,
+            reported_at: Utc::now(),
+            resolved_at: Some(Utc::now()),
+            symptoms: Some("Cannot RDP".to_string()),
+            root_cause: Some("Disk full".to_string()),
+            resolution: Some("Cleared temp files".to_string()),
+            prevention: Some("Set up disk monitoring".to_string()),
+            time_to_resolve_minutes: Some(45),
+            notes: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let text = prepare_incident_text(&incident);
+        assert!(text.starts_with("Server Outage"));
+        assert!(text.contains("Symptoms: Cannot RDP"));
+        assert!(text.contains("Root Cause: Disk full"));
+        assert!(text.contains("Resolution: Cleared temp files"));
+        assert!(text.contains("Prevention: Set up disk monitoring"));
+    }
+
+    #[test]
+    fn prepare_incident_text_minimal() {
+        let incident = Incident {
+            id: Uuid::now_v7(),
+            title: "Minor Issue".to_string(),
+            status: "open".to_string(),
+            severity: "low".to_string(),
+            client_id: None,
+            reported_at: Utc::now(),
+            resolved_at: None,
+            symptoms: None,
+            root_cause: None,
+            resolution: None,
+            prevention: None,
+            time_to_resolve_minutes: None,
+            notes: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let text = prepare_incident_text(&incident);
+        assert_eq!(text, "Minor Issue");
+    }
+
+    #[test]
+    fn prepare_handoff_text_format() {
+        let handoff = Handoff {
+            id: Uuid::now_v7(),
+            from_session_id: None,
+            from_machine: "stealth".to_string(),
+            to_machine: Some("cloudlab".to_string()),
+            status: "pending".to_string(),
+            priority: "high".to_string(),
+            title: "Continue DNS migration".to_string(),
+            body: "Need to update remaining A records".to_string(),
+            context: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let text = prepare_handoff_text(&handoff);
+        assert_eq!(text, "Continue DNS migration\n\nNeed to update remaining A records");
+    }
+}

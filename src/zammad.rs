@@ -358,3 +358,175 @@ pub async fn add_ticket_article(
         .await
         .map_err(|e| format!("Failed to parse Zammad article response: {e}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // state_name_to_id
+
+    #[test]
+    fn state_mappings() {
+        assert_eq!(state_name_to_id("new"), Some(1));
+        assert_eq!(state_name_to_id("open"), Some(2));
+        assert_eq!(state_name_to_id("pending reminder"), Some(3));
+        assert_eq!(state_name_to_id("pending_reminder"), Some(3));
+        assert_eq!(state_name_to_id("closed"), Some(4));
+    }
+
+    #[test]
+    fn state_case_insensitive() {
+        assert_eq!(state_name_to_id("NEW"), Some(1));
+        assert_eq!(state_name_to_id("Open"), Some(2));
+        assert_eq!(state_name_to_id("CLOSED"), Some(4));
+    }
+
+    #[test]
+    fn state_invalid() {
+        assert_eq!(state_name_to_id("deleted"), None);
+        assert_eq!(state_name_to_id(""), None);
+        assert_eq!(state_name_to_id("pending"), None);
+    }
+
+    // priority_name_to_id
+
+    #[test]
+    fn priority_mappings() {
+        assert_eq!(priority_name_to_id("low"), Some(1));
+        assert_eq!(priority_name_to_id("normal"), Some(2));
+        assert_eq!(priority_name_to_id("high"), Some(3));
+    }
+
+    #[test]
+    fn priority_expanded_names() {
+        assert_eq!(priority_name_to_id("1 low"), Some(1));
+        assert_eq!(priority_name_to_id("2 normal"), Some(2));
+        assert_eq!(priority_name_to_id("3 high"), Some(3));
+    }
+
+    #[test]
+    fn priority_case_insensitive() {
+        assert_eq!(priority_name_to_id("LOW"), Some(1));
+        assert_eq!(priority_name_to_id("Normal"), Some(2));
+        assert_eq!(priority_name_to_id("HIGH"), Some(3));
+    }
+
+    #[test]
+    fn priority_invalid() {
+        assert_eq!(priority_name_to_id("critical"), None);
+        assert_eq!(priority_name_to_id("urgent"), None);
+        assert_eq!(priority_name_to_id(""), None);
+    }
+
+    // auth_header
+
+    #[test]
+    fn auth_header_format() {
+        let config = ZammadConfig {
+            base_url: "http://localhost:3000".to_string(),
+            api_token: "abc123".to_string(),
+        };
+        assert_eq!(auth_header(&config), "Token token=abc123");
+    }
+
+    // api_url
+
+    #[test]
+    fn api_url_construction() {
+        let config = ZammadConfig {
+            base_url: "http://localhost:3000".to_string(),
+            api_token: "test".to_string(),
+        };
+        assert_eq!(api_url(&config, "/tickets"), "http://localhost:3000/api/v1/tickets");
+        assert_eq!(
+            api_url(&config, "/tickets/123"),
+            "http://localhost:3000/api/v1/tickets/123"
+        );
+    }
+
+    #[test]
+    fn api_url_trims_trailing_slash() {
+        let config = ZammadConfig {
+            base_url: "http://localhost:3000/".to_string(),
+            api_token: "test".to_string(),
+        };
+        assert_eq!(api_url(&config, "/tickets"), "http://localhost:3000/api/v1/tickets");
+    }
+
+    // Deserialization
+
+    #[test]
+    fn deserialize_zammad_ticket() {
+        let json = r#"{
+            "id": 42,
+            "number": "12345",
+            "title": "Test ticket",
+            "state": "open",
+            "state_id": 2,
+            "priority": "normal",
+            "priority_id": 2,
+            "group": "HSR",
+            "group_id": 2,
+            "created_at": "2026-03-20T10:00:00Z",
+            "updated_at": "2026-03-20T11:00:00Z"
+        }"#;
+
+        let ticket: ZammadTicket = serde_json::from_str(json).unwrap();
+        assert_eq!(ticket.id, 42);
+        assert_eq!(ticket.number, "12345");
+        assert_eq!(ticket.title, "Test ticket");
+        assert_eq!(ticket.state, Some("open".to_string()));
+        assert_eq!(ticket.state_id, Some(2));
+    }
+
+    #[test]
+    fn deserialize_zammad_ticket_minimal() {
+        // Minimal fields — all optional fields default to None
+        let json = r#"{
+            "id": 1,
+            "number": "00001",
+            "title": "Minimal",
+            "created_at": "2026-03-20T10:00:00Z",
+            "updated_at": "2026-03-20T10:00:00Z"
+        }"#;
+
+        let ticket: ZammadTicket = serde_json::from_str(json).unwrap();
+        assert_eq!(ticket.id, 1);
+        assert!(ticket.state.is_none());
+        assert!(ticket.priority.is_none());
+        assert!(ticket.tags.is_none());
+        assert!(ticket.time_unit.is_none());
+    }
+
+    #[test]
+    fn serialize_create_ticket_payload() {
+        let payload = CreateTicketPayload {
+            title: "Test".to_string(),
+            group_id: 2,
+            customer_id: 5,
+            organization_id: Some(2),
+            state_id: Some(1),
+            priority_id: Some(2),
+            owner_id: None,
+            tags: Some("infraestructura".to_string()),
+            article: CreateArticleInline {
+                body: "Test body".to_string(),
+                content_type: Some("text/plain".to_string()),
+                article_type: Some("note".to_string()),
+                internal: Some(true),
+                time_unit: None,
+                time_accounting_type_id: None,
+            },
+        };
+
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["title"], "Test");
+        assert_eq!(json["group_id"], 2);
+        // owner_id should be skipped (None)
+        assert!(json.get("owner_id").is_none());
+        assert_eq!(json["article"]["body"], "Test body");
+        assert_eq!(json["article"]["internal"], true);
+        // time_unit should be skipped
+        assert!(json["article"].get("time_unit").is_none());
+    }
+}

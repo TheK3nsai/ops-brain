@@ -45,3 +45,37 @@ pub async fn bearer_auth(
         _ => Err(StatusCode::UNAUTHORIZED),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_token_correct() {
+        assert!(validate_token("my-secret-token", "my-secret-token"));
+    }
+
+    #[test]
+    fn validate_token_wrong() {
+        assert!(!validate_token("wrong-token", "my-secret-token"));
+    }
+
+    #[test]
+    fn validate_token_different_lengths() {
+        assert!(!validate_token("short", "my-secret-token"));
+        assert!(!validate_token("my-secret-token-longer", "my-secret-token"));
+    }
+
+    #[test]
+    fn validate_token_empty() {
+        assert!(!validate_token("", "my-secret-token"));
+        assert!(!validate_token("something", ""));
+        assert!(validate_token("", "")); // both empty = match
+    }
+
+    #[test]
+    fn validate_token_single_char_diff() {
+        assert!(!validate_token("aaaa", "aaab"));
+        assert!(!validate_token("aaab", "aaaa"));
+    }
+}

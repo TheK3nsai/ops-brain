@@ -43,3 +43,94 @@ pub fn validate_required(value: &str, field_name: &str, allowed: &[&str]) -> Res
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // validate_option
+
+    #[test]
+    fn validate_option_none_is_ok() {
+        assert!(validate_option(None, "severity", INCIDENT_SEVERITIES).is_ok());
+    }
+
+    #[test]
+    fn validate_option_valid_value() {
+        assert!(validate_option(Some("high"), "severity", INCIDENT_SEVERITIES).is_ok());
+    }
+
+    #[test]
+    fn validate_option_case_insensitive() {
+        assert!(validate_option(Some("HIGH"), "severity", INCIDENT_SEVERITIES).is_ok());
+        assert!(validate_option(Some("Critical"), "severity", INCIDENT_SEVERITIES).is_ok());
+    }
+
+    #[test]
+    fn validate_option_invalid_value() {
+        let result = validate_option(Some("extreme"), "severity", INCIDENT_SEVERITIES);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("extreme"));
+        assert!(msg.contains("severity"));
+        assert!(msg.contains("low, medium, high, critical"));
+    }
+
+    // validate_required
+
+    #[test]
+    fn validate_required_valid() {
+        assert!(validate_required("open", "status", INCIDENT_STATUSES).is_ok());
+        assert!(validate_required("resolved", "status", INCIDENT_STATUSES).is_ok());
+    }
+
+    #[test]
+    fn validate_required_case_insensitive() {
+        assert!(validate_required("OPEN", "status", INCIDENT_STATUSES).is_ok());
+    }
+
+    #[test]
+    fn validate_required_invalid() {
+        let result = validate_required("archived", "status", INCIDENT_STATUSES);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("archived"));
+    }
+
+    // All enum constants are self-consistent
+
+    #[test]
+    fn all_handoff_statuses_valid() {
+        for s in HANDOFF_STATUSES {
+            assert!(validate_required(s, "status", HANDOFF_STATUSES).is_ok());
+        }
+    }
+
+    #[test]
+    fn all_handoff_priorities_valid() {
+        for p in HANDOFF_PRIORITIES {
+            assert!(validate_required(p, "priority", HANDOFF_PRIORITIES).is_ok());
+        }
+    }
+
+    #[test]
+    fn all_runbook_usages_valid() {
+        for u in RUNBOOK_USAGES {
+            assert!(validate_required(u, "usage", RUNBOOK_USAGES).is_ok());
+        }
+    }
+
+    #[test]
+    fn all_search_modes_valid() {
+        for m in SEARCH_MODES {
+            assert!(validate_required(m, "mode", SEARCH_MODES).is_ok());
+        }
+    }
+
+    #[test]
+    fn all_briefing_types_valid() {
+        for t in BRIEFING_TYPES {
+            assert!(validate_required(t, "type", BRIEFING_TYPES).is_ok());
+        }
+    }
+}

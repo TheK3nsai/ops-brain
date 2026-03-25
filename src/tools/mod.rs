@@ -4027,3 +4027,217 @@ impl ServerHandler for OpsBrain {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    fn make_item(
+        id: Uuid,
+        client_id: Option<Uuid>,
+        cross_client_safe: bool,
+    ) -> serde_json::Value {
+        let mut obj = serde_json::json!({
+            "id": id.to_string(),
+            "title": "Test Item",
+            "cross_client_safe": cross_client_safe,
+        });
+        if let Some(cid) = client_id {
+            obj["client_id"] = serde_json::Value::String(cid.to_string());
+        }
+        obj
+    }
+
+    fn make_lookup() -> (Uuid, Uuid, HashMap<Uuid, (String, String)>) {
+        let hsr_id = Uuid::now_v7();
+        let cpa_id = Uuid::now_v7();
+        let mut lookup = HashMap::new();
+        lookup.insert(hsr_id, ("hsr".to_string(), "Hospice".to_string()));
+        lookup.insert(cpa_id, ("cpa".to_string(), "CPA Firm".to_string()));
+        (hsr_id, cpa_id, lookup)
+    }
+
+    // ===== filter_cross_client tests =====
+
+    #[test]
+    fn filter_no_requesting_client_allows_all() {
+        let (hsr_id, _, lookup) = make_lookup();
+        let items = vec![
+            make_item(Uuid::now_v7(), Some(hsr_id), false),
+            make_item(Uuid::now_v7(), None, false),
+        ];
+
+        let result = filter_cross_client(items, "runbook", None, false, &lookup);
+
+        assert_eq!(result.allowed.len(), 2);
+        assert!(result.withheld_notices.is_empty());
+        assert!(result.audit_entries.is_empty());
+    }
+
+    #[test]
+    fn filter_global_content_always_allowed() {
+        let (hsr_id, _, lookup) = make_lookup();
+        let item_id = Uuid::now_v7();
+        let items = vec![make_item(item_id, None, false)];
+
+        let result = filter_cross_client(items, "runbook", Some(hsr_id), false, &lookup);
+
+        assert_eq!(result.allowed.len(), 1);
+        assert!(result.withheld_notices.is_empty());
+        assert!(result.audit_entries.is_empty());
+        // Provenance should show "Global"
+        assert_eq!(result.allowed[0]["_client_name"], "Global");
+        assert!(result.allowed[0]["_client_slug"].is_null());
+    }
+
+    #[test]
+    fn filter_same_client_allowed() {
+        let (hsr_id, _, lookup) = make_lookup();
+        let item_id = Uuid::now_v7();
+        let items = vec![make_item(item_id, Some(hsr_id), false)];
+
+        let result = filter_cross_client(items, "runbook", Some(hsr_id), false, &lookup);
+
+        assert_eq!(result.allowed.len(), 1);
+        assert!(result.withheld_notices.is_empty());
+        assert!(result.audit_entries.is_empty());
+        // Provenance should show the client
+        assert_eq!(result.allowed[0]["_client_slug"], "hsr");
+        assert_eq!(result.allowed[0]["_client_name"], "Hospice");
+    }
+
+    #[test]
+    fn filter_cross_client_safe_allowed() {
+        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let item_id = Uuid::now_v7();
+        // HSR item marked as cross_client_safe, requesting from CPA
+        let items = vec![make_item(item_id, Some(hsr_id), true)];
+
+        let result = filter_cross_client(items, "runbook", Some(cpa_id), false, &lookup);
+
+        assert_eq!(result.allowed.len(), 1);
+        assert!(result.withheld_notices.is_empty());
+        // Audit entry should record "released_safe"
+        assert_eq!(result.audit_entries.len(), 1);
+        assert_eq!(result.audit_entries[0].0, item_id);
+        assert_eq!(result.audit_entries[0].1, Some(hsr_id));
+        assert_eq!(result.audit_entries[0].2, "released_safe");
+    }
+
+    #[test]
+    fn filter_cross_client_acknowledged_released() {
+        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let item_id = Uuid::now_v7();
+        // HSR item NOT safe, but acknowledge=true
+        let items = vec![make_item(item_id, Some(hsr_id), false)];
+
+        let result = filter_cross_client(items, "runbook", Some(cpa_id), true, &lookup);
+
+        assert_eq!(result.allowed.len(), 1);
+        assert!(result.withheld_notices.is_empty());
+        // Audit entry should record "released"
+        assert_eq!(result.audit_entries.len(), 1);
+        assert_eq!(result.audit_entries[0].2, "released");
+    }
+
+    #[test]
+    fn filter_cross_client_withheld() {
+        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let item_id = Uuid::now_v7();
+        // HSR item, NOT safe, NOT acknowledged, requesting from CPA
+        let items = vec![make_item(item_id, Some(hsr_id), false)];
+
+        let result = filter_cross_client(items, "runbook", Some(cpa_id), false, &lookup);
+
+        assert!(result.allowed.is_empty());
+        assert_eq!(result.withheld_notices.len(), 1);
+        assert_eq!(result.withheld_notices[0]["count"], 1);
+        assert_eq!(result.withheld_notices[0]["owning_client_slug"], "hsr");
+        assert_eq!(result.withheld_notices[0]["entity_type"], "runbook");
+        // Audit entry should record "withheld"
+        assert_eq!(result.audit_entries.len(), 1);
+        assert_eq!(result.audit_entries[0].2, "withheld");
+    }
+
+    #[test]
+    fn filter_multiple_withheld_grouped_by_client() {
+        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let items = vec![
+            make_item(Uuid::now_v7(), Some(hsr_id), false),
+            make_item(Uuid::now_v7(), Some(hsr_id), false),
+        ];
+
+        let result = filter_cross_client(items, "knowledge", Some(cpa_id), false, &lookup);
+
+        assert!(result.allowed.is_empty());
+        // Should be grouped into one notice (both from HSR)
+        assert_eq!(result.withheld_notices.len(), 1);
+        assert_eq!(result.withheld_notices[0]["count"], 2);
+        assert_eq!(result.audit_entries.len(), 2);
+    }
+
+    #[test]
+    fn filter_mixed_items() {
+        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let items = vec![
+            make_item(Uuid::now_v7(), None, false),              // global → allowed
+            make_item(Uuid::now_v7(), Some(cpa_id), false),      // same client → allowed
+            make_item(Uuid::now_v7(), Some(hsr_id), true),       // diff client, safe → allowed
+            make_item(Uuid::now_v7(), Some(hsr_id), false),      // diff client, not safe → withheld
+        ];
+
+        let result = filter_cross_client(items, "runbook", Some(cpa_id), false, &lookup);
+
+        assert_eq!(result.allowed.len(), 3);
+        assert_eq!(result.withheld_notices.len(), 1);
+        assert_eq!(result.withheld_notices[0]["count"], 1);
+        // 1 released_safe + 1 withheld
+        assert_eq!(result.audit_entries.len(), 2);
+    }
+
+    // ===== inject_provenance tests =====
+
+    #[test]
+    fn provenance_with_client() {
+        let (hsr_id, _, lookup) = make_lookup();
+        let mut item = serde_json::json!({
+            "id": Uuid::now_v7().to_string(),
+            "client_id": hsr_id.to_string(),
+        });
+
+        inject_provenance(&mut item, &lookup);
+
+        assert_eq!(item["_client_slug"], "hsr");
+        assert_eq!(item["_client_name"], "Hospice");
+    }
+
+    #[test]
+    fn provenance_without_client() {
+        let (_, _, lookup) = make_lookup();
+        let mut item = serde_json::json!({
+            "id": Uuid::now_v7().to_string(),
+        });
+
+        inject_provenance(&mut item, &lookup);
+
+        assert!(item["_client_slug"].is_null());
+        assert_eq!(item["_client_name"], "Global");
+    }
+
+    #[test]
+    fn provenance_unknown_client() {
+        let lookup = HashMap::new();
+        let unknown_id = Uuid::now_v7();
+        let mut item = serde_json::json!({
+            "id": Uuid::now_v7().to_string(),
+            "client_id": unknown_id.to_string(),
+        });
+
+        inject_provenance(&mut item, &lookup);
+
+        // Unknown client_id — no provenance injected (no crash)
+        assert!(item.get("_client_slug").is_none());
+    }
+}

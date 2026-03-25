@@ -391,6 +391,122 @@ fn determine_severity(server: Option<&crate::models::server::Server>) -> String 
     "medium".to_string()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_server(roles: Vec<&str>) -> crate::models::server::Server {
+        crate::models::server::Server {
+            id: Uuid::now_v7(),
+            site_id: Uuid::now_v7(),
+            hostname: "test-server".to_string(),
+            slug: "test-server".to_string(),
+            os: None,
+            ip_addresses: vec![],
+            ssh_alias: None,
+            roles: roles.into_iter().map(String::from).collect(),
+            hardware: None,
+            cpu: None,
+            ram_gb: None,
+            storage_summary: None,
+            is_virtual: false,
+            hypervisor_id: None,
+            status: "active".to_string(),
+            notes: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn severity_no_server_is_medium() {
+        assert_eq!(determine_severity(None), "medium");
+    }
+
+    #[test]
+    fn severity_domain_controller_is_critical() {
+        let server = make_server(vec!["domain-controller"]);
+        assert_eq!(determine_severity(Some(&server)), "critical");
+    }
+
+    #[test]
+    fn severity_dc_is_critical() {
+        let server = make_server(vec!["dc"]);
+        assert_eq!(determine_severity(Some(&server)), "critical");
+    }
+
+    #[test]
+    fn severity_dns_is_critical() {
+        let server = make_server(vec!["dns"]);
+        assert_eq!(determine_severity(Some(&server)), "critical");
+    }
+
+    #[test]
+    fn severity_dhcp_is_critical() {
+        let server = make_server(vec!["dhcp"]);
+        assert_eq!(determine_severity(Some(&server)), "critical");
+    }
+
+    #[test]
+    fn severity_file_server_is_high() {
+        let server = make_server(vec!["file-server"]);
+        assert_eq!(determine_severity(Some(&server)), "high");
+    }
+
+    #[test]
+    fn severity_rds_is_high() {
+        let server = make_server(vec!["rds"]);
+        assert_eq!(determine_severity(Some(&server)), "high");
+    }
+
+    #[test]
+    fn severity_database_is_high() {
+        let server = make_server(vec!["database"]);
+        assert_eq!(determine_severity(Some(&server)), "high");
+    }
+
+    #[test]
+    fn severity_backup_is_high() {
+        let server = make_server(vec!["backup"]);
+        assert_eq!(determine_severity(Some(&server)), "high");
+    }
+
+    #[test]
+    fn severity_print_server_is_medium() {
+        let server = make_server(vec!["print-server"]);
+        assert_eq!(determine_severity(Some(&server)), "medium");
+    }
+
+    #[test]
+    fn severity_multiple_roles_critical_wins() {
+        // If any role is critical, the whole server is critical
+        let server = make_server(vec!["file-server", "dns"]);
+        assert_eq!(determine_severity(Some(&server)), "critical");
+    }
+
+    #[test]
+    fn severity_case_insensitive() {
+        let server = make_server(vec!["DNS"]);
+        assert_eq!(determine_severity(Some(&server)), "critical");
+
+        let server = make_server(vec!["File-Server"]);
+        assert_eq!(determine_severity(Some(&server)), "high");
+    }
+
+    #[test]
+    fn watchdog_incident_title_format() {
+        assert_eq!(
+            watchdog_incident_title("Nextcloud", "DOWN"),
+            "[AUTO] Monitor DOWN: Nextcloud"
+        );
+        assert_eq!(
+            watchdog_incident_title("SSH", "UP"),
+            "[AUTO] Monitor UP: SSH"
+        );
+    }
+}
+
 /// Use semantic search to find relevant runbooks and log them as suggestions.
 /// Only suggests runbooks from the same client or global (no client) — prevents cross-client leakage.
 async fn suggest_runbooks(

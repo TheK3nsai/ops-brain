@@ -45,8 +45,12 @@ seed:
     docker compose exec postgres psql -U ops_brain -d ops_brain -f /seed/seed.sql
     @echo "Done!"
 
-# Run tests
+# Run tests (unit only, no DB required)
 test:
+    cargo test --lib
+
+# Run all tests including integration (requires PostgreSQL)
+test-all:
     cargo test
 
 # Run clippy

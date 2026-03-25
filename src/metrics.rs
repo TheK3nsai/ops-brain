@@ -288,4 +288,78 @@ monitor_cert_is_valid{monitor_name="Nextcloud",monitor_type="http",monitor_url="
             r#"Test "Quoted" Server"#
         );
     }
+
+    #[test]
+    fn test_parse_labels_empty() {
+        let labels = parse_labels("");
+        assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn test_status_text() {
+        assert_eq!(status_text(0), "down");
+        assert_eq!(status_text(1), "up");
+        assert_eq!(status_text(2), "pending");
+        assert_eq!(status_text(3), "maintenance");
+        assert_eq!(status_text(99), "unknown(99)");
+    }
+
+    #[test]
+    fn test_empty_metrics() {
+        let result = parse_prometheus_metrics("").unwrap();
+        assert_eq!(result.total, 0);
+        assert_eq!(result.up, 0);
+        assert_eq!(result.down, 0);
+    }
+
+    #[test]
+    fn test_comments_only() {
+        let input = "# HELP monitor_status\n# TYPE monitor_status gauge\n";
+        let result = parse_prometheus_metrics(input).unwrap();
+        assert_eq!(result.total, 0);
+    }
+
+    #[test]
+    fn test_all_status_types() {
+        let input = r#"monitor_status{monitor_name="A",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} 1
+monitor_status{monitor_name="B",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} 0
+monitor_status{monitor_name="C",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} 2
+monitor_status{monitor_name="D",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} 3
+"#;
+        let result = parse_prometheus_metrics(input).unwrap();
+        assert_eq!(result.total, 4);
+        assert_eq!(result.up, 1);
+        assert_eq!(result.down, 1);
+        assert_eq!(result.pending, 1);
+        assert_eq!(result.maintenance, 1);
+    }
+
+    #[test]
+    fn test_monitors_sorted_by_name() {
+        let input = r#"monitor_status{monitor_name="Zabbix",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} 1
+monitor_status{monitor_name="Alpha",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} 1
+monitor_status{monitor_name="Middle",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} 1
+"#;
+        let result = parse_prometheus_metrics(input).unwrap();
+        assert_eq!(result.monitors[0].name, "Alpha");
+        assert_eq!(result.monitors[1].name, "Middle");
+        assert_eq!(result.monitors[2].name, "Zabbix");
+    }
+
+    #[test]
+    fn test_cert_invalid() {
+        let input = r#"monitor_cert_is_valid{monitor_name="Expired",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} 0
+"#;
+        let result = parse_prometheus_metrics(input).unwrap();
+        let m = &result.monitors[0];
+        assert_eq!(m.cert_is_valid, Some(false));
+    }
+
+    #[test]
+    fn test_negative_response_time_ignored() {
+        let input = r#"monitor_response_time{monitor_name="X",monitor_type="http",monitor_url="",monitor_hostname="",monitor_port=""} -1
+"#;
+        let result = parse_prometheus_metrics(input).unwrap();
+        assert!(result.monitors[0].response_time_ms.is_none());
+    }
 }
