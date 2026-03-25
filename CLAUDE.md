@@ -155,14 +155,14 @@ The remote HTTP transport allows any Claude Code instance to connect. Cross-clie
 by the tools (via resolved client context), not by which machine you're on.
 
 - **stealth** (local): stdio transport in `~/.claude.json` — runs local binary, connects to local PostgreSQL
-- **All other machines** (HSR infra, CPA infra, kensai.cloud): streamable-http transport to `https://ops.kensai.cloud/mcp`
+- **All other machines** (HSR infra, CPA infra, kensai.cloud): http transport to `https://ops.kensai.cloud/mcp`
 
 Remote config (add to `~/.claude.json` on each machine):
 ```json
 {
   "mcpServers": {
     "ops-brain": {
-      "type": "streamable-http",
+      "type": "http",
       "url": "https://ops.kensai.cloud/mcp",
       "headers": {
         "Authorization": "Bearer <OPS_BRAIN_AUTH_TOKEN>"
