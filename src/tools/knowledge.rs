@@ -24,6 +24,24 @@ pub struct SearchKnowledgeParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateKnowledgeParams {
+    /// Knowledge entry ID (UUID)
+    pub id: String,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub category: Option<String>,
+    pub tags: Option<Vec<String>>,
+    /// Allow this entry to surface in other clients' contexts
+    pub cross_client_safe: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteKnowledgeParams {
+    /// Knowledge entry ID (UUID)
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListKnowledgeParams {
     pub category: Option<String>,
     pub client_slug: Option<String>,

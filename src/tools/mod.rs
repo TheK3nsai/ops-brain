@@ -1090,6 +1090,72 @@ impl OpsBrain {
     }
 
     #[tool(
+        name = "update_knowledge",
+        description = "Update an existing knowledge base entry by ID. Only provided fields are updated."
+    )]
+    async fn update_knowledge(
+        &self,
+        params: Parameters<knowledge::UpdateKnowledgeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        let id = match uuid::Uuid::parse_str(&p.id) {
+            Ok(id) => id,
+            Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.id))),
+        };
+
+        // Verify entry exists
+        match crate::repo::knowledge_repo::get_knowledge(&self.pool, id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => return Ok(not_found("Knowledge", &p.id)),
+            Err(e) => return Ok(error_result(&format!("Database error: {e}"))),
+        };
+
+        match crate::repo::knowledge_repo::update_knowledge(
+            &self.pool,
+            id,
+            p.title.as_deref(),
+            p.content.as_deref(),
+            p.category.as_deref(),
+            p.tags.as_deref(),
+            p.cross_client_safe,
+        )
+        .await
+        {
+            Ok(updated) => {
+                let text = crate::embeddings::prepare_knowledge_text(&updated);
+                self.embed_and_store("knowledge", updated.id, &text).await;
+                Ok(json_result(&updated))
+            }
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "delete_knowledge",
+        description = "Delete a knowledge base entry by ID. Use with caution — this is permanent."
+    )]
+    async fn delete_knowledge(
+        &self,
+        params: Parameters<knowledge::DeleteKnowledgeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+
+        let id = match uuid::Uuid::parse_str(&p.id) {
+            Ok(id) => id,
+            Err(_) => return Ok(error_result(&format!("Invalid UUID: {}", p.id))),
+        };
+
+        match crate::repo::knowledge_repo::delete_knowledge(&self.pool, id).await {
+            Ok(true) => Ok(json_result(
+                &serde_json::json!({"deleted": true, "id": p.id}),
+            )),
+            Ok(false) => Ok(not_found("Knowledge", &p.id)),
+            Err(e) => Ok(error_result(&format!("Database error: {e}"))),
+        }
+    }
+
+    #[tool(
         name = "search_knowledge",
         description = "Search across knowledge base entries. Supports mode: 'fts' (default, keyword match), \
         'semantic' (AI vector similarity), or 'hybrid' (combined FTS + vector via RRF ranking)"

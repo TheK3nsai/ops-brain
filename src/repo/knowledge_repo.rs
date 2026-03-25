@@ -71,6 +71,44 @@ pub async fn list_knowledge(
     q.fetch_all(pool).await
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn update_knowledge(
+    pool: &PgPool,
+    id: Uuid,
+    title: Option<&str>,
+    content: Option<&str>,
+    category: Option<&str>,
+    tags: Option<&[String]>,
+    cross_client_safe: Option<bool>,
+) -> Result<Knowledge, sqlx::Error> {
+    sqlx::query_as::<_, Knowledge>(
+        "UPDATE knowledge SET
+            title = COALESCE($2, title),
+            content = COALESCE($3, content),
+            category = COALESCE($4, category),
+            tags = COALESCE($5, tags),
+            cross_client_safe = COALESCE($6, cross_client_safe),
+            updated_at = NOW()
+         WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .bind(title)
+    .bind(content)
+    .bind(category)
+    .bind(tags)
+    .bind(cross_client_safe)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn delete_knowledge(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM knowledge WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn search_knowledge(pool: &PgPool, query: &str) -> Result<Vec<Knowledge>, sqlx::Error> {
     sqlx::query_as::<_, Knowledge>(
         "SELECT * FROM knowledge
