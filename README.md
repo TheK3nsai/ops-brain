@@ -109,6 +109,29 @@ get_situational_awareness(server_slug: "hvfs0")
 | `semantic_search` | AI-powered cross-table search — finds conceptually related content even without exact keyword matches |
 | `backfill_embeddings` | Generate embeddings for existing records (batch, with progress reporting) |
 
+## REST API
+
+In addition to MCP tools, ops-brain exposes a REST API for external consumers (scheduled triggers, cron jobs, webhooks):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/briefing` | POST | Generate a daily or weekly operational briefing |
+| `/health` | GET | Health check (unauthenticated) |
+
+```sh
+# Example: generate a daily briefing
+curl -s -X POST https://ops.kensai.cloud/api/briefing \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "daily"}'
+
+# Scoped to a specific client
+curl -s -X POST https://ops.kensai.cloud/api/briefing \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "weekly", "client_slug": "hsr"}'
+```
+
 ## Tech Stack
 
 | Component | Choice |
@@ -263,7 +286,11 @@ TicketLink ── Zammad Ticket (external)
 - [x] **Phase 5**: Semantic search — pgvector + ollama embeddings, hybrid RRF ranking, context enrichment — 47 tools
 - [x] **Phase 6**: Proactive monitoring — background watchdog polls Uptime Kuma, detects UP/DOWN transitions, auto-creates/resolves incidents with TTR, links servers/services/runbooks via semantic search, input validation — 48 tools
 - [x] **Phase 7**: Zammad integration — live Zammad REST API queries, ticket CRUD with time accounting, ticket-to-entity linking, context tools enriched with ticket data — 56 tools
-- [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage — 59 tools
+- [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools
+
+### Planned
+
+- [ ] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing, withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution in all results, audit trail for cross-client data access. Ensures HIPAA (HSR) and tax-regulatory (CPA) content cannot silently cross-pollinate.
 
 ## License
 
