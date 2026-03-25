@@ -38,7 +38,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 22 sqlx migration files (auto-run on startup)
+migrations/        # 23 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -255,3 +255,10 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **pgvector crate**: `pgvector 0.4` with `sqlx` feature for `Vector` type
 - **Local**: ollama service on stealth (RTX 3070, GPU-accelerated)
 - **Remote**: ollama container on kensai.cloud (CPU-only, same Docker network as ops-brain)
+
+## Gotchas
+
+- **sqlx migration checksums are SHA-384** (48 bytes), not SHA-256 — if manually inserting into `_sqlx_migrations`, use `sha384sum` and `decode(..., 'hex')`
+- **Never apply schema changes outside of migration files** — if you do, sqlx will try to re-run the migration and fail (e.g. "column already exists"). Fix: insert the migration record manually with the correct SHA-384 checksum: `INSERT INTO _sqlx_migrations (version, description, installed_on, success, checksum, execution_time) VALUES (<version>, '<desc>', now(), true, decode('<sha384>', 'hex'), 0);`
+- **"connection closed: initialize request"** on manual `./target/release/ops-brain` run is normal — means no MCP client is connected via stdio, not an actual error
+- **Migration count**: update the comment in this file's Project Layout section when adding new migrations
