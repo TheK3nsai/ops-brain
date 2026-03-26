@@ -104,6 +104,8 @@ sqlx migrate info          # Show migration status
 | `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | Set to `false` to disable embeddings entirely |
 | `OPS_BRAIN_WATCHDOG_ENABLED` | `false` | Enable proactive monitoring watchdog |
 | `OPS_BRAIN_WATCHDOG_INTERVAL` | `60` | Watchdog polling interval in seconds |
+| `OPS_BRAIN_WATCHDOG_CONFIRM_POLLS` | `3` | Consecutive DOWN polls before creating incident (flap suppression) |
+| `OPS_BRAIN_WATCHDOG_COOLDOWN_SECS` | `1800` | Seconds after resolving before creating new incident for same monitor |
 | `ZAMMAD_URL` | (none) | Zammad API base URL (e.g. `http://zammad-railsserver:3000`) |
 | `ZAMMAD_API_TOKEN` | (none) | Zammad API token for authentication |
 | `RUST_LOG` | `ops_brain=info` | Tracing filter |
@@ -238,6 +240,10 @@ Config for all machines (in `~/.claude.json`):
   - Detects DOWN→UP: auto-resolves the incident with TTR
   - On startup, recovers state from open `[AUTO]` incidents (survives restarts)
   - Graceful: if Kuma unreachable or embedding API down, logs error and continues
+- **Flap suppression** (two mechanisms):
+  - **Grace period** (`CONFIRM_POLLS`, default 3): Monitor must be DOWN for N consecutive polls before an incident is created. With 60s interval, that's ~3 minutes. Handles push-monitor heartbeat jitter and transient blips.
+  - **Cooldown** (`COOLDOWN_SECS`, default 1800): After auto-resolving an incident, no new incident for the same monitor for 30 minutes. Handles DOWN→UP→DOWN flapping.
+  - Set `CONFIRM_POLLS=1` and `COOLDOWN_SECS=0` to disable flap suppression (original behavior).
 - **Severity logic**: domain-controller/dns/dhcp roles → critical; file-server/rds/database/backup → high; everything else → medium
 - **Tool**: `list_watchdog_incidents` — query auto-created incidents by status
 

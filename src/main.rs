@@ -82,15 +82,22 @@ async fn main() -> anyhow::Result<()> {
     // Spawn watchdog background task if enabled and Uptime Kuma is configured
     if config.watchdog_enabled {
         if let Some(ref kuma) = kuma_config {
+            let watchdog_config = watchdog::WatchdogConfig {
+                interval_secs: config.watchdog_interval_secs,
+                confirm_polls: config.watchdog_confirm_polls,
+                cooldown_secs: config.watchdog_cooldown_secs,
+            };
             tracing::info!(
-                interval = config.watchdog_interval_secs,
+                interval = watchdog_config.interval_secs,
+                confirm_polls = watchdog_config.confirm_polls,
+                cooldown_secs = watchdog_config.cooldown_secs,
                 "Starting proactive monitoring watchdog"
             );
             tokio::spawn(watchdog::run(
                 pool.clone(),
                 kuma.clone(),
                 embedding_client.clone(),
-                config.watchdog_interval_secs,
+                watchdog_config,
             ));
         } else {
             tracing::warn!(

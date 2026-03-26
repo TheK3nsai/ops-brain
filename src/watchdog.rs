@@ -3,10 +3,24 @@
 //! Polls Uptime Kuma on a configurable interval, detects monitor state transitions
 //! (UP→DOWN / DOWN→UP), and automatically creates/resolves incidents with linked
 //! servers and services.
+//!
+//! ## Flap Suppression
+//!
+//! Two mechanisms prevent noisy monitors from flooding the incident list:
+//!
+//! 1. **Grace period** (`confirm_polls`): A monitor must report DOWN for N consecutive
+//!    polls before an incident is created. With the default interval of 60s and
+//!    confirm_polls=3, a monitor must be down for ~3 minutes. This handles push-monitor
+//!    heartbeat timing jitter and brief transient blips.
+//!
+//! 2. **Cooldown** (`cooldown_secs`): After auto-resolving an incident, the watchdog
+//!    will not create a new incident for the same monitor for N seconds (default 1800 =
+//!    30 minutes). This handles monitors that flap DOWN→UP→DOWN repeatedly.
 
 use std::collections::HashMap;
 
 use sqlx::PgPool;
+use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::embeddings::EmbeddingClient;
@@ -20,12 +34,58 @@ fn watchdog_incident_title(monitor_name: &str, status_text: &str) -> String {
     format!("{INCIDENT_PREFIX}Monitor {status_text}: {monitor_name}")
 }
 
+/// Bundled watchdog configuration (avoids parameter bloat on `run()`).
+#[derive(Debug, Clone)]
+pub struct WatchdogConfig {
+    pub interval_secs: u64,
+    /// Consecutive DOWN polls required before creating an incident.
+    pub confirm_polls: u32,
+    /// Seconds to suppress new incidents for a monitor after its last incident was resolved.
+    pub cooldown_secs: u64,
+}
+
 /// Tracks the last-known status of each monitor.
 #[derive(Debug, Clone)]
 struct MonitorState {
     status: i64,
     /// If this monitor is currently DOWN and the watchdog created an incident, store its ID.
     incident_id: Option<Uuid>,
+    /// How many consecutive polls this monitor has reported DOWN.
+    consecutive_down: u32,
+    /// When the last auto-created incident for this monitor was resolved (for cooldown).
+    resolved_at: Option<Instant>,
+}
+
+impl MonitorState {
+    fn new(status: i64) -> Self {
+        Self {
+            status,
+            incident_id: None,
+            consecutive_down: 0,
+            resolved_at: None,
+        }
+    }
+
+    fn new_with_incident(incident_id: Uuid) -> Self {
+        Self {
+            status: 0,
+            incident_id: Some(incident_id),
+            // Already confirmed — recovered from DB
+            consecutive_down: u32::MAX,
+            resolved_at: None,
+        }
+    }
+
+    /// Returns true if this monitor is in a post-resolution cooldown period.
+    fn in_cooldown(&self, cooldown_secs: u64) -> bool {
+        if cooldown_secs == 0 {
+            return false;
+        }
+        match self.resolved_at {
+            Some(resolved) => resolved.elapsed().as_secs() < cooldown_secs,
+            None => false,
+        }
+    }
 }
 
 /// The watchdog background task.
@@ -33,11 +93,16 @@ pub async fn run(
     pool: PgPool,
     kuma_config: UptimeKumaConfig,
     embedding_client: Option<EmbeddingClient>,
-    interval_secs: u64,
+    watchdog_config: WatchdogConfig,
 ) {
     tracing::info!(
-        interval_secs,
-        "Watchdog started — polling Uptime Kuma every {interval_secs}s"
+        interval_secs = watchdog_config.interval_secs,
+        confirm_polls = watchdog_config.confirm_polls,
+        cooldown_secs = watchdog_config.cooldown_secs,
+        "Watchdog started — polling Uptime Kuma every {}s (confirm after {} polls, {}s cooldown)",
+        watchdog_config.interval_secs,
+        watchdog_config.confirm_polls,
+        watchdog_config.cooldown_secs,
     );
 
     let mut states: HashMap<String, MonitorState> = HashMap::new();
@@ -46,7 +111,10 @@ pub async fn run(
     recover_state(&pool, &mut states).await;
 
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(
+            watchdog_config.interval_secs,
+        ))
+        .await;
 
         match metrics::fetch_metrics(&kuma_config).await {
             Ok(summary) => {
@@ -56,7 +124,14 @@ pub async fn run(
                     down = summary.down,
                     "Watchdog poll complete"
                 );
-                process_monitors(&pool, &embedding_client, &mut states, summary.monitors).await;
+                process_monitors(
+                    &pool,
+                    &embedding_client,
+                    &mut states,
+                    summary.monitors,
+                    &watchdog_config,
+                )
+                .await;
             }
             Err(e) => {
                 tracing::error!("Watchdog failed to fetch metrics: {e}");
@@ -90,10 +165,7 @@ async fn recover_state(pool: &PgPool, states: &mut HashMap<String, MonitorState>
                     );
                     states.insert(
                         monitor_name.to_string(),
-                        MonitorState {
-                            status: 0, // DOWN
-                            incident_id: Some(incident.id),
-                        },
+                        MonitorState::new_with_incident(incident.id),
                     );
                 }
             }
@@ -117,6 +189,7 @@ async fn process_monitors(
     embedding_client: &Option<EmbeddingClient>,
     states: &mut HashMap<String, MonitorState>,
     monitors: Vec<MonitorStatus>,
+    config: &WatchdogConfig,
 ) {
     for monitor in monitors {
         let name = &monitor.name;
@@ -125,74 +198,153 @@ async fn process_monitors(
         let prev = states.get(name);
         let prev_status = prev.map(|s| s.status);
         let prev_incident_id = prev.and_then(|s| s.incident_id);
+        let prev_consecutive_down = prev.map(|s| s.consecutive_down).unwrap_or(0);
+        let prev_resolved_at = prev.and_then(|s| s.resolved_at);
 
         match (prev_status, new_status) {
-            // First poll — seed state, no transition
-            (None, _) => {
-                states.insert(
-                    name.clone(),
-                    MonitorState {
-                        status: new_status,
-                        incident_id: None,
-                    },
-                );
-                if new_status == 0 {
-                    tracing::warn!(
-                        monitor = %name,
-                        "Watchdog initial poll: monitor is already DOWN"
-                    );
-                    // Create incident for monitors that are already down on first poll
+            // ── First poll — seed state ─────────────────────────────────────
+            (None, 0) => {
+                // Already DOWN on first poll — start counting toward threshold
+                let mut state = MonitorState::new(0);
+                state.consecutive_down = 1;
+
+                if config.confirm_polls <= 1 {
+                    // Threshold is 1 (or 0) — create immediately
                     let incident_id =
                         handle_down_transition(pool, embedding_client, name, &monitor).await;
-                    if let Some(id) = incident_id {
-                        states.get_mut(name).unwrap().incident_id = Some(id);
-                    }
+                    state.incident_id = incident_id;
+                } else {
+                    tracing::info!(
+                        monitor = %name,
+                        consecutive_down = 1,
+                        threshold = config.confirm_polls,
+                        "Monitor is DOWN on first poll — waiting for confirmation ({}/{})",
+                        1, config.confirm_polls,
+                    );
                 }
+                states.insert(name.clone(), state);
+            }
+            (None, _) => {
+                states.insert(name.clone(), MonitorState::new(new_status));
             }
 
-            // Was UP/PENDING/MAINTENANCE, now DOWN → create incident
+            // ── Transition to DOWN (was UP/PENDING/MAINTENANCE) ─────────────
             (Some(prev), 0) if prev != 0 => {
-                tracing::warn!(
-                    monitor = %name,
-                    prev_status = prev,
-                    "Monitor went DOWN"
-                );
-                let incident_id =
-                    handle_down_transition(pool, embedding_client, name, &monitor).await;
-                states.insert(
-                    name.clone(),
-                    MonitorState {
-                        status: 0,
-                        incident_id,
-                    },
-                );
+                let mut state = MonitorState::new(0);
+                state.consecutive_down = 1;
+                state.resolved_at = prev_resolved_at;
+
+                if config.confirm_polls <= 1 && !state.in_cooldown(config.cooldown_secs) {
+                    tracing::warn!(monitor = %name, prev_status = prev, "Monitor went DOWN");
+                    let incident_id =
+                        handle_down_transition(pool, embedding_client, name, &monitor).await;
+                    state.incident_id = incident_id;
+                } else if state.in_cooldown(config.cooldown_secs) {
+                    tracing::info!(
+                        monitor = %name,
+                        "Monitor went DOWN but is in cooldown — suppressing (flap detected)"
+                    );
+                } else {
+                    tracing::info!(
+                        monitor = %name,
+                        consecutive_down = 1,
+                        threshold = config.confirm_polls,
+                        "Monitor went DOWN — waiting for confirmation ({}/{})",
+                        1, config.confirm_polls,
+                    );
+                }
+                states.insert(name.clone(), state);
             }
 
-            // Was DOWN, now UP → resolve incident
-            (Some(0), 1) => {
-                tracing::info!(
-                    monitor = %name,
-                    "Monitor recovered (UP)"
-                );
-                if let Some(incident_id) = prev_incident_id {
-                    handle_up_transition(pool, incident_id, name).await;
+            // ── Still DOWN — increment counter, maybe create incident ───────
+            (Some(0), 0) => {
+                let count = prev_consecutive_down.saturating_add(1);
+                let mut state = MonitorState {
+                    status: 0,
+                    incident_id: prev_incident_id,
+                    consecutive_down: count,
+                    resolved_at: prev_resolved_at,
+                };
+
+                // Threshold reached AND no incident yet AND not in cooldown
+                if count >= config.confirm_polls
+                    && state.incident_id.is_none()
+                    && !state.in_cooldown(config.cooldown_secs)
+                {
+                    tracing::warn!(
+                        monitor = %name,
+                        consecutive_down = count,
+                        "Monitor confirmed DOWN after {} consecutive polls — creating incident",
+                        count,
+                    );
+                    let incident_id =
+                        handle_down_transition(pool, embedding_client, name, &monitor).await;
+                    state.incident_id = incident_id;
+                } else if count >= config.confirm_polls
+                    && state.incident_id.is_none()
+                    && state.in_cooldown(config.cooldown_secs)
+                {
+                    tracing::info!(
+                        monitor = %name,
+                        consecutive_down = count,
+                        "Monitor confirmed DOWN but in cooldown — suppressing (flap detected)"
+                    );
+                } else if state.incident_id.is_none() && count < config.confirm_polls {
+                    tracing::debug!(
+                        monitor = %name,
+                        consecutive_down = count,
+                        threshold = config.confirm_polls,
+                        "Monitor still DOWN — waiting ({}/{})",
+                        count, config.confirm_polls,
+                    );
                 }
+                // If incident already exists, just keep counting (no action)
+
+                states.insert(name.clone(), state);
+            }
+
+            // ── DOWN → UP — resolve incident ────────────────────────────────
+            (Some(0), 1) => {
+                tracing::info!(monitor = %name, "Monitor recovered (UP)");
+                let resolved_at = if let Some(incident_id) = prev_incident_id {
+                    handle_up_transition(pool, incident_id, name).await;
+                    Some(Instant::now())
+                } else {
+                    // Was counting toward threshold but never created an incident
+                    if prev_consecutive_down > 0 {
+                        tracing::info!(
+                            monitor = %name,
+                            consecutive_down = prev_consecutive_down,
+                            "Monitor recovered before incident threshold — no incident to resolve"
+                        );
+                    }
+                    prev_resolved_at
+                };
                 states.insert(
                     name.clone(),
                     MonitorState {
                         status: 1,
                         incident_id: None,
+                        consecutive_down: 0,
+                        resolved_at,
                     },
                 );
             }
 
-            // No change or irrelevant transition
+            // ── No change or irrelevant transition ──────────────────────────
             _ => {
+                let consecutive_down = if new_status == 0 {
+                    prev_consecutive_down
+                } else {
+                    0
+                };
                 states.insert(
                     name.clone(),
                     MonitorState {
                         status: new_status,
                         incident_id: prev_incident_id,
+                        consecutive_down,
+                        resolved_at: prev_resolved_at,
                     },
                 );
             }
@@ -547,7 +699,6 @@ mod tests {
 
     #[test]
     fn severity_multiple_roles_critical_wins() {
-        // If any role is critical, the whole server is critical
         let server = make_server(vec!["file-server", "dns"]);
         assert_eq!(determine_severity(Some(&server)), "critical");
     }
@@ -571,5 +722,56 @@ mod tests {
             watchdog_incident_title("SSH", "UP"),
             "[AUTO] Monitor UP: SSH"
         );
+    }
+
+    // ── Flap suppression unit tests ─────────────────────────────────────
+
+    #[test]
+    fn monitor_state_new_defaults() {
+        let state = MonitorState::new(1);
+        assert_eq!(state.status, 1);
+        assert!(state.incident_id.is_none());
+        assert_eq!(state.consecutive_down, 0);
+        assert!(state.resolved_at.is_none());
+    }
+
+    #[test]
+    fn monitor_state_new_with_incident() {
+        let id = Uuid::now_v7();
+        let state = MonitorState::new_with_incident(id);
+        assert_eq!(state.status, 0);
+        assert_eq!(state.incident_id, Some(id));
+        assert_eq!(state.consecutive_down, u32::MAX);
+        assert!(state.resolved_at.is_none());
+    }
+
+    #[test]
+    fn cooldown_zero_always_false() {
+        let mut state = MonitorState::new(1);
+        state.resolved_at = Some(Instant::now());
+        assert!(!state.in_cooldown(0));
+    }
+
+    #[test]
+    fn cooldown_no_resolved_at_is_false() {
+        let state = MonitorState::new(1);
+        assert!(!state.in_cooldown(1800));
+    }
+
+    #[test]
+    fn cooldown_active_when_recent() {
+        let mut state = MonitorState::new(1);
+        state.resolved_at = Some(Instant::now());
+        // Just resolved — should be in cooldown
+        assert!(state.in_cooldown(1800));
+    }
+
+    #[test]
+    fn cooldown_expired() {
+        let mut state = MonitorState::new(1);
+        // Set resolved_at to 1 second ago
+        state.resolved_at = Some(Instant::now() - std::time::Duration::from_secs(2));
+        // Cooldown is 1 second — should be expired
+        assert!(!state.in_cooldown(1));
     }
 }

@@ -74,4 +74,14 @@ pub struct Config {
     /// Watchdog polling interval in seconds (default: 60)
     #[arg(long, env = "OPS_BRAIN_WATCHDOG_INTERVAL", default_value = "60")]
     pub watchdog_interval_secs: u64,
+
+    /// Number of consecutive DOWN polls before creating an incident (flap suppression).
+    /// With default interval of 60s, a value of 3 means a monitor must be down for ~3 minutes.
+    #[arg(long, env = "OPS_BRAIN_WATCHDOG_CONFIRM_POLLS", default_value = "3")]
+    pub watchdog_confirm_polls: u32,
+
+    /// Cooldown in seconds after resolving an incident before creating a new one for the same
+    /// monitor (flap suppression). Default: 1800 (30 minutes).
+    #[arg(long, env = "OPS_BRAIN_WATCHDOG_COOLDOWN_SECS", default_value = "1800")]
+    pub watchdog_cooldown_secs: u64,
 }
