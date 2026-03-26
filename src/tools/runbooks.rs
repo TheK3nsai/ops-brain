@@ -71,6 +71,31 @@ pub struct UpdateRunbookParams {
     pub cross_client_safe: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LogRunbookExecutionParams {
+    /// Runbook slug
+    pub slug: String,
+    /// Who executed the runbook (CC name, machine hostname, or person name)
+    pub executor: String,
+    /// Execution result: "success", "failure", "partial", or "skipped"
+    pub result: Option<String>,
+    /// Freeform notes about the execution (what happened, issues encountered)
+    pub notes: Option<String>,
+    /// How long the execution took in minutes
+    pub duration_minutes: Option<i32>,
+    /// When the runbook was executed (ISO 8601). Defaults to now.
+    pub executed_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListRunbookExecutionsParams {
+    /// Runbook slug (optional — if omitted, lists recent executions across all runbooks)
+    pub slug: Option<String>,
+    /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
+    pub limit: Option<i64>,
+}
+
 // ===== HANDLERS =====
 
 pub(crate) async fn handle_get_runbook(
@@ -302,6 +327,94 @@ pub(crate) async fn handle_update_runbook(
             .await;
             json_result(&updated)
         }
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_log_runbook_execution(
+    brain: &super::OpsBrain,
+    p: LogRunbookExecutionParams,
+) -> CallToolResult {
+    // Resolve runbook slug to ID
+    let runbook = match crate::repo::runbook_repo::get_runbook_by_slug(&brain.pool, &p.slug).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Runbook", &p.slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+
+    let result_str = p.result.as_deref().unwrap_or("success");
+    let valid_results = ["success", "failure", "partial", "skipped"];
+    if !valid_results.contains(&result_str) {
+        return error_result(&format!(
+            "Invalid result '{result_str}'. Valid options: {}",
+            valid_results.join(", ")
+        ));
+    }
+
+    // Parse optional executed_at timestamp
+    let executed_at = match &p.executed_at {
+        Some(ts) => match chrono::DateTime::parse_from_rfc3339(ts) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => {
+                return error_result(&format!(
+                    "Invalid timestamp '{}'. Use ISO 8601 format (e.g. 2026-03-25T00:00:00Z)",
+                    ts
+                ))
+            }
+        },
+        None => None,
+    };
+
+    match crate::repo::runbook_execution_repo::log_execution(
+        &brain.pool,
+        runbook.id,
+        &p.executor,
+        result_str,
+        p.notes.as_deref(),
+        p.duration_minutes,
+        executed_at,
+    )
+    .await
+    {
+        Ok(execution) => {
+            let mut response = serde_json::to_value(&execution).unwrap_or_default();
+            response["runbook_title"] = serde_json::Value::String(runbook.title);
+            response["runbook_slug"] = serde_json::Value::String(runbook.slug);
+            json_result(&response)
+        }
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_list_runbook_executions(
+    brain: &super::OpsBrain,
+    p: ListRunbookExecutionsParams,
+) -> CallToolResult {
+    let limit = p.limit.unwrap_or(20);
+
+    let executions = if let Some(ref slug) = p.slug {
+        // Resolve runbook slug to ID
+        let runbook = match crate::repo::runbook_repo::get_runbook_by_slug(&brain.pool, slug).await
+        {
+            Ok(Some(r)) => r,
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Runbook", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+        crate::repo::runbook_execution_repo::list_executions_for_runbook(
+            &brain.pool,
+            runbook.id,
+            limit,
+        )
+        .await
+    } else {
+        crate::repo::runbook_execution_repo::list_recent_executions(&brain.pool, limit).await
+    };
+
+    match executions {
+        Ok(items) => json_result(&serde_json::json!({
+            "count": items.len(),
+            "executions": items,
+        })),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }

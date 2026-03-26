@@ -49,6 +49,12 @@ pub struct ListWatchdogIncidentsParams {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CheckHealthParams {
+    /// Server slug to check health for
+    pub slug: String,
+}
+
 /// Inject a diagnostic hint for push-type monitors that are DOWN.
 /// Push monitors report "down" when their heartbeat expires (cron/script issue),
 /// not necessarily when the underlying service is actually down.
@@ -302,4 +308,91 @@ pub(crate) async fn handle_list_watchdog_incidents(
         }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
+}
+
+pub(crate) async fn handle_check_health(
+    brain: &super::OpsBrain,
+    p: CheckHealthParams,
+) -> CallToolResult {
+    // Resolve server slug
+    let server = match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.slug).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", &p.slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+
+    // Get linked monitors for this server
+    let monitors = crate::repo::monitor_repo::get_monitors_for_server(&brain.pool, server.id).await;
+    let linked_monitors = match monitors {
+        Ok(m) => m,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+
+    if linked_monitors.is_empty() {
+        return json_result(&serde_json::json!({
+            "server": p.slug,
+            "status": "UNKNOWN",
+            "reason": "No monitors linked to this server. Use link_monitor to map Uptime Kuma monitors.",
+        }));
+    }
+
+    // Fetch live metrics
+    let kuma_config = match &brain.kuma_config {
+        Some(c) => c,
+        None => {
+            return json_result(&serde_json::json!({
+                "server": p.slug,
+                "status": "UNKNOWN",
+                "reason": "Uptime Kuma not configured (set UPTIME_KUMA_URL)",
+                "linked_monitors": linked_monitors.len(),
+            }))
+        }
+    };
+
+    let summary = match crate::metrics::fetch_metrics(kuma_config).await {
+        Ok(s) => s,
+        Err(e) => return error_result(&format!("Failed to fetch metrics: {e}")),
+    };
+
+    // Match linked monitors against live status
+    let mut monitor_results: Vec<serde_json::Value> = Vec::new();
+    let mut any_down = false;
+
+    for linked in &linked_monitors {
+        if let Some(live) = summary
+            .monitors
+            .iter()
+            .find(|m| m.name == linked.monitor_name)
+        {
+            if live.status == 0 {
+                any_down = true;
+            }
+            let mut val = serde_json::json!({
+                "name": live.name,
+                "status": live.status_text,
+                "type": live.monitor_type,
+            });
+            if let Some(rt) = live.response_time_ms {
+                val["response_time_ms"] = serde_json::json!(rt);
+            }
+            if let Some(ssl) = live.cert_days_remaining {
+                val["ssl_cert_days_remaining"] = serde_json::json!(ssl);
+            }
+            inject_push_diagnostic_hint(&mut val, live);
+            monitor_results.push(val);
+        } else {
+            monitor_results.push(serde_json::json!({
+                "name": linked.monitor_name,
+                "status": "not_found_in_kuma",
+            }));
+        }
+    }
+
+    let status = if any_down { "DOWN" } else { "HEALTHY" };
+
+    json_result(&serde_json::json!({
+        "server": p.slug,
+        "status": status,
+        "monitors": monitor_results,
+    }))
 }

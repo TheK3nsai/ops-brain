@@ -313,6 +313,31 @@ impl OpsBrain {
         Ok(runbooks::handle_update_runbook(self, params.0).await)
     }
 
+    #[tool(
+        name = "log_runbook_execution",
+        description = "Record that a runbook was executed. Creates an audit trail entry with who ran it, \
+        the result (success/failure/partial/skipped), duration, and notes. \
+        Useful for compliance audits (e.g. 'when was the last DR test?')."
+    )]
+    async fn log_runbook_execution(
+        &self,
+        params: Parameters<runbooks::LogRunbookExecutionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(runbooks::handle_log_runbook_execution(self, params.0).await)
+    }
+
+    #[tool(
+        name = "list_runbook_executions",
+        description = "List runbook execution history. Optionally filter by runbook slug, \
+        or list recent executions across all runbooks."
+    )]
+    async fn list_runbook_executions(
+        &self,
+        params: Parameters<runbooks::ListRunbookExecutionsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(runbooks::handle_list_runbook_executions(self, params.0).await)
+    }
+
     // ===== KNOWLEDGE TOOLS =====
 
     #[tool(
@@ -350,8 +375,11 @@ impl OpsBrain {
 
     #[tool(
         name = "search_knowledge",
-        description = "Search across knowledge base entries. Supports mode: 'fts' (default, keyword match), \
-        'semantic' (AI vector similarity), or 'hybrid' (combined FTS + vector via RRF ranking)"
+        description = "Search across knowledge, runbooks, incidents, and handoffs. \
+        Default searches knowledge only; set tables=['knowledge','runbooks','incidents','handoffs'] for multi-table search. \
+        Modes: 'fts' (keyword match, default for single-table), 'semantic' (AI vector similarity), \
+        or 'hybrid' (combined FTS + vector via RRF ranking, default for multi-table). \
+        Replaces the old semantic_search tool — use tables param for cross-table search."
     )]
     async fn search_knowledge(
         &self,
@@ -576,21 +604,19 @@ impl OpsBrain {
         Ok(coordination::handle_search_handoffs(self, params.0).await)
     }
 
-    // ===== SEMANTIC SEARCH TOOLS =====
-
     #[tool(
-        name = "semantic_search",
-        description = "AI-powered semantic search across runbooks, knowledge, incidents, and handoffs. \
-        Finds conceptually related content even when exact keywords don't match. \
-        Uses hybrid ranking (FTS + vector similarity) for best results. \
-        Falls back to full-text search if embeddings are unavailable."
+        name = "get_catchup",
+        description = "See what changed since you were last here. Returns new/updated handoffs, incidents, \
+        knowledge, and runbooks since a given timestamp. Reduces startup friction for returning CCs."
     )]
-    async fn semantic_search(
+    async fn get_catchup(
         &self,
-        params: Parameters<search::SemanticSearchParams>,
+        params: Parameters<coordination::GetCatchupParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(search::handle_semantic_search(self, params.0).await)
+        Ok(coordination::handle_get_catchup(self, params.0).await)
     }
+
+    // ===== SEMANTIC SEARCH TOOLS =====
 
     #[tool(
         name = "backfill_embeddings",
@@ -679,6 +705,18 @@ impl OpsBrain {
         params: Parameters<monitoring::ListWatchdogIncidentsParams>,
     ) -> Result<CallToolResult, McpError> {
         Ok(monitoring::handle_list_watchdog_incidents(self, params.0).await)
+    }
+
+    #[tool(
+        name = "check_health",
+        description = "Quick health check for a server. Returns HEALTHY/DOWN/UNKNOWN based on linked \
+        Uptime Kuma monitors. Much lighter than get_situational_awareness for 'is this server up?' checks."
+    )]
+    async fn check_health(
+        &self,
+        params: Parameters<monitoring::CheckHealthParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(monitoring::handle_check_health(self, params.0).await)
     }
 
     // ===== ZAMMAD TICKET TOOLS =====
@@ -861,9 +899,9 @@ impl ServerHandler for OpsBrain {
                  server, service, or client. Use search_inventory for full-text search \
                  across all entity types (servers, services, vendors, clients, sites, networks, \
                  runbooks, knowledge, incidents, handoffs). \
-                 Use semantic_search for AI-powered conceptual search across runbooks, \
-                 knowledge, incidents, and handoffs (finds related content even without \
-                 exact keyword matches). Use get_monitoring_summary for live infrastructure \
+                 Use search_knowledge with tables=['knowledge','runbooks','incidents','handoffs'] \
+                 for AI-powered conceptual search across multiple tables (finds related content \
+                 even without exact keyword matches). Use get_monitoring_summary for live infrastructure \
                  health from Uptime Kuma. Use list_tickets, search_tickets, and get_ticket \
                  for Zammad ticketing integration — create_ticket and add_ticket_note for \
                  ticket management with time accounting. Use generate_briefing for \

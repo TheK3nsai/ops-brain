@@ -7,6 +7,7 @@ pub mod incident_repo;
 pub mod knowledge_repo;
 pub mod monitor_repo;
 pub mod network_repo;
+pub mod runbook_execution_repo;
 pub mod runbook_repo;
 pub mod search_repo;
 pub mod server_repo;

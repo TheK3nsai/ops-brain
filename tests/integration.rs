@@ -1161,3 +1161,97 @@ mod suggest_tests {
         assert!(suggestions.is_empty());
     }
 }
+
+// ===== Runbook Execution Repo =====
+
+mod runbook_execution_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn log_and_list_execution() {
+        let pool = pool().await;
+        let slug = format!("test-rb-exec-{}", Uuid::now_v7());
+
+        // Create a runbook to reference
+        let runbook = ops_brain::repo::runbook_repo::create_runbook(
+            &pool,
+            "Test Runbook for Execution",
+            &slug,
+            Some("testing"),
+            "Step 1: do the thing",
+            &[],
+            Some(10),
+            false,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Log an execution
+        let exec = ops_brain::repo::runbook_execution_repo::log_execution(
+            &pool,
+            runbook.id,
+            "CC-Stealth",
+            "success",
+            Some("DR test completed, all systems restored"),
+            Some(45),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(exec.runbook_id, runbook.id);
+        assert_eq!(exec.executor, "CC-Stealth");
+        assert_eq!(exec.result, "success");
+        assert_eq!(
+            exec.notes.as_deref(),
+            Some("DR test completed, all systems restored")
+        );
+        assert_eq!(exec.duration_minutes, Some(45));
+
+        // Log another execution
+        let exec2 = ops_brain::repo::runbook_execution_repo::log_execution(
+            &pool,
+            runbook.id,
+            "CC-HSR",
+            "failure",
+            Some("Network issue during step 3"),
+            Some(15),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(exec2.result, "failure");
+
+        // List executions for this runbook
+        let list = ops_brain::repo::runbook_execution_repo::list_executions_for_runbook(
+            &pool, runbook.id, 10,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(list.len(), 2);
+
+        // List recent executions (global)
+        let recent = ops_brain::repo::runbook_execution_repo::list_recent_executions(&pool, 100)
+            .await
+            .unwrap();
+        assert!(recent.iter().any(|e| e.id == exec.id));
+        assert!(recent.iter().any(|e| e.id == exec2.id));
+
+        // Cleanup
+        sqlx::query("DELETE FROM runbook_executions WHERE runbook_id = $1")
+            .bind(runbook.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM runbooks WHERE id = $1")
+            .bind(runbook.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}

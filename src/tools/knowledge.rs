@@ -23,13 +23,17 @@ pub struct AddKnowledgeParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchKnowledgeParams {
     pub query: String,
-    /// Search mode: "fts" (default), "semantic" (vector only), or "hybrid" (FTS + vector RRF)
+    /// Search mode: "fts" (default for single-table), "semantic" (AI vector similarity),
+    /// or "hybrid" (combined FTS + vector via RRF ranking, default for multi-table).
     pub mode: Option<String>,
+    /// Tables to search. Default: ["knowledge"]. Options: knowledge, runbooks, incidents, handoffs.
+    /// Use multiple tables to search across your operational data with a single query.
+    pub tables: Option<Vec<String>>,
     /// Scope results to a client. Cross-client results are withheld unless acknowledged.
     pub client_slug: Option<String>,
     /// Set to true to release cross-client results that were withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
-    /// Max results (default 20)
+    /// Max results per table (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
@@ -170,11 +174,29 @@ pub(crate) async fn handle_search_knowledge(
     brain: &super::OpsBrain,
     p: SearchKnowledgeParams,
 ) -> CallToolResult {
-    let mode = p.mode.as_deref().unwrap_or("fts");
+    let tables = p.tables.unwrap_or_else(|| vec!["knowledge".to_string()]);
+    let multi_table = tables.len() > 1 || tables.iter().any(|t| t != "knowledge");
+
+    // Default mode: "fts" for single-table knowledge, "hybrid" for multi-table
+    let mode = p
+        .mode
+        .as_deref()
+        .unwrap_or(if multi_table { "hybrid" } else { "fts" });
     if let Err(msg) =
         crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
     {
         return error_result(&msg);
+    }
+
+    // Validate table names
+    let valid_tables = ["knowledge", "runbooks", "incidents", "handoffs"];
+    for t in &tables {
+        if !valid_tables.contains(&t.as_str()) {
+            return error_result(&format!(
+                "Invalid table '{t}'. Valid options: {}",
+                valid_tables.join(", ")
+            ));
+        }
     }
 
     // Resolve optional client_slug for cross-client gate
@@ -187,26 +209,313 @@ pub(crate) async fn handle_search_knowledge(
         None => None,
     };
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
-
     let limit = p.limit.unwrap_or(20);
+
+    // Single-table knowledge search (original behavior)
+    if !multi_table {
+        return search_knowledge_single(
+            brain,
+            &p.query,
+            mode,
+            requesting_client_id,
+            acknowledge,
+            limit,
+        )
+        .await;
+    }
+
+    // Multi-table search
+    let query_embedding = get_query_embedding(&brain.embedding_client, &p.query).await;
+    if mode == "semantic" && query_embedding.is_none() {
+        return error_result(
+            "Semantic search unavailable (embedding API not configured or failed)",
+        );
+    }
+    let emb_ref = query_embedding.as_deref();
+
+    let mut results = serde_json::Map::new();
+    let client_lookup = build_client_lookup(&brain.pool).await;
+    let mut all_withheld: Vec<serde_json::Value> = Vec::new();
+
+    for table in &tables {
+        match table.as_str() {
+            "knowledge" => {
+                let search_result = match mode {
+                    "semantic" => {
+                        crate::repo::embedding_repo::vector_search_knowledge(
+                            &brain.pool,
+                            emb_ref.unwrap(),
+                            limit,
+                        )
+                        .await
+                    }
+                    "hybrid" => {
+                        crate::repo::embedding_repo::hybrid_search_knowledge(
+                            &brain.pool,
+                            &p.query,
+                            emb_ref,
+                            limit,
+                        )
+                        .await
+                    }
+                    _ => {
+                        crate::repo::knowledge_repo::search_knowledge(&brain.pool, &p.query, limit)
+                            .await
+                    }
+                };
+                match search_result {
+                    Ok(items) => {
+                        let json_items: Vec<serde_json::Value> = items
+                            .iter()
+                            .filter_map(|k| serde_json::to_value(k).ok())
+                            .collect();
+                        let filtered = filter_cross_client(
+                            json_items,
+                            "knowledge",
+                            requesting_client_id,
+                            acknowledge,
+                            &client_lookup,
+                        );
+                        results.insert(
+                            "knowledge".to_string(),
+                            serde_json::to_value(&filtered.allowed).unwrap_or_default(),
+                        );
+                        all_withheld.extend(filtered.withheld_notices);
+                        log_audit_entries(
+                            &brain.pool,
+                            "search_knowledge",
+                            requesting_client_id,
+                            "knowledge",
+                            &filtered.audit_entries,
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        results.insert(
+                            "knowledge_error".to_string(),
+                            serde_json::Value::String(e.to_string()),
+                        );
+                    }
+                }
+            }
+            "runbooks" => {
+                let search_result = match mode {
+                    "semantic" => {
+                        crate::repo::embedding_repo::vector_search_runbooks(
+                            &brain.pool,
+                            emb_ref.unwrap(),
+                            limit,
+                        )
+                        .await
+                    }
+                    "hybrid" => {
+                        crate::repo::embedding_repo::hybrid_search_runbooks(
+                            &brain.pool,
+                            &p.query,
+                            emb_ref,
+                            limit,
+                        )
+                        .await
+                    }
+                    _ => {
+                        crate::repo::search_repo::search_runbooks(&brain.pool, &p.query, limit)
+                            .await
+                    }
+                };
+                match search_result {
+                    Ok(items) => {
+                        let json_items: Vec<serde_json::Value> = items
+                            .iter()
+                            .filter_map(|r| serde_json::to_value(r).ok())
+                            .collect();
+                        let filtered = filter_cross_client(
+                            json_items,
+                            "runbook",
+                            requesting_client_id,
+                            acknowledge,
+                            &client_lookup,
+                        );
+                        results.insert(
+                            "runbooks".to_string(),
+                            serde_json::to_value(&filtered.allowed).unwrap_or_default(),
+                        );
+                        all_withheld.extend(filtered.withheld_notices);
+                        log_audit_entries(
+                            &brain.pool,
+                            "search_knowledge",
+                            requesting_client_id,
+                            "runbook",
+                            &filtered.audit_entries,
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        results.insert(
+                            "runbooks_error".to_string(),
+                            serde_json::Value::String(e.to_string()),
+                        );
+                    }
+                }
+            }
+            "incidents" => {
+                let search_result = match mode {
+                    "semantic" => {
+                        crate::repo::embedding_repo::vector_search_incidents(
+                            &brain.pool,
+                            emb_ref.unwrap(),
+                            limit,
+                        )
+                        .await
+                    }
+                    "hybrid" => {
+                        crate::repo::embedding_repo::hybrid_search_incidents(
+                            &brain.pool,
+                            &p.query,
+                            emb_ref,
+                            limit,
+                        )
+                        .await
+                    }
+                    _ => {
+                        crate::repo::incident_repo::search_incidents(&brain.pool, &p.query, limit)
+                            .await
+                    }
+                };
+                match search_result {
+                    Ok(items) => {
+                        let json_items: Vec<serde_json::Value> = items
+                            .iter()
+                            .filter_map(|i| serde_json::to_value(i).ok())
+                            .collect();
+                        let filtered = filter_cross_client(
+                            json_items,
+                            "incident",
+                            requesting_client_id,
+                            acknowledge,
+                            &client_lookup,
+                        );
+                        results.insert(
+                            "incidents".to_string(),
+                            serde_json::to_value(&filtered.allowed).unwrap_or_default(),
+                        );
+                        all_withheld.extend(filtered.withheld_notices);
+                        log_audit_entries(
+                            &brain.pool,
+                            "search_knowledge",
+                            requesting_client_id,
+                            "incident",
+                            &filtered.audit_entries,
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        results.insert(
+                            "incidents_error".to_string(),
+                            serde_json::Value::String(e.to_string()),
+                        );
+                    }
+                }
+            }
+            "handoffs" => {
+                // Handoffs are NOT gated — no client_id on handoffs table
+                let search_result = match mode {
+                    "semantic" => {
+                        crate::repo::embedding_repo::vector_search_handoffs(
+                            &brain.pool,
+                            emb_ref.unwrap(),
+                            limit,
+                        )
+                        .await
+                    }
+                    "hybrid" => {
+                        crate::repo::embedding_repo::hybrid_search_handoffs(
+                            &brain.pool,
+                            &p.query,
+                            emb_ref,
+                            limit,
+                        )
+                        .await
+                    }
+                    _ => {
+                        crate::repo::handoff_repo::search_handoffs(&brain.pool, &p.query, limit)
+                            .await
+                    }
+                };
+                match search_result {
+                    Ok(items) => {
+                        results.insert(
+                            "handoffs".to_string(),
+                            serde_json::to_value(&items).unwrap_or_default(),
+                        );
+                    }
+                    Err(e) => {
+                        results.insert(
+                            "handoffs_error".to_string(),
+                            serde_json::Value::String(e.to_string()),
+                        );
+                    }
+                }
+            }
+            _ => {} // validated above
+        }
+    }
+
+    if !all_withheld.is_empty() {
+        results.insert(
+            "cross_client_withheld".to_string(),
+            serde_json::to_value(&all_withheld).unwrap_or_default(),
+        );
+    }
+
+    // Inject notes about embedding availability
+    if query_embedding.is_none() && brain.embedding_client.is_some() {
+        results.insert(
+            "_note".to_string(),
+            serde_json::Value::String(
+                "Embedding API call failed — results are FTS-only".to_string(),
+            ),
+        );
+    } else if brain.embedding_client.is_none() {
+        results.insert(
+            "_note".to_string(),
+            serde_json::Value::String(
+                "Embeddings not configured — results are FTS-only".to_string(),
+            ),
+        );
+    }
+
+    json_result(&serde_json::Value::Object(results))
+}
+
+/// Single-table knowledge search (preserves original search_knowledge behavior exactly)
+async fn search_knowledge_single(
+    brain: &super::OpsBrain,
+    query: &str,
+    mode: &str,
+    requesting_client_id: Option<uuid::Uuid>,
+    acknowledge: bool,
+    limit: i64,
+) -> CallToolResult {
     let result = match mode {
         "semantic" => {
-            let Some(emb) = get_query_embedding(&brain.embedding_client, &p.query).await else {
-                return error_result("Semantic search unavailable (OPENAI_API_KEY not set)");
+            let Some(emb) = get_query_embedding(&brain.embedding_client, query).await else {
+                return error_result(
+                    "Semantic search unavailable (embedding API not configured or failed)",
+                );
             };
             crate::repo::embedding_repo::vector_search_knowledge(&brain.pool, &emb, limit).await
         }
         "hybrid" => {
-            let emb = get_query_embedding(&brain.embedding_client, &p.query).await;
+            let emb = get_query_embedding(&brain.embedding_client, query).await;
             crate::repo::embedding_repo::hybrid_search_knowledge(
                 &brain.pool,
-                &p.query,
+                query,
                 emb.as_deref(),
                 limit,
             )
             .await
         }
-        _ => crate::repo::knowledge_repo::search_knowledge(&brain.pool, &p.query, limit).await,
+        _ => crate::repo::knowledge_repo::search_knowledge(&brain.pool, query, limit).await,
     };
     match result {
         Ok(entries) => {
