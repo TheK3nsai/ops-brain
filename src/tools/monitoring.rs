@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::helpers::{error_result, json_result, not_found};
+use super::helpers::{error_result, json_result, not_found, not_found_with_suggestions};
 use crate::models::incident::Incident;
 use rmcp::model::*;
 
@@ -210,7 +210,7 @@ pub(crate) async fn handle_link_monitor(
     let server_id = match &p.server_slug {
         Some(slug) => match crate::repo::server_repo::get_server_by_slug(&brain.pool, slug).await {
             Ok(Some(s)) => Some(s.id),
-            Ok(None) => return not_found("Server", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -221,7 +221,7 @@ pub(crate) async fn handle_link_monitor(
         Some(slug) => {
             match crate::repo::service_repo::get_service_by_slug(&brain.pool, slug).await {
                 Ok(Some(s)) => Some(s.id),
-                Ok(None) => return not_found("Service", slug),
+                Ok(None) => return not_found_with_suggestions(&brain.pool, "Service", slug).await,
                 Err(e) => return error_result(&format!("Database error: {e}")),
             }
         }

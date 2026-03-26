@@ -18,6 +18,47 @@ pub(crate) fn not_found(entity: &str, key: &str) -> CallToolResult {
     CallToolResult::error(vec![Content::text(format!("{entity} not found: {key}"))])
 }
 
+/// Like `not_found`, but queries pg_trgm for similar slugs and appends "Did you mean: ..." suggestions.
+pub(crate) async fn not_found_with_suggestions(
+    pool: &sqlx::PgPool,
+    entity: &str,
+    key: &str,
+) -> CallToolResult {
+    let table = match entity {
+        "Server" | "Hypervisor server" => "servers",
+        "Service" => "services",
+        "Site" => "sites",
+        "Client" => "clients",
+        "Runbook" => "runbooks",
+        _ => return not_found(entity, key),
+    };
+    let suggestions = crate::repo::suggest_repo::suggest_similar_slugs(pool, table, key).await;
+    if suggestions.is_empty() {
+        not_found(entity, key)
+    } else {
+        CallToolResult::error(vec![Content::text(format!(
+            "{entity} not found: {key}. Did you mean: {}?",
+            suggestions.join(", ")
+        ))])
+    }
+}
+
+/// Like `not_found`, but queries pg_trgm for similar vendor names.
+pub(crate) async fn not_found_vendor_with_suggestions(
+    pool: &sqlx::PgPool,
+    key: &str,
+) -> CallToolResult {
+    let suggestions = crate::repo::suggest_repo::suggest_similar_vendor_names(pool, key).await;
+    if suggestions.is_empty() {
+        not_found("Vendor", key)
+    } else {
+        CallToolResult::error(vec![Content::text(format!(
+            "Vendor not found: {key}. Did you mean: {}?",
+            suggestions.join(", ")
+        ))])
+    }
+}
+
 /// Result of cross-client scope filtering.
 pub(crate) struct CrossClientFilterResult {
     /// Items that passed the gate (with _provenance fields injected)

@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::helpers::{error_result, filter_cross_client, json_result, not_found};
+use super::helpers::{error_result, filter_cross_client, json_result, not_found_with_suggestions};
 use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
 
@@ -71,7 +71,7 @@ pub(crate) async fn handle_get_runbook(
 ) -> CallToolResult {
     match crate::repo::runbook_repo::get_runbook_by_slug(&brain.pool, &p.slug).await {
         Ok(Some(runbook)) => json_result(&runbook),
-        Ok(None) => not_found("Runbook", &p.slug),
+        Ok(None) => not_found_with_suggestions(&brain.pool, "Runbook", &p.slug).await,
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -84,7 +84,7 @@ pub(crate) async fn handle_list_runbooks(
     let client_id = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -95,7 +95,7 @@ pub(crate) async fn handle_list_runbooks(
         Some(slug) => {
             match crate::repo::service_repo::get_service_by_slug(&brain.pool, slug).await {
                 Ok(Some(s)) => Some(s.id),
-                Ok(None) => return not_found("Service", slug),
+                Ok(None) => return not_found_with_suggestions(&brain.pool, "Service", slug).await,
                 Err(e) => return error_result(&format!("Database error: {e}")),
             }
         }
@@ -106,7 +106,7 @@ pub(crate) async fn handle_list_runbooks(
     let server_id = match &p.server_slug {
         Some(slug) => match crate::repo::server_repo::get_server_by_slug(&brain.pool, slug).await {
             Ok(Some(s)) => Some(s.id),
-            Ok(None) => return not_found("Server", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -142,7 +142,7 @@ pub(crate) async fn handle_search_runbooks(
     let requesting_client_id = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -215,7 +215,7 @@ pub(crate) async fn handle_create_runbook(
     let client_id = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -258,7 +258,7 @@ pub(crate) async fn handle_update_runbook(
 ) -> CallToolResult {
     let runbook = match crate::repo::runbook_repo::get_runbook_by_slug(&brain.pool, &p.slug).await {
         Ok(Some(r)) => r,
-        Ok(None) => return not_found("Runbook", &p.slug),
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Runbook", &p.slug).await,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
 

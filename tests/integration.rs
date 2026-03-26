@@ -1000,3 +1000,163 @@ mod delete_tests {
         assert!(!result);
     }
 }
+
+// ===== Fuzzy Slug Suggestion Tests =====
+
+mod suggest_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn suggest_similar_server_slugs() {
+        let pool = pool().await;
+        let base_slug = format!("fuzzy-srv-{}", &Uuid::now_v7().to_string()[..8]);
+
+        // Create a test site + client first
+        let client = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Fuzzy Test Client",
+            &format!("fuzzy-client-{}", &Uuid::now_v7().to_string()[..8]),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let site = ops_brain::repo::site_repo::upsert_site(
+            &pool,
+            client.id,
+            "Fuzzy Test Site",
+            &format!("fuzzy-site-{}", &Uuid::now_v7().to_string()[..8]),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Create a server with a known slug
+        let server = ops_brain::repo::server_repo::upsert_server(
+            &pool,
+            site.id,
+            "fuzzy-test-host",
+            &base_slug,
+            None,
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            "active",
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Typo slug should return suggestions
+        let typo = format!("{}x", &base_slug);
+        let suggestions =
+            ops_brain::repo::suggest_repo::suggest_similar_slugs(&pool, "servers", &typo).await;
+        assert!(
+            suggestions.contains(&base_slug),
+            "Expected '{}' in suggestions {:?}",
+            base_slug,
+            suggestions
+        );
+
+        // Exact slug should NOT appear when querying with something totally unrelated
+        let suggestions = ops_brain::repo::suggest_repo::suggest_similar_slugs(
+            &pool,
+            "servers",
+            "zzz-no-match-zzz",
+        )
+        .await;
+        assert!(
+            !suggestions.contains(&base_slug),
+            "Should not suggest '{}' for unrelated query",
+            base_slug
+        );
+
+        // Substring match should work
+        let partial = &base_slug[..base_slug.len() - 2];
+        let suggestions =
+            ops_brain::repo::suggest_repo::suggest_similar_slugs(&pool, "servers", partial).await;
+        assert!(
+            suggestions.contains(&base_slug),
+            "Substring '{}' should match '{}', got {:?}",
+            partial,
+            base_slug,
+            suggestions
+        );
+
+        // Cleanup
+        sqlx::query("DELETE FROM servers WHERE id = $1")
+            .bind(server.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM sites WHERE id = $1")
+            .bind(site.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM clients WHERE id = $1")
+            .bind(client.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn suggest_similar_vendor_names() {
+        let pool = pool().await;
+        let vendor_name = format!("FuzzyVendor-{}", &Uuid::now_v7().to_string()[..8]);
+
+        let vendor = ops_brain::repo::vendor_repo::upsert_vendor(
+            &pool,
+            &vendor_name,
+            Some("test"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Typo should return suggestion
+        let typo = format!("{}x", &vendor_name);
+        let suggestions =
+            ops_brain::repo::suggest_repo::suggest_similar_vendor_names(&pool, &typo).await;
+        assert!(
+            suggestions.contains(&vendor_name),
+            "Expected '{}' in suggestions {:?}",
+            vendor_name,
+            suggestions
+        );
+
+        // Cleanup
+        sqlx::query("DELETE FROM vendors WHERE id = $1")
+            .bind(vendor.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn suggest_returns_empty_for_invalid_table() {
+        let pool = pool().await;
+        let suggestions =
+            ops_brain::repo::suggest_repo::suggest_similar_slugs(&pool, "nonexistent", "test")
+                .await;
+        assert!(suggestions.is_empty());
+    }
+}
