@@ -202,6 +202,7 @@ mod tests {
             prevention: Some("Set up disk monitoring".to_string()),
             time_to_resolve_minutes: Some(45),
             notes: None,
+            cross_client_safe: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -230,6 +231,7 @@ mod tests {
             prevention: None,
             time_to_resolve_minutes: None,
             notes: None,
+            cross_client_safe: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

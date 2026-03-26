@@ -267,6 +267,7 @@ async fn handle_down_transition(
         client_id,
         Some(&symptoms),
         Some("Auto-created by ops-brain watchdog on monitor DOWN transition"),
+        false, // cross_client_safe: watchdog incidents are client-scoped by default
     )
     .await;
 
@@ -336,6 +337,7 @@ async fn handle_up_transition(pool: &PgPool, incident_id: Uuid, monitor_name: &s
         )),
         None, // prevention
         None, // notes
+        None, // cross_client_safe (preserve existing value)
     )
     .await;
 
