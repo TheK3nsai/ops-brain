@@ -275,6 +275,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **upsert_server replaces ALL fields** — it's not a partial update. Must pass every field or they get nulled. Always read the current server data before upserting.
 - **seed.sql is foundational only** — clients, sites, networks. All other data comes from live CC sessions. Never add fictional/placeholder data to seed.sql.
 - **SSH to kensai.cloud**: use `ssh kensai.cloud` (Host alias), NOT `ssh ssh.kensai.cloud -p 22022`. The alias picks up the correct key, port, and user from `~/.ssh/config`.
+- **Deploy workflow**: git repo is at `~/ops-brain/` but Docker build context is `~/docker/ops-brain/`. After `git pull` in `~/ops-brain/`, sync to build context with: `rsync -a --exclude=target --exclude=.git --exclude=.env ~/ops-brain/ ~/docker/ops-brain/` (note: **exclude `.env`** to avoid nuking secrets). Then `docker compose -f docker-compose.prod.yml up -d --build` in `~/docker/ops-brain/`.
 
 ## Next Steps
 
