@@ -26,7 +26,7 @@ pub async fn search_inventory(
     let (servers, services, runbooks, knowledge, incidents, handoffs) = tokio::try_join!(
         sqlx::query_as::<_, Server>(
             "SELECT * FROM servers
-             WHERE search_vector @@ plainto_tsquery('english', $1)
+             WHERE status != 'deleted' AND search_vector @@ plainto_tsquery('english', $1)
              ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
              LIMIT $2"
         )
@@ -35,7 +35,7 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Service>(
             "SELECT * FROM services
-             WHERE search_vector @@ plainto_tsquery('english', $1)
+             WHERE status != 'deleted' AND search_vector @@ plainto_tsquery('english', $1)
              ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
              LIMIT $2"
         )

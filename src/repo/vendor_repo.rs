@@ -12,10 +12,12 @@ pub async fn get_vendor(pool: &PgPool, id: Uuid) -> Result<Option<Vendor>, sqlx:
 }
 
 pub async fn get_vendor_by_name(pool: &PgPool, name: &str) -> Result<Option<Vendor>, sqlx::Error> {
-    sqlx::query_as::<_, Vendor>("SELECT * FROM vendors WHERE LOWER(name) = LOWER($1)")
-        .bind(name)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as::<_, Vendor>(
+        "SELECT * FROM vendors WHERE LOWER(name) = LOWER($1) AND status != 'deleted'",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await
 }
 
 pub async fn list_vendors(
@@ -27,6 +29,7 @@ pub async fn list_vendors(
     let mut conditions: Vec<String> = Vec::new();
     let mut param_idx = 1u32;
 
+    conditions.push("v.status != 'deleted'".to_string());
     if client_id.is_some() {
         query.push_str(" JOIN vendor_clients vc ON v.id = vc.vendor_id");
         conditions.push(format!("vc.client_id = ${param_idx}"));
@@ -80,10 +83,11 @@ pub async fn count_vendor_references(
 }
 
 pub async fn delete_vendor(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM vendors WHERE id = $1")
-        .bind(id)
-        .execute(pool)
-        .await?;
+    let result =
+        sqlx::query("UPDATE vendors SET status = 'deleted', updated_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -146,7 +150,7 @@ pub async fn get_vendors_for_client(
         "SELECT v.*
          FROM vendors v
          JOIN vendor_clients vc ON v.id = vc.vendor_id
-         WHERE vc.client_id = $1
+         WHERE vc.client_id = $1 AND v.status != 'deleted'
          ORDER BY v.name",
     )
     .bind(client_id)

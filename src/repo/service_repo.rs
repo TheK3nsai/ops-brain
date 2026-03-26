@@ -15,7 +15,7 @@ pub async fn get_service_by_slug(
     pool: &PgPool,
     slug: &str,
 ) -> Result<Option<Service>, sqlx::Error> {
-    sqlx::query_as::<_, Service>("SELECT * FROM services WHERE slug = $1")
+    sqlx::query_as::<_, Service>("SELECT * FROM services WHERE slug = $1 AND status != 'deleted'")
         .bind(slug)
         .fetch_optional(pool)
         .await
@@ -29,7 +29,7 @@ pub async fn list_services(
     match category {
         Some(cat) => {
             sqlx::query_as::<_, Service>(
-                "SELECT * FROM services WHERE category = $1 ORDER BY name LIMIT $2",
+                "SELECT * FROM services WHERE status != 'deleted' AND category = $1 ORDER BY name LIMIT $2",
             )
             .bind(cat)
             .bind(limit)
@@ -37,10 +37,12 @@ pub async fn list_services(
             .await
         }
         None => {
-            sqlx::query_as::<_, Service>("SELECT * FROM services ORDER BY name LIMIT $1")
-                .bind(limit)
-                .fetch_all(pool)
-                .await
+            sqlx::query_as::<_, Service>(
+                "SELECT * FROM services WHERE status != 'deleted' ORDER BY name LIMIT $1",
+            )
+            .bind(limit)
+            .fetch_all(pool)
+            .await
         }
     }
 }
@@ -82,10 +84,11 @@ pub async fn count_service_references(
 }
 
 pub async fn delete_service(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM services WHERE id = $1")
-        .bind(id)
-        .execute(pool)
-        .await?;
+    let result =
+        sqlx::query("UPDATE services SET status = 'deleted', updated_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected() > 0)
 }
 

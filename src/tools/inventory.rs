@@ -574,7 +574,8 @@ pub(crate) async fn handle_delete_server(
                 .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
                 .collect();
             preview["linked_entities"] = serde_json::Value::Object(ref_map);
-            preview["warning"] = "Junction table links will be CASCADE-deleted or SET NULL.".into();
+            preview["warning"] =
+                "Entity will be soft-deleted (status='deleted'). FK references preserved.".into();
         } else {
             preview["linked_entities"] = serde_json::json!("none");
         }
@@ -583,12 +584,10 @@ pub(crate) async fn handle_delete_server(
     match crate::repo::server_repo::delete_server(&brain.pool, server.id).await {
         Ok(true) => json_result(&serde_json::json!({
             "deleted": true,
+            "soft_delete": true,
             "server": server.hostname,
             "slug": server.slug,
-            "cascade_summary": refs.iter()
-                .map(|(k, v)| format!("{k}: {v}"))
-                .collect::<Vec<_>>()
-                .join(", "),
+            "note": "Server marked as deleted (soft delete). FK references preserved.",
         })),
         Ok(false) => not_found("Server", &params.slug),
         Err(e) => error_result(&format!("Database error: {e}")),
@@ -625,7 +624,8 @@ pub(crate) async fn handle_delete_service(
                 .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
                 .collect();
             preview["linked_entities"] = serde_json::Value::Object(ref_map);
-            preview["warning"] = "Junction table links will be CASCADE-deleted or SET NULL.".into();
+            preview["warning"] =
+                "Entity will be soft-deleted (status='deleted'). FK references preserved.".into();
         } else {
             preview["linked_entities"] = serde_json::json!("none");
         }
@@ -634,12 +634,10 @@ pub(crate) async fn handle_delete_service(
     match crate::repo::service_repo::delete_service(&brain.pool, service.id).await {
         Ok(true) => json_result(&serde_json::json!({
             "deleted": true,
+            "soft_delete": true,
             "service": service.name,
             "slug": service.slug,
-            "cascade_summary": refs.iter()
-                .map(|(k, v)| format!("{k}: {v}"))
-                .collect::<Vec<_>>()
-                .join(", "),
+            "note": "Service marked as deleted (soft delete). FK references preserved.",
         })),
         Ok(false) => not_found("Service", &params.slug),
         Err(e) => error_result(&format!("Database error: {e}")),
@@ -675,7 +673,8 @@ pub(crate) async fn handle_delete_vendor(
                 .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
                 .collect();
             preview["linked_entities"] = serde_json::Value::Object(ref_map);
-            preview["warning"] = "Client links and incident links will be CASCADE-deleted.".into();
+            preview["warning"] =
+                "Entity will be soft-deleted (status='deleted'). FK references preserved.".into();
         } else {
             preview["linked_entities"] = serde_json::json!("none");
         }
@@ -684,12 +683,10 @@ pub(crate) async fn handle_delete_vendor(
     match crate::repo::vendor_repo::delete_vendor(&brain.pool, vendor.id).await {
         Ok(true) => json_result(&serde_json::json!({
             "deleted": true,
+            "soft_delete": true,
             "vendor": vendor.name,
             "id": vendor.id.to_string(),
-            "cascade_summary": refs.iter()
-                .map(|(k, v)| format!("{k}: {v}"))
-                .collect::<Vec<_>>()
-                .join(", "),
+            "note": "Vendor marked as deleted (soft delete). FK references preserved.",
         })),
         Ok(false) => not_found("Vendor", &params.name),
         Err(e) => error_result(&format!("Database error: {e}")),
