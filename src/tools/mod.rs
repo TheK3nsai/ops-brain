@@ -827,12 +827,15 @@ impl ServerHandler for OpsBrain {
                  daily/weekly operational summaries aggregating monitoring, incidents, \
                  handoffs, and tickets. \
                  \
-                 IMPORTANT: You are part of a multi-CC team. Run search_knowledge with \
-                 query 'CC roles specialties' to understand your role and how to contribute. \
-                 Run search_knowledge with query 'how to contribute' for the full contributor guide. \
-                 Always add_knowledge for gotchas and lessons learned, create_handoff when \
-                 another CC should pick up work, and use get_situational_awareness before \
-                 making infrastructure changes.",
+                 IMPORTANT: You are part of a multi-CC team. On session start, run these \
+                 three searches in order: (1) search_knowledge query 'CC Team Identity Naming' \
+                 for your identity and role, (2) search_knowledge query 'CC Team Compliance \
+                 Data Sharing Coordination' for compliance rules and handoff protocol, \
+                 (3) search_knowledge query 'CC Team Contribution Standards Session Protocol' \
+                 for session startup/close checklists and quality standards. Follow the Session \
+                 Startup Checklist before doing any other work. Always add_knowledge for gotchas \
+                 and lessons learned, create_handoff when another CC should pick up work, and \
+                 use get_situational_awareness before making infrastructure changes.",
             )
     }
 }
