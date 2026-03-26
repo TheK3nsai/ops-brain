@@ -1,5 +1,8 @@
+use rmcp::model::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
+
+use super::helpers::{error_result, json_result, not_found};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetServerParams {
@@ -159,4 +162,515 @@ pub struct LinkServerServiceParams {
     pub service_slug: String,
     pub port: Option<i32>,
     pub config_notes: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Handler functions
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn handle_get_server(
+    brain: &super::OpsBrain,
+    p: GetServerParams,
+) -> CallToolResult {
+    let server = match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.slug).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found("Server", &p.slug),
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+    let services = crate::repo::service_repo::get_services_for_server(&brain.pool, server.id)
+        .await
+        .unwrap_or_default();
+    let site = crate::repo::site_repo::get_site(&brain.pool, server.site_id)
+        .await
+        .ok()
+        .flatten();
+    let networks = crate::repo::network_repo::list_networks(&brain.pool, Some(server.site_id))
+        .await
+        .unwrap_or_default();
+
+    let result = serde_json::json!({
+        "server": server,
+        "services": services,
+        "site": site,
+        "networks": networks,
+    });
+    json_result(&result)
+}
+
+pub(crate) async fn handle_list_servers(
+    brain: &super::OpsBrain,
+    p: ListServersParams,
+) -> CallToolResult {
+    let client_id = match &p.client_slug {
+        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+            Ok(Some(c)) => Some(c.id),
+            Ok(None) => return not_found("Client", slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+    let site_id = match &p.site_slug {
+        Some(slug) => match crate::repo::site_repo::get_site_by_slug(&brain.pool, slug).await {
+            Ok(Some(s)) => Some(s.id),
+            Ok(None) => return not_found("Site", slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+    match crate::repo::server_repo::list_servers(
+        &brain.pool,
+        client_id,
+        site_id,
+        p.role.as_deref(),
+        p.status.as_deref(),
+    )
+    .await
+    {
+        Ok(servers) => json_result(&servers),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_get_service(
+    brain: &super::OpsBrain,
+    p: GetServiceParams,
+) -> CallToolResult {
+    let service = match crate::repo::service_repo::get_service_by_slug(&brain.pool, &p.slug).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found("Service", &p.slug),
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+    let servers = crate::repo::service_repo::get_servers_for_service(&brain.pool, service.id)
+        .await
+        .unwrap_or_default();
+    let result = serde_json::json!({
+        "service": service,
+        "servers": servers,
+    });
+    json_result(&result)
+}
+
+pub(crate) async fn handle_list_services(
+    brain: &super::OpsBrain,
+    p: ListServicesParams,
+) -> CallToolResult {
+    match crate::repo::service_repo::list_services(&brain.pool, p.category.as_deref()).await {
+        Ok(services) => json_result(&services),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_get_site(brain: &super::OpsBrain, p: GetSiteParams) -> CallToolResult {
+    let site = match crate::repo::site_repo::get_site_by_slug(&brain.pool, &p.slug).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found("Site", &p.slug),
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+    let servers =
+        crate::repo::server_repo::list_servers(&brain.pool, None, Some(site.id), None, None)
+            .await
+            .unwrap_or_default();
+    let networks = crate::repo::network_repo::list_networks(&brain.pool, Some(site.id))
+        .await
+        .unwrap_or_default();
+    let result = serde_json::json!({
+        "site": site,
+        "servers": servers,
+        "networks": networks,
+    });
+    json_result(&result)
+}
+
+pub(crate) async fn handle_get_client(
+    brain: &super::OpsBrain,
+    p: GetClientParams,
+) -> CallToolResult {
+    match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.slug).await {
+        Ok(Some(client)) => json_result(&client),
+        Ok(None) => not_found("Client", &p.slug),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_get_network(
+    brain: &super::OpsBrain,
+    p: GetNetworkParams,
+) -> CallToolResult {
+    if let Some(id_str) = &p.id {
+        let id = match uuid::Uuid::parse_str(id_str) {
+            Ok(id) => id,
+            Err(_) => return error_result(&format!("Invalid UUID: {id_str}")),
+        };
+        return match crate::repo::network_repo::get_network(&brain.pool, id).await {
+            Ok(Some(network)) => json_result(&network),
+            Ok(None) => not_found("Network", id_str),
+            Err(e) => error_result(&format!("Database error: {e}")),
+        };
+    }
+    let site_id = match &p.site_slug {
+        Some(slug) => match crate::repo::site_repo::get_site_by_slug(&brain.pool, slug).await {
+            Ok(Some(s)) => Some(s.id),
+            Ok(None) => return not_found("Site", slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+    match crate::repo::network_repo::list_networks(&brain.pool, site_id).await {
+        Ok(networks) => json_result(&networks),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_get_vendor(
+    brain: &super::OpsBrain,
+    p: GetVendorParams,
+) -> CallToolResult {
+    match crate::repo::vendor_repo::get_vendor_by_name(&brain.pool, &p.name).await {
+        Ok(Some(vendor)) => json_result(&vendor),
+        Ok(None) => not_found("Vendor", &p.name),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_search_inventory(
+    brain: &super::OpsBrain,
+    p: SearchInventoryParams,
+) -> CallToolResult {
+    match crate::repo::search_repo::search_inventory(&brain.pool, &p.query).await {
+        Ok(results) => json_result(&results),
+        Err(e) => error_result(&format!("Search error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_upsert_client(
+    brain: &super::OpsBrain,
+    p: UpsertClientParams,
+) -> CallToolResult {
+    match crate::repo::client_repo::upsert_client(
+        &brain.pool,
+        &p.name,
+        &p.slug,
+        p.notes.as_deref(),
+        p.zammad_org_id,
+        p.zammad_group_id,
+        p.zammad_customer_id,
+    )
+    .await
+    {
+        Ok(client) => json_result(&client),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_upsert_site(
+    brain: &super::OpsBrain,
+    p: UpsertSiteParams,
+) -> CallToolResult {
+    let client =
+        match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return not_found("Client", &p.client_slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+    match crate::repo::site_repo::upsert_site(
+        &brain.pool,
+        client.id,
+        &p.name,
+        &p.slug,
+        p.address.as_deref(),
+        p.wan_provider.as_deref(),
+        p.wan_ip.as_deref(),
+        p.notes.as_deref(),
+    )
+    .await
+    {
+        Ok(site) => json_result(&site),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_upsert_server(
+    brain: &super::OpsBrain,
+    p: UpsertServerParams,
+) -> CallToolResult {
+    let site = match crate::repo::site_repo::get_site_by_slug(&brain.pool, &p.site_slug).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found("Site", &p.site_slug),
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+    let hypervisor_id = match &p.hypervisor_slug {
+        Some(slug) => match crate::repo::server_repo::get_server_by_slug(&brain.pool, slug).await {
+            Ok(Some(h)) => Some(h.id),
+            Ok(None) => return not_found("Hypervisor server", slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+    let ip_addresses = p.ip_addresses.unwrap_or_default();
+    let roles = p.roles.unwrap_or_default();
+    let is_virtual = p.is_virtual.unwrap_or(false);
+    let status = p.status.as_deref().unwrap_or("active");
+    match crate::repo::server_repo::upsert_server(
+        &brain.pool,
+        site.id,
+        &p.hostname,
+        &p.slug,
+        p.os.as_deref(),
+        &ip_addresses,
+        p.ssh_alias.as_deref(),
+        &roles,
+        p.hardware.as_deref(),
+        p.cpu.as_deref(),
+        p.ram_gb,
+        p.storage_summary.as_deref(),
+        is_virtual,
+        hypervisor_id,
+        status,
+        p.notes.as_deref(),
+    )
+    .await
+    {
+        Ok(server) => json_result(&server),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_upsert_service(
+    brain: &super::OpsBrain,
+    p: UpsertServiceParams,
+) -> CallToolResult {
+    let criticality = p.criticality.as_deref().unwrap_or("medium");
+    match crate::repo::service_repo::upsert_service(
+        &brain.pool,
+        &p.name,
+        &p.slug,
+        p.category.as_deref(),
+        p.description.as_deref(),
+        criticality,
+        p.notes.as_deref(),
+    )
+    .await
+    {
+        Ok(service) => json_result(&service),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_upsert_vendor(
+    brain: &super::OpsBrain,
+    p: UpsertVendorParams,
+) -> CallToolResult {
+    let contract_end = match &p.contract_end {
+        Some(date_str) => match chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            Ok(d) => Some(d),
+            Err(_) => {
+                return error_result(&format!(
+                    "Invalid date format '{}', expected YYYY-MM-DD",
+                    date_str
+                ))
+            }
+        },
+        None => None,
+    };
+    match crate::repo::vendor_repo::upsert_vendor(
+        &brain.pool,
+        &p.name,
+        p.category.as_deref(),
+        p.account_number.as_deref(),
+        p.support_phone.as_deref(),
+        p.support_email.as_deref(),
+        p.support_portal.as_deref(),
+        p.sla_summary.as_deref(),
+        contract_end,
+        p.notes.as_deref(),
+    )
+    .await
+    {
+        Ok(vendor) => json_result(&vendor),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_link_server_service(
+    brain: &super::OpsBrain,
+    p: LinkServerServiceParams,
+) -> CallToolResult {
+    let server =
+        match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.server_slug).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return not_found("Server", &p.server_slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+    let service =
+        match crate::repo::service_repo::get_service_by_slug(&brain.pool, &p.service_slug).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return not_found("Service", &p.service_slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+    match crate::repo::service_repo::link_server_service(
+        &brain.pool,
+        server.id,
+        service.id,
+        p.port,
+        p.config_notes.as_deref(),
+    )
+    .await
+    {
+        Ok(()) => CallToolResult::success(vec![Content::text(format!(
+            "Linked server '{}' to service '{}'",
+            p.server_slug, p.service_slug
+        ))]),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_delete_server(
+    brain: &super::OpsBrain,
+    params: DeleteServerParams,
+) -> CallToolResult {
+    let server = match crate::repo::server_repo::get_server_by_slug(&brain.pool, &params.slug).await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found("Server", &params.slug),
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+    let refs = match crate::repo::server_repo::count_server_references(&brain.pool, server.id).await
+    {
+        Ok(r) => r,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+    if params.confirm != Some(true) {
+        let mut preview = serde_json::json!({
+            "action": "delete_server",
+            "server": server.hostname,
+            "slug": server.slug,
+            "status": server.status,
+            "confirmed": false,
+            "message": "Pass confirm=true to proceed with deletion.",
+        });
+        if !refs.is_empty() {
+            let ref_map: serde_json::Map<String, serde_json::Value> = refs
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
+                .collect();
+            preview["linked_entities"] = serde_json::Value::Object(ref_map);
+            preview["warning"] = "Junction table links will be CASCADE-deleted or SET NULL.".into();
+        } else {
+            preview["linked_entities"] = serde_json::json!("none");
+        }
+        return json_result(&preview);
+    }
+    match crate::repo::server_repo::delete_server(&brain.pool, server.id).await {
+        Ok(true) => json_result(&serde_json::json!({
+            "deleted": true,
+            "server": server.hostname,
+            "slug": server.slug,
+            "cascade_summary": refs.iter()
+                .map(|(k, v)| format!("{k}: {v}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        })),
+        Ok(false) => not_found("Server", &params.slug),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_delete_service(
+    brain: &super::OpsBrain,
+    params: DeleteServiceParams,
+) -> CallToolResult {
+    let service =
+        match crate::repo::service_repo::get_service_by_slug(&brain.pool, &params.slug).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return not_found("Service", &params.slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+    let refs =
+        match crate::repo::service_repo::count_service_references(&brain.pool, service.id).await {
+            Ok(r) => r,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+    if params.confirm != Some(true) {
+        let mut preview = serde_json::json!({
+            "action": "delete_service",
+            "service": service.name,
+            "slug": service.slug,
+            "confirmed": false,
+            "message": "Pass confirm=true to proceed with deletion.",
+        });
+        if !refs.is_empty() {
+            let ref_map: serde_json::Map<String, serde_json::Value> = refs
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
+                .collect();
+            preview["linked_entities"] = serde_json::Value::Object(ref_map);
+            preview["warning"] = "Junction table links will be CASCADE-deleted or SET NULL.".into();
+        } else {
+            preview["linked_entities"] = serde_json::json!("none");
+        }
+        return json_result(&preview);
+    }
+    match crate::repo::service_repo::delete_service(&brain.pool, service.id).await {
+        Ok(true) => json_result(&serde_json::json!({
+            "deleted": true,
+            "service": service.name,
+            "slug": service.slug,
+            "cascade_summary": refs.iter()
+                .map(|(k, v)| format!("{k}: {v}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        })),
+        Ok(false) => not_found("Service", &params.slug),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_delete_vendor(
+    brain: &super::OpsBrain,
+    params: DeleteVendorParams,
+) -> CallToolResult {
+    let vendor = match crate::repo::vendor_repo::get_vendor_by_name(&brain.pool, &params.name).await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => return not_found("Vendor", &params.name),
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+    let refs = match crate::repo::vendor_repo::count_vendor_references(&brain.pool, vendor.id).await
+    {
+        Ok(r) => r,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+    if params.confirm != Some(true) {
+        let mut preview = serde_json::json!({
+            "action": "delete_vendor",
+            "vendor": vendor.name,
+            "id": vendor.id.to_string(),
+            "confirmed": false,
+            "message": "Pass confirm=true to proceed with deletion.",
+        });
+        if !refs.is_empty() {
+            let ref_map: serde_json::Map<String, serde_json::Value> = refs
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::from(*v)))
+                .collect();
+            preview["linked_entities"] = serde_json::Value::Object(ref_map);
+            preview["warning"] = "Client links and incident links will be CASCADE-deleted.".into();
+        } else {
+            preview["linked_entities"] = serde_json::json!("none");
+        }
+        return json_result(&preview);
+    }
+    match crate::repo::vendor_repo::delete_vendor(&brain.pool, vendor.id).await {
+        Ok(true) => json_result(&serde_json::json!({
+            "deleted": true,
+            "vendor": vendor.name,
+            "id": vendor.id.to_string(),
+            "cascade_summary": refs.iter()
+                .map(|(k, v)| format!("{k}: {v}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        })),
+        Ok(false) => not_found("Vendor", &params.name),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
 }

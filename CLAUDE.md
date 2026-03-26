@@ -23,17 +23,19 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct with ALL 64 #[tool] methods in one impl block
-    inventory.rs     # Parameter structs for inventory tools
-    runbooks.rs      # Parameter structs for runbook tools
-    knowledge.rs     # Parameter structs for knowledge tools
-    context.rs       # Parameter structs + response structs for context tools
-    incidents.rs     # Parameter structs for incident tools
-    coordination.rs  # Parameter structs for session + handoff tools
-    monitoring.rs    # Parameter structs for monitoring tools
-    search.rs        # Parameter structs for semantic search tools
-    zammad.rs        # Parameter structs for Zammad ticketing tools
-    briefings.rs     # Parameter structs + response structs for briefing tools
+    mod.rs           # OpsBrain struct + 64 #[tool] stubs (delegate to category modules)
+    helpers.rs       # Shared helpers: json_result, error_result, filter_cross_client, compact_*, etc.
+    shared.rs        # Shared async functions: embed_and_store, get_query_embedding, build_client_lookup, log_audit_entries
+    inventory.rs     # Parameter structs + handler implementations for inventory tools
+    runbooks.rs      # Parameter structs + handler implementations for runbook tools
+    knowledge.rs     # Parameter structs + handler implementations for knowledge tools
+    context.rs       # Parameter/response structs + handler implementations for context tools
+    incidents.rs     # Parameter structs + handler implementations for incident tools
+    coordination.rs  # Parameter structs + handler implementations for session + handoff tools
+    monitoring.rs    # Parameter structs + handler implementations for monitoring tools
+    search.rs        # Parameter structs + handler implementations for semantic search tools
+    zammad.rs        # Parameter structs + handler implementations for Zammad ticketing tools
+    briefings.rs     # Parameter/response structs + handler implementations for briefing tools
   embeddings.rs    # OpenAI embedding client + text preparation functions
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
@@ -44,8 +46,10 @@ seed/seed.sql      # Idempotent seed data with real infrastructure
 
 ## Architecture Constraints
 
-- All `#[tool]` methods MUST be in the single `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs` — rmcp macro requirement
-- Parameter structs go in sub-modules (inventory.rs, runbooks.rs, zammad.rs, etc.) and are referenced from tool methods
+- All `#[tool]` stubs MUST remain in the single `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs` — rmcp macro requirement. Each stub delegates to a `handle_*` function in the appropriate category module.
+- Parameter structs and handler implementations live together in category modules (inventory.rs, runbooks.rs, zammad.rs, etc.)
+- Shared helpers (json_result, filter_cross_client, compact_*) live in `tools/helpers.rs`; shared async functions (embed_and_store, get_query_embedding, etc.) live in `tools/shared.rs`
+- OpsBrain fields are `pub(crate)` so category modules can access pool, kuma_config, embedding_client, zammad_config
 - Tool errors return `Ok(CallToolResult::error(...))`, never `Err(McpError)`
 - Slugs are the public API (not UUIDs) — tools resolve slugs to IDs internally
 - Tracing writes to stderr (critical: stdout is the MCP stdio transport)
@@ -378,24 +382,34 @@ pub struct DeleteThingParams {
 }
 ```
 
-**5. Tool method**
+**5. Handler function**
 
-Add to the `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs`. Pattern:
+Add the handler implementation to the appropriate category file (e.g., `src/tools/inventory.rs`):
 ```rust
-#[tool(description = "Delete a thing by slug. Requires confirm=true. Refuses if referenced by other entities.")]
-async fn delete_thing(&self, #[tool(aggr)] params: DeleteThingParams) -> Result<CallToolResult, McpError> {
-    // 1. Resolve slug to entity
+pub(crate) async fn handle_delete_thing(brain: &super::OpsBrain, params: DeleteThingParams) -> CallToolResult {
+    // 1. Resolve slug to entity (brain.pool)
     // 2. Check for FK references (safety gate)
     // 3. Require confirm=true
     // 4. Delete
-    // 5. Return success message
+    // 5. Return success message via json_result()
 }
 ```
-- Tools MUST be in the single `#[tool_router] impl OpsBrain` block — rmcp macro requirement
-- Return `Ok(CallToolResult::error(...))` for user-facing errors, never `Err()`
-- Use `self.pool` for DB access
 
-**6. Integration test**
+**6. Tool stub**
+
+Add a thin stub to the `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs`:
+```rust
+#[tool(description = "Delete a thing by slug. Requires confirm=true.")]
+async fn delete_thing(&self, params: Parameters<inventory::DeleteThingParams>) -> Result<CallToolResult, McpError> {
+    Ok(inventory::handle_delete_thing(self, params.0).await)
+}
+```
+- Tool stubs MUST be in the single `#[tool_router] impl OpsBrain` block — rmcp macro requirement
+- Stubs only delegate — all logic lives in the category handler
+- Handler returns `CallToolResult` directly; stub wraps in `Ok()`
+- Handler accesses `brain.pool`, `brain.embedding_client`, etc.
+
+**7. Integration test**
 
 Add to `tests/integration.rs`. Pattern:
 ```rust
@@ -409,7 +423,7 @@ async fn test_delete_thing() {
 }
 ```
 
-**7. Update counts**
+**8. Update counts**
 
 - Update tool count in `CLAUDE.md` (Quick Reference, Phase Status, Project Layout comment)
 - Update tool count in `README.md`
@@ -432,7 +446,7 @@ Before opening a PR, verify:
 
 - **Don't modify existing migrations** — checksum mismatch will break deployments
 - **Don't use compile-time sqlx macros** — we use runtime queries for flexibility
-- **Don't add tools outside the `#[tool_router]` impl block** — rmcp requires them all in one place
+- **Don't add tool stubs outside the `#[tool_router]` impl block** — rmcp requires them all in one place. Handler logic goes in category modules.
 - **Don't write to stdout** — it's the MCP stdio transport. Use `tracing::info!()` (goes to stderr)
 - **Don't add fictional/placeholder data to seed.sql** — only foundational structure
 - **Don't merge without CI green** — the pipeline exists to protect us all
