@@ -17,6 +17,8 @@ pub struct CreateIncidentParams {
     pub server_slugs: Option<Vec<String>>,
     /// Service slugs affected by this incident
     pub service_slugs: Option<Vec<String>>,
+    /// Mark as safe to surface in cross-client contexts (default: false)
+    pub cross_client_safe: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -39,6 +41,8 @@ pub struct UpdateIncidentParams {
     pub prevention: Option<String>,
     /// Additional notes
     pub notes: Option<String>,
+    /// Mark as safe to surface in cross-client contexts
+    pub cross_client_safe: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

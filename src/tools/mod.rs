@@ -1643,7 +1643,7 @@ impl OpsBrain {
             }
         }
 
-        // ── Cross-client scope gate for runbooks and knowledge ──
+        // ── Cross-client scope gate for runbooks, knowledge, and incidents ──
         {
             let client_lookup = self.build_client_lookup().await;
 
@@ -1682,6 +1682,25 @@ impl OpsBrain {
                 client_id,
                 "knowledge",
                 &kn_filtered.audit_entries,
+            )
+            .await;
+
+            let inc_filtered = filter_cross_client(
+                std::mem::take(&mut awareness.recent_incidents),
+                "incident",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            awareness.recent_incidents = inc_filtered.allowed;
+            awareness
+                .cross_client_withheld
+                .extend(inc_filtered.withheld_notices);
+            self.log_audit_entries(
+                "get_situational_awareness",
+                client_id,
+                "incident",
+                &inc_filtered.audit_entries,
             )
             .await;
         }
@@ -2062,7 +2081,7 @@ impl OpsBrain {
             }
         }
 
-        // ── Cross-client scope gate for runbooks and knowledge ──
+        // ── Cross-client scope gate for runbooks, knowledge, and incidents ──
         let mut cross_client_withheld: Vec<serde_json::Value> = Vec::new();
         {
             let client_lookup = self.build_client_lookup().await;
@@ -2098,6 +2117,23 @@ impl OpsBrain {
                 client_id,
                 "knowledge",
                 &kn_filtered.audit_entries,
+            )
+            .await;
+
+            let inc_filtered = filter_cross_client(
+                std::mem::take(&mut all_incidents),
+                "incident",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            all_incidents = inc_filtered.allowed;
+            cross_client_withheld.extend(inc_filtered.withheld_notices);
+            self.log_audit_entries(
+                "get_server_context",
+                client_id,
+                "incident",
+                &inc_filtered.audit_entries,
             )
             .await;
         }
@@ -2207,6 +2243,7 @@ impl OpsBrain {
             None => None,
         };
 
+        let cross_client_safe = p.cross_client_safe.unwrap_or(false);
         let incident = match crate::repo::incident_repo::create_incident(
             &self.pool,
             &p.title,
@@ -2214,6 +2251,7 @@ impl OpsBrain {
             client_id,
             p.symptoms.as_deref(),
             p.notes.as_deref(),
+            cross_client_safe,
         )
         .await
         {
@@ -2301,6 +2339,7 @@ impl OpsBrain {
             p.resolution.as_deref(),
             p.prevention.as_deref(),
             p.notes.as_deref(),
+            p.cross_client_safe,
         )
         .await
         {
@@ -2979,7 +3018,7 @@ impl OpsBrain {
                 }
             }
         }
-        // Incidents and handoffs are NOT gated (factual records, already client-scoped)
+        // Incidents are gated — HIPAA/IRS §7216 cross-client isolation
         if tables.iter().any(|t| t == "incidents") {
             match crate::repo::embedding_repo::hybrid_search_incidents(
                 &self.pool, &p.query, emb_ref, limit,
@@ -2987,10 +3026,29 @@ impl OpsBrain {
             .await
             {
                 Ok(items) => {
+                    let json_items: Vec<serde_json::Value> = items
+                        .iter()
+                        .filter_map(|i| serde_json::to_value(i).ok())
+                        .collect();
+                    let filtered = filter_cross_client(
+                        json_items,
+                        "incident",
+                        requesting_client_id,
+                        acknowledge,
+                        &client_lookup,
+                    );
                     results.insert(
                         "incidents".to_string(),
-                        serde_json::to_value(&items).unwrap_or_default(),
+                        serde_json::to_value(&filtered.allowed).unwrap_or_default(),
                     );
+                    all_withheld.extend(filtered.withheld_notices);
+                    self.log_audit_entries(
+                        "semantic_search",
+                        requesting_client_id,
+                        "incident",
+                        &filtered.audit_entries,
+                    )
+                    .await;
                 }
                 Err(e) => {
                     results.insert(
@@ -4449,6 +4507,53 @@ mod tests {
         assert_eq!(result.withheld_notices[0]["count"], 1);
         // 1 released_safe + 1 withheld
         assert_eq!(result.audit_entries.len(), 2);
+    }
+
+    // ===== incident cross-client gating tests =====
+
+    #[test]
+    fn filter_incident_cross_client_withheld() {
+        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let item_id = Uuid::now_v7();
+        // HSR incident, NOT safe, NOT acknowledged, requesting from CPA context
+        let items = vec![make_item(item_id, Some(hsr_id), false)];
+
+        let result = filter_cross_client(items, "incident", Some(cpa_id), false, &lookup);
+
+        assert!(result.allowed.is_empty());
+        assert_eq!(result.withheld_notices.len(), 1);
+        assert_eq!(result.withheld_notices[0]["entity_type"], "incident");
+        assert_eq!(result.withheld_notices[0]["owning_client_slug"], "hsr");
+        assert_eq!(result.audit_entries.len(), 1);
+        assert_eq!(result.audit_entries[0].2, "withheld");
+    }
+
+    #[test]
+    fn filter_incident_cross_client_safe_allowed() {
+        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let item_id = Uuid::now_v7();
+        // HSR incident marked cross_client_safe, requesting from CPA
+        let items = vec![make_item(item_id, Some(hsr_id), true)];
+
+        let result = filter_cross_client(items, "incident", Some(cpa_id), false, &lookup);
+
+        assert_eq!(result.allowed.len(), 1);
+        assert!(result.withheld_notices.is_empty());
+        assert_eq!(result.audit_entries.len(), 1);
+        assert_eq!(result.audit_entries[0].2, "released_safe");
+    }
+
+    #[test]
+    fn filter_incident_same_client_allowed() {
+        let (hsr_id, _, lookup) = make_lookup();
+        let item_id = Uuid::now_v7();
+        let items = vec![make_item(item_id, Some(hsr_id), false)];
+
+        let result = filter_cross_client(items, "incident", Some(hsr_id), false, &lookup);
+
+        assert_eq!(result.allowed.len(), 1);
+        assert!(result.withheld_notices.is_empty());
+        assert!(result.audit_entries.is_empty());
     }
 
     // ===== inject_provenance tests =====

@@ -38,7 +38,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 23 sqlx migration files (auto-run on startup)
+migrations/        # 24 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -109,7 +109,7 @@ These principles govern how ops-brain handles multi-client data. The system serv
 managing two clients (HSR hospice + CPA firm) with different compliance domains (HIPAA vs IRS/tax).
 Since there is no second pair of eyes, the system itself must act as the safety gate.
 
-1. **Default-deny cross-client surfacing**: `cross_client_safe` boolean (default: false) on runbooks and knowledge tables. Content scoped to client A does NOT surface in client B context unless explicitly marked safe. The entries you forget to tag are the ones with compliance implications.
+1. **Default-deny cross-client surfacing**: `cross_client_safe` boolean (default: false) on runbooks, knowledge, and incidents tables. Content scoped to client A does NOT surface in client B context unless explicitly marked safe. The entries you forget to tag are the ones with compliance implications.
 
 2. **Withhold-by-default on scope mismatch**: When semantic search or context tools would surface cross-client content, the actual content is **withheld** and replaced with a scope mismatch notice. An explicit `acknowledge_cross_client: true` parameter on a second call releases the result. Content that never reaches the context window can't influence reasoning. A gate, not a banner.
 
@@ -129,16 +129,18 @@ Since there is no second pair of eyes, the system itself must act as the safety 
 
 ### Tools Affected by Cross-Client Gate
 
-- `get_situational_awareness` — gates runbooks + knowledge via resolved client_id
-- `get_server_context` — gates runbooks + knowledge via resolved client_id
+- `get_situational_awareness` — gates runbooks, knowledge, and incidents via resolved client_id
+- `get_server_context` — gates runbooks, knowledge, and incidents via resolved client_id
 - `search_runbooks` — optional `client_slug` + `acknowledge_cross_client` params
 - `search_knowledge` — optional `client_slug` + `acknowledge_cross_client` params
-- `semantic_search` — gates runbook + knowledge results (incidents/handoffs not gated)
+- `semantic_search` — gates runbook, knowledge, and incident results (handoffs not gated — no client_id)
 - `list_runbooks` — optional `client_slug` filter (DB-level, shows client + global)
 - `create_runbook` — optional `client_slug` + `cross_client_safe` params
 - `update_runbook` — optional `cross_client_safe` param
 - `add_knowledge` — optional `cross_client_safe` param
 - `update_knowledge` — optional `cross_client_safe` param
+- `create_incident` — optional `cross_client_safe` param (default: false)
+- `update_incident` — optional `cross_client_safe` param
 - `delete_knowledge` — deletes by ID (no cross-client gate needed, operates on explicit ID)
 - Watchdog: runbook suggestions client-scoped (same-client + global only)
 

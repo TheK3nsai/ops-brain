@@ -64,11 +64,12 @@ pub async fn create_incident(
     client_id: Option<Uuid>,
     symptoms: Option<&str>,
     notes: Option<&str>,
+    cross_client_safe: bool,
 ) -> Result<Incident, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Incident>(
-        "INSERT INTO incidents (id, title, status, severity, client_id, symptoms, notes)
-         VALUES ($1, $2, 'open', $3, $4, $5, $6)
+        "INSERT INTO incidents (id, title, status, severity, client_id, symptoms, notes, cross_client_safe)
+         VALUES ($1, $2, 'open', $3, $4, $5, $6, $7)
          RETURNING *",
     )
     .bind(id)
@@ -77,6 +78,7 @@ pub async fn create_incident(
     .bind(client_id)
     .bind(symptoms)
     .bind(notes)
+    .bind(cross_client_safe)
     .fetch_one(pool)
     .await
 }
@@ -93,6 +95,7 @@ pub async fn update_incident(
     resolution: Option<&str>,
     prevention: Option<&str>,
     notes: Option<&str>,
+    cross_client_safe: Option<bool>,
 ) -> Result<Incident, sqlx::Error> {
     // If resolving, calculate TTR and set resolved_at
     let incident = sqlx::query_as::<_, Incident>(
@@ -105,6 +108,7 @@ pub async fn update_incident(
             resolution = COALESCE($7, resolution),
             prevention = COALESCE($8, prevention),
             notes = COALESCE($9, notes),
+            cross_client_safe = COALESCE($10, cross_client_safe),
             resolved_at = CASE
                 WHEN $3 = 'resolved' AND resolved_at IS NULL THEN now()
                 ELSE resolved_at
@@ -126,6 +130,7 @@ pub async fn update_incident(
     .bind(resolution)
     .bind(prevention)
     .bind(notes)
+    .bind(cross_client_safe)
     .fetch_one(pool)
     .await?;
 

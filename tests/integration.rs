@@ -361,6 +361,7 @@ mod incident_tests {
             None,
             Some("Cannot SSH"),
             Some("Created by test"),
+            false,
         )
         .await
         .unwrap();
@@ -396,6 +397,7 @@ mod incident_tests {
             None,
             None,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -413,6 +415,7 @@ mod incident_tests {
             Some("Cleared old logs"),
             None,
             None,
+            None, // cross_client_safe
         )
         .await
         .unwrap();
@@ -442,6 +445,7 @@ mod incident_tests {
             None,
             None,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -453,6 +457,7 @@ mod incident_tests {
             None,
             None,
             None,
+            false,
         )
         .await
         .unwrap();

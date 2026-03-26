@@ -17,6 +17,7 @@ pub struct Incident {
     pub prevention: Option<String>,
     pub time_to_resolve_minutes: Option<i32>,
     pub notes: Option<String>,
+    pub cross_client_safe: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
