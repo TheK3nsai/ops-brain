@@ -40,7 +40,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 26 sqlx migration files (auto-run on startup)
+migrations/        # 27 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -290,13 +290,15 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Deploy workflow**: git repo is at `~/ops-brain/` but Docker build context is `~/docker/ops-brain/`. After `git pull` in `~/ops-brain/`, sync to build context with: `rsync -a --exclude=target --exclude=.git --exclude=.env ~/ops-brain/ ~/docker/ops-brain/` (note: **exclude `.env`** to avoid nuking secrets). Then `docker compose -f docker-compose.prod.yml up -d --build` in `~/docker/ops-brain/`.
 - **mold linker is local only** — `.cargo/config.toml` uses mold for fast local builds. The Docker build uses its own linker (musl/gcc inside the container). CCs on other machines without mold can ignore this file — Cargo falls back to the default linker if mold isn't installed.
 - **sqlx-cli requires `DATABASE_URL`** — set it in `.env` or export it before running `sqlx migrate` commands. Same connection string the app uses.
+- **cargo-audit 0.22 has no config file support** — ignores must be passed via `--ignore RUSTSEC-XXXX` CLI flags. The `audit.toml` in the repo root is documentation only. The actual ignore is in `.github/workflows/ci.yml`.
+- **upsert_vendor creates duplicates** — it always INSERTs (no ON CONFLICT). To update an existing vendor, use `upsert_vendor` with `id` parameter, which routes to `update_vendor_by_id` (COALESCE partial update). Without `id`, a new row is created every time.
 
 ## Next Steps
 
 ### Code — Completed Improvements
 - **`delete_server`**: DONE — accepts slug, shows preview of linked entities, requires confirm=true. Soft delete (status='deleted').
 - **`delete_service`**: DONE — same pattern as delete_server. Soft delete.
-- **`delete_vendor`**: DONE — accepts name (case-insensitive), same preview+confirm pattern. Soft delete.
+- **`delete_vendor`**: DONE — accepts name (case-insensitive) or ID (UUID), same preview+confirm pattern. Soft delete.
 - **Fuzzy slug suggestions (P2)**: DONE — pg_trgm extension, GIN trigram indexes, `not_found_with_suggestions()` async helper. 43 slug lookup sites updated. `suggest_repo.rs` handles generic similarity queries.
 - **UNION incident queries (P5)**: DONE — `get_related_incidents()` replaces 2-3 separate queries + app-level dedup with single UNION ALL + DISTINCT ON query. Used in `get_situational_awareness` and `get_server_context`.
 - **_warnings array (P6)**: DONE — Context tools (`get_situational_awareness`, `get_client_overview`, `get_server_context`) surface transient sub-query failures in `_warnings` array instead of silently returning empty data. Covers vendors, knowledge, incidents, handoffs, Kuma, Zammad.
