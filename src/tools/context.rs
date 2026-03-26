@@ -2,8 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::helpers::{
-    compact_value, compact_vec, error_result, filter_cross_client, json_result, not_found,
-    section_included,
+    compact_value, compact_vec, error_result, filter_cross_client, json_result,
+    not_found_with_suggestions, section_included,
 };
 use super::shared::{build_client_lookup, get_query_embedding, log_audit_entries};
 use crate::models::handoff::Handoff;
@@ -182,7 +182,7 @@ pub(crate) async fn handle_get_situational_awareness(
                     .collect();
             }
         } else {
-            return not_found("Server", slug);
+            return not_found_with_suggestions(&brain.pool, "Server", slug).await;
         }
     }
 
@@ -244,7 +244,7 @@ pub(crate) async fn handle_get_situational_awareness(
                 }
             }
         } else {
-            return not_found("Service", slug);
+            return not_found_with_suggestions(&brain.pool, "Service", slug).await;
         }
     }
 
@@ -256,7 +256,7 @@ pub(crate) async fn handle_get_situational_awareness(
             client_id = Some(client.id);
             awareness.client = serde_json::to_value(&client).ok();
         } else {
-            return not_found("Client", slug);
+            return not_found_with_suggestions(&brain.pool, "Client", slug).await;
         }
     }
 
@@ -639,12 +639,13 @@ pub(crate) async fn handle_get_client_overview(
     brain: &super::OpsBrain,
     p: GetClientOverviewParams,
 ) -> CallToolResult {
-    let client =
-        match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug).await {
-            Ok(Some(c)) => c,
-            Ok(None) => return not_found("Client", &p.client_slug),
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        };
+    let client = match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug)
+        .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", &p.client_slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
 
     let sites = crate::repo::site_repo::list_sites(&brain.pool, Some(client.id))
         .await
@@ -760,12 +761,13 @@ pub(crate) async fn handle_get_server_context(
     let compact = p.compact.unwrap_or(false);
     let sections = p.sections;
 
-    let server =
-        match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.server_slug).await {
-            Ok(Some(s)) => s,
-            Ok(None) => return not_found("Server", &p.server_slug),
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        };
+    let server = match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.server_slug)
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", &p.server_slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
 
     let services = crate::repo::service_repo::get_services_for_server(&brain.pool, server.id)
         .await

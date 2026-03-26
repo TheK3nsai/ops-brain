@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::helpers::{error_result, json_result, not_found};
+use super::helpers::{error_result, json_result, not_found, not_found_with_suggestions};
 use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -109,12 +109,13 @@ pub(crate) async fn handle_list_tickets(
         None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
     };
 
-    let client =
-        match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug).await {
-            Ok(Some(c)) => c,
-            Ok(None) => return not_found("Client", &p.client_slug),
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        };
+    let client = match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug)
+        .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", &p.client_slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
 
     let org_id = match client.zammad_org_id {
         Some(id) => id,
@@ -191,12 +192,13 @@ pub(crate) async fn handle_create_ticket(
         None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
     };
 
-    let client =
-        match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug).await {
-            Ok(Some(c)) => c,
-            Ok(None) => return not_found("Client", &p.client_slug),
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        };
+    let client = match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug)
+        .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", &p.client_slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
 
     let (group_id, customer_id, org_id) = match (client.zammad_group_id, client.zammad_customer_id, client.zammad_org_id) {
         (Some(g), Some(c), org) => (g as i64, c as i64, org.map(|o| o as i64)),
@@ -387,7 +389,7 @@ pub(crate) async fn handle_link_ticket(
     let server_id = match &p.server_slug {
         Some(slug) => match crate::repo::server_repo::get_server_by_slug(&brain.pool, slug).await {
             Ok(Some(s)) => Some(s.id),
-            Ok(None) => return not_found("Server", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -397,7 +399,7 @@ pub(crate) async fn handle_link_ticket(
         Some(slug) => {
             match crate::repo::service_repo::get_service_by_slug(&brain.pool, slug).await {
                 Ok(Some(s)) => Some(s.id),
-                Ok(None) => return not_found("Service", slug),
+                Ok(None) => return not_found_with_suggestions(&brain.pool, "Service", slug).await,
                 Err(e) => return error_result(&format!("Database error: {e}")),
             }
         }

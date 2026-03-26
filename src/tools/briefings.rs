@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::helpers::{error_result, json_result, not_found};
+use super::helpers::{error_result, json_result, not_found, not_found_with_suggestions};
 use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -100,7 +100,7 @@ pub(crate) async fn handle_generate_briefing(
     let client = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -137,7 +137,7 @@ pub(crate) async fn handle_list_briefings(
     let client_id = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,

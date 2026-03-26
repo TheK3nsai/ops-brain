@@ -2,7 +2,10 @@ use rmcp::model::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::helpers::{error_result, json_result, not_found};
+use super::helpers::{
+    error_result, json_result, not_found, not_found_vendor_with_suggestions,
+    not_found_with_suggestions,
+};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetServerParams {
@@ -174,7 +177,7 @@ pub(crate) async fn handle_get_server(
 ) -> CallToolResult {
     let server = match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.slug).await {
         Ok(Some(s)) => s,
-        Ok(None) => return not_found("Server", &p.slug),
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", &p.slug).await,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
     let services = crate::repo::service_repo::get_services_for_server(&brain.pool, server.id)
@@ -204,7 +207,7 @@ pub(crate) async fn handle_list_servers(
     let client_id = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -212,7 +215,7 @@ pub(crate) async fn handle_list_servers(
     let site_id = match &p.site_slug {
         Some(slug) => match crate::repo::site_repo::get_site_by_slug(&brain.pool, slug).await {
             Ok(Some(s)) => Some(s.id),
-            Ok(None) => return not_found("Site", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Site", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -237,7 +240,7 @@ pub(crate) async fn handle_get_service(
 ) -> CallToolResult {
     let service = match crate::repo::service_repo::get_service_by_slug(&brain.pool, &p.slug).await {
         Ok(Some(s)) => s,
-        Ok(None) => return not_found("Service", &p.slug),
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Service", &p.slug).await,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
     let servers = crate::repo::service_repo::get_servers_for_service(&brain.pool, service.id)
@@ -263,7 +266,7 @@ pub(crate) async fn handle_list_services(
 pub(crate) async fn handle_get_site(brain: &super::OpsBrain, p: GetSiteParams) -> CallToolResult {
     let site = match crate::repo::site_repo::get_site_by_slug(&brain.pool, &p.slug).await {
         Ok(Some(s)) => s,
-        Ok(None) => return not_found("Site", &p.slug),
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Site", &p.slug).await,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
     let servers =
@@ -287,7 +290,7 @@ pub(crate) async fn handle_get_client(
 ) -> CallToolResult {
     match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.slug).await {
         Ok(Some(client)) => json_result(&client),
-        Ok(None) => not_found("Client", &p.slug),
+        Ok(None) => not_found_with_suggestions(&brain.pool, "Client", &p.slug).await,
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -310,7 +313,7 @@ pub(crate) async fn handle_get_network(
     let site_id = match &p.site_slug {
         Some(slug) => match crate::repo::site_repo::get_site_by_slug(&brain.pool, slug).await {
             Ok(Some(s)) => Some(s.id),
-            Ok(None) => return not_found("Site", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Site", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -327,7 +330,7 @@ pub(crate) async fn handle_get_vendor(
 ) -> CallToolResult {
     match crate::repo::vendor_repo::get_vendor_by_name(&brain.pool, &p.name).await {
         Ok(Some(vendor)) => json_result(&vendor),
-        Ok(None) => not_found("Vendor", &p.name),
+        Ok(None) => not_found_vendor_with_suggestions(&brain.pool, &p.name).await,
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -366,12 +369,13 @@ pub(crate) async fn handle_upsert_site(
     brain: &super::OpsBrain,
     p: UpsertSiteParams,
 ) -> CallToolResult {
-    let client =
-        match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug).await {
-            Ok(Some(c)) => c,
-            Ok(None) => return not_found("Client", &p.client_slug),
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        };
+    let client = match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug)
+        .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", &p.client_slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
     match crate::repo::site_repo::upsert_site(
         &brain.pool,
         client.id,
@@ -395,13 +399,15 @@ pub(crate) async fn handle_upsert_server(
 ) -> CallToolResult {
     let site = match crate::repo::site_repo::get_site_by_slug(&brain.pool, &p.site_slug).await {
         Ok(Some(s)) => s,
-        Ok(None) => return not_found("Site", &p.site_slug),
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Site", &p.site_slug).await,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
     let hypervisor_id = match &p.hypervisor_slug {
         Some(slug) => match crate::repo::server_repo::get_server_by_slug(&brain.pool, slug).await {
             Ok(Some(h)) => Some(h.id),
-            Ok(None) => return not_found("Hypervisor server", slug),
+            Ok(None) => {
+                return not_found_with_suggestions(&brain.pool, "Hypervisor server", slug).await
+            }
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -495,16 +501,19 @@ pub(crate) async fn handle_link_server_service(
     brain: &super::OpsBrain,
     p: LinkServerServiceParams,
 ) -> CallToolResult {
-    let server =
-        match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.server_slug).await {
-            Ok(Some(s)) => s,
-            Ok(None) => return not_found("Server", &p.server_slug),
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        };
+    let server = match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.server_slug)
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", &p.server_slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
     let service =
         match crate::repo::service_repo::get_service_by_slug(&brain.pool, &p.service_slug).await {
             Ok(Some(s)) => s,
-            Ok(None) => return not_found("Service", &p.service_slug),
+            Ok(None) => {
+                return not_found_with_suggestions(&brain.pool, "Service", &p.service_slug).await
+            }
             Err(e) => return error_result(&format!("Database error: {e}")),
         };
     match crate::repo::service_repo::link_server_service(
@@ -531,7 +540,7 @@ pub(crate) async fn handle_delete_server(
     let server = match crate::repo::server_repo::get_server_by_slug(&brain.pool, &params.slug).await
     {
         Ok(Some(s)) => s,
-        Ok(None) => return not_found("Server", &params.slug),
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", &params.slug).await,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
     let refs = match crate::repo::server_repo::count_server_references(&brain.pool, server.id).await
@@ -579,12 +588,13 @@ pub(crate) async fn handle_delete_service(
     brain: &super::OpsBrain,
     params: DeleteServiceParams,
 ) -> CallToolResult {
-    let service =
-        match crate::repo::service_repo::get_service_by_slug(&brain.pool, &params.slug).await {
-            Ok(Some(s)) => s,
-            Ok(None) => return not_found("Service", &params.slug),
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        };
+    let service = match crate::repo::service_repo::get_service_by_slug(&brain.pool, &params.slug)
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Service", &params.slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
     let refs =
         match crate::repo::service_repo::count_service_references(&brain.pool, service.id).await {
             Ok(r) => r,
@@ -632,7 +642,7 @@ pub(crate) async fn handle_delete_vendor(
     let vendor = match crate::repo::vendor_repo::get_vendor_by_name(&brain.pool, &params.name).await
     {
         Ok(Some(v)) => v,
-        Ok(None) => return not_found("Vendor", &params.name),
+        Ok(None) => return not_found_vendor_with_suggestions(&brain.pool, &params.name).await,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
     let refs = match crate::repo::vendor_repo::count_vendor_references(&brain.pool, vendor.id).await

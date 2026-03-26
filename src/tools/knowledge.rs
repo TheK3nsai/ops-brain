@@ -1,7 +1,9 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::helpers::{error_result, filter_cross_client, json_result, not_found};
+use super::helpers::{
+    error_result, filter_cross_client, json_result, not_found, not_found_with_suggestions,
+};
 use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
 
@@ -64,7 +66,7 @@ pub(crate) async fn handle_add_knowledge(
     let client_id = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -171,7 +173,7 @@ pub(crate) async fn handle_search_knowledge(
     let requesting_client_id = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,
@@ -239,7 +241,7 @@ pub(crate) async fn handle_list_knowledge(
     let client_id = match &p.client_slug {
         Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
             Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found("Client", slug),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
         None => None,

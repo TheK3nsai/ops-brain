@@ -13,5 +13,6 @@ pub mod server_repo;
 pub mod service_repo;
 pub mod session_repo;
 pub mod site_repo;
+pub mod suggest_repo;
 pub mod ticket_link_repo;
 pub mod vendor_repo;
