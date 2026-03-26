@@ -76,6 +76,8 @@ pub struct SearchIncidentsParams {
     pub query: String,
     /// Search mode: "fts" (default), "semantic" (vector only), or "hybrid" (FTS + vector RRF)
     pub mode: Option<String>,
+    /// Max results (default 20)
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -339,12 +341,13 @@ pub(crate) async fn handle_search_incidents(
     {
         return error_result(&msg);
     }
+    let limit = p.limit.unwrap_or(20);
     let result = match mode {
         "semantic" => {
             let Some(emb) = get_query_embedding(&brain.embedding_client, &p.query).await else {
                 return error_result("Semantic search unavailable (OPENAI_API_KEY not set)");
             };
-            crate::repo::embedding_repo::vector_search_incidents(&brain.pool, &emb, 20).await
+            crate::repo::embedding_repo::vector_search_incidents(&brain.pool, &emb, limit).await
         }
         "hybrid" => {
             let emb = get_query_embedding(&brain.embedding_client, &p.query).await;
@@ -352,11 +355,11 @@ pub(crate) async fn handle_search_incidents(
                 &brain.pool,
                 &p.query,
                 emb.as_deref(),
-                20,
+                limit,
             )
             .await
         }
-        _ => crate::repo::incident_repo::search_incidents(&brain.pool, &p.query).await,
+        _ => crate::repo::incident_repo::search_incidents(&brain.pool, &p.query, limit).await,
     };
     match result {
         Ok(incidents) => json_result(&incidents),

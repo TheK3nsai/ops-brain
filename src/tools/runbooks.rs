@@ -19,6 +19,8 @@ pub struct ListRunbooksParams {
     pub tag: Option<String>,
     /// Filter by owning client
     pub client_slug: Option<String>,
+    /// Max results (default 50)
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -31,6 +33,8 @@ pub struct SearchRunbooksParams {
     pub client_slug: Option<String>,
     /// Set to true to release cross-client results that were withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
+    /// Max results (default 20)
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -112,6 +116,7 @@ pub(crate) async fn handle_list_runbooks(
         None => None,
     };
 
+    let limit = p.limit.unwrap_or(50);
     match crate::repo::runbook_repo::list_runbooks(
         &brain.pool,
         p.category.as_deref(),
@@ -119,6 +124,7 @@ pub(crate) async fn handle_list_runbooks(
         server_id,
         p.tag.as_deref(),
         client_id,
+        limit,
     )
     .await
     {
@@ -149,12 +155,13 @@ pub(crate) async fn handle_search_runbooks(
     };
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
 
+    let limit = p.limit.unwrap_or(20);
     let result = match mode {
         "semantic" => {
             let Some(emb) = get_query_embedding(&brain.embedding_client, &p.query).await else {
                 return error_result("Semantic search unavailable (OPENAI_API_KEY not set)");
             };
-            crate::repo::embedding_repo::vector_search_runbooks(&brain.pool, &emb, 20).await
+            crate::repo::embedding_repo::vector_search_runbooks(&brain.pool, &emb, limit).await
         }
         "hybrid" => {
             let emb = get_query_embedding(&brain.embedding_client, &p.query).await;
@@ -162,11 +169,11 @@ pub(crate) async fn handle_search_runbooks(
                 &brain.pool,
                 &p.query,
                 emb.as_deref(),
-                20,
+                limit,
             )
             .await
         }
-        _ => crate::repo::search_repo::search_runbooks(&brain.pool, &p.query).await,
+        _ => crate::repo::search_repo::search_runbooks(&brain.pool, &p.query, limit).await,
     };
     match result {
         Ok(runbooks) => {

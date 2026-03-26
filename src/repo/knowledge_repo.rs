@@ -40,6 +40,7 @@ pub async fn list_knowledge(
     pool: &PgPool,
     category: Option<&str>,
     client_id: Option<Uuid>,
+    limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
     let mut query = String::from("SELECT * FROM knowledge");
     let mut conditions: Vec<String> = Vec::new();
@@ -51,7 +52,7 @@ pub async fn list_knowledge(
     }
     if client_id.is_some() {
         conditions.push(format!("client_id = ${param_idx}"));
-        let _ = param_idx;
+        param_idx += 1;
     }
 
     if !conditions.is_empty() {
@@ -59,6 +60,7 @@ pub async fn list_knowledge(
         query.push_str(&conditions.join(" AND "));
     }
     query.push_str(" ORDER BY title");
+    query.push_str(&format!(" LIMIT ${param_idx}"));
 
     let mut q = sqlx::query_as::<_, Knowledge>(&query);
     if let Some(v) = category {
@@ -67,6 +69,7 @@ pub async fn list_knowledge(
     if let Some(v) = client_id {
         q = q.bind(v);
     }
+    q = q.bind(limit);
 
     q.fetch_all(pool).await
 }
@@ -109,13 +112,19 @@ pub async fn delete_knowledge(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Err
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn search_knowledge(pool: &PgPool, query: &str) -> Result<Vec<Knowledge>, sqlx::Error> {
+pub async fn search_knowledge(
+    pool: &PgPool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<Knowledge>, sqlx::Error> {
     sqlx::query_as::<_, Knowledge>(
         "SELECT * FROM knowledge
          WHERE search_vector @@ plainto_tsquery('english', $1)
-         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC",
+         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+         LIMIT $2",
     )
     .bind(query)
+    .bind(limit)
     .fetch_all(pool)
     .await
 }

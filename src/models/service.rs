@@ -11,6 +11,7 @@ pub struct Service {
     pub description: Option<String>,
     pub criticality: String,
     pub notes: Option<String>,
+    pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

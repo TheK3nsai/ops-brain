@@ -137,14 +137,19 @@ pub async fn update_incident(
     Ok(incident)
 }
 
-pub async fn search_incidents(pool: &PgPool, query: &str) -> Result<Vec<Incident>, sqlx::Error> {
+pub async fn search_incidents(
+    pool: &PgPool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<Incident>, sqlx::Error> {
     sqlx::query_as::<_, Incident>(
         "SELECT * FROM incidents
          WHERE search_vector @@ plainto_tsquery('english', $1)
          ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-         LIMIT 20",
+         LIMIT $2",
     )
     .bind(query)
+    .bind(limit)
     .fetch_all(pool)
     .await
 }

@@ -27,6 +27,7 @@ pub async fn list_runbooks(
     server_id: Option<Uuid>,
     tag: Option<&str>,
     client_id: Option<Uuid>,
+    limit: i64,
 ) -> Result<Vec<Runbook>, sqlx::Error> {
     let mut query = String::from("SELECT r.* FROM runbooks r");
     let mut conditions: Vec<String> = Vec::new();
@@ -55,7 +56,7 @@ pub async fn list_runbooks(
         conditions.push(format!(
             "(r.client_id = ${param_idx} OR r.client_id IS NULL)"
         ));
-        let _ = param_idx;
+        param_idx += 1;
     }
 
     if !conditions.is_empty() {
@@ -63,6 +64,7 @@ pub async fn list_runbooks(
         query.push_str(&conditions.join(" AND "));
     }
     query.push_str(" ORDER BY r.title");
+    query.push_str(&format!(" LIMIT ${param_idx}"));
 
     let mut q = sqlx::query_as::<_, Runbook>(&query);
     if let Some(v) = service_id {
@@ -80,6 +82,7 @@ pub async fn list_runbooks(
     if let Some(v) = client_id {
         q = q.bind(v);
     }
+    q = q.bind(limit);
 
     q.fetch_all(pool).await
 }

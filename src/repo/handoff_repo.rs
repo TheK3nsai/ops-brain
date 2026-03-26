@@ -100,14 +100,19 @@ pub async fn list_handoffs(
     q.fetch_all(pool).await
 }
 
-pub async fn search_handoffs(pool: &PgPool, query: &str) -> Result<Vec<Handoff>, sqlx::Error> {
+pub async fn search_handoffs(
+    pool: &PgPool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<Handoff>, sqlx::Error> {
     sqlx::query_as::<_, Handoff>(
         "SELECT * FROM handoffs
          WHERE search_vector @@ plainto_tsquery('english', $1)
          ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-         LIMIT 20",
+         LIMIT $2",
     )
     .bind(query)
+    .bind(limit)
     .fetch_all(pool)
     .await
 }
