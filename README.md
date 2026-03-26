@@ -12,23 +12,25 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
-## Tools (64)
+## Tools (68)
 
-### Inventory (18)
+### Inventory (22)
 | Tool | Description |
 |------|-------------|
 | `get_server` | Server details + services, site, networks. Fuzzy slug suggestions on typos ("Did you mean: ...?") |
 | `list_servers` | Filter by client, site, role, status. Configurable `limit` (default 50) |
 | `get_service` / `list_services` | Service details + which servers run it. Configurable `limit` |
 | `get_site` / `get_client` | Entity lookups with related data |
-| `get_network` / `get_vendor` | Network and vendor lookups |
-| `search_inventory` | Full-text search across all entities. Configurable `limit` per type (default 10) |
+| `get_network` / `get_vendor` | Network and vendor lookups. `get_vendor` accepts `id` (UUID) or `name` for disambiguation |
+| `list_vendors` / `list_clients` | List vendors (filter by category/client) and clients |
+| `list_sites` / `list_networks` | List sites (filter by client) and networks (filter by site) |
+| `search_inventory` | Full-text search across all 10 entity types. Configurable `limit` per type (default 10) |
 | `upsert_client` / `upsert_site` / `upsert_server` | Create or update records |
 | `upsert_service` / `upsert_vendor` | Create or update records |
 | `link_server_service` | Associate a service with a server |
 | `delete_server` | Soft-delete server by slug with preview + confirm safety gate |
 | `delete_service` | Soft-delete service by slug with preview + confirm safety gate |
-| `delete_vendor` | Soft-delete vendor by name with preview + confirm safety gate |
+| `delete_vendor` | Soft-delete vendor by name or ID with preview + confirm safety gate |
 
 ### Runbooks (5)
 | Tool | Description |
@@ -329,7 +331,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 7**: Zammad integration — live Zammad REST API queries, ticket CRUD with time accounting, ticket-to-entity linking, context tools enriched with ticket data — 56 tools
 - [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools (before Phase 9 additions)
 
-- [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge/incidents), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions, `compact` mode + `sections` filtering for context tools — 64 tools
+- [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge/incidents), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions, `compact` mode + `sections` filtering for context tools — 68 tools (incl. list_vendors, list_clients, list_sites, list_networks)
 
 **Post-phase improvements:**
 

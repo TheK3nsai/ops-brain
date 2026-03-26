@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{error_result, json_result, not_found, not_found_with_suggestions};
 use crate::models::incident::Incident;
 use rmcp::model::*;
@@ -43,6 +45,7 @@ pub struct ListWatchdogIncidentsParams {
     /// Filter by status: "open" or "resolved" (default: all)
     pub status: Option<String>,
     /// Maximum number of incidents to return (default: 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 

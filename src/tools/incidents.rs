@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{
     error_result, json_result, not_found, not_found_vendor_with_suggestions,
     not_found_with_suggestions,
@@ -67,6 +69,7 @@ pub struct ListIncidentsParams {
     /// Filter by severity: low, medium, high, or critical
     pub severity: Option<String>,
     /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -77,6 +80,7 @@ pub struct SearchIncidentsParams {
     /// Search mode: "fts" (default), "semantic" (vector only), or "hybrid" (FTS + vector RRF)
     pub mode: Option<String>,
     /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 

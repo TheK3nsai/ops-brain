@@ -1,12 +1,16 @@
 use serde::Serialize;
 use sqlx::PgPool;
 
+use crate::models::client::Client;
 use crate::models::handoff::Handoff;
 use crate::models::incident::Incident;
 use crate::models::knowledge::Knowledge;
+use crate::models::network::Network;
 use crate::models::runbook::Runbook;
 use crate::models::server::Server;
 use crate::models::service::Service;
+use crate::models::site::Site;
+use crate::models::vendor::Vendor;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResults {
@@ -16,6 +20,10 @@ pub struct SearchResults {
     pub knowledge: Vec<Knowledge>,
     pub incidents: Vec<Incident>,
     pub handoffs: Vec<Handoff>,
+    pub vendors: Vec<Vendor>,
+    pub clients: Vec<Client>,
+    pub sites: Vec<Site>,
+    pub networks: Vec<Network>,
 }
 
 pub async fn search_inventory(
@@ -80,6 +88,45 @@ pub async fn search_inventory(
         .fetch_all(pool),
     )?;
 
+    let (vendors, clients, sites, networks) = tokio::try_join!(
+        sqlx::query_as::<_, Vendor>(
+            "SELECT * FROM vendors
+             WHERE status != 'deleted' AND search_vector @@ plainto_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             LIMIT $2"
+        )
+        .bind(query)
+        .bind(limit_per_type)
+        .fetch_all(pool),
+        sqlx::query_as::<_, Client>(
+            "SELECT * FROM clients
+             WHERE search_vector @@ plainto_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             LIMIT $2"
+        )
+        .bind(query)
+        .bind(limit_per_type)
+        .fetch_all(pool),
+        sqlx::query_as::<_, Site>(
+            "SELECT * FROM sites
+             WHERE search_vector @@ plainto_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             LIMIT $2"
+        )
+        .bind(query)
+        .bind(limit_per_type)
+        .fetch_all(pool),
+        sqlx::query_as::<_, Network>(
+            "SELECT * FROM networks
+             WHERE search_vector @@ plainto_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             LIMIT $2"
+        )
+        .bind(query)
+        .bind(limit_per_type)
+        .fetch_all(pool),
+    )?;
+
     Ok(SearchResults {
         servers,
         services,
@@ -87,6 +134,10 @@ pub async fn search_inventory(
         knowledge,
         incidents,
         handoffs,
+        vendors,
+        clients,
+        sites,
+        networks,
     })
 }
 

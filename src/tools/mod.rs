@@ -126,7 +126,7 @@ impl OpsBrain {
 
     #[tool(
         name = "get_vendor",
-        description = "Get vendor information by name (case-insensitive)"
+        description = "Get vendor information by name (case-insensitive) or ID. Use ID to disambiguate when multiple vendors share a name."
     )]
     async fn get_vendor(
         &self,
@@ -136,8 +136,49 @@ impl OpsBrain {
     }
 
     #[tool(
+        name = "list_vendors",
+        description = "List all vendors, optionally filtered by category or client"
+    )]
+    async fn list_vendors(
+        &self,
+        params: Parameters<inventory::ListVendorsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(inventory::handle_list_vendors(self, params.0).await)
+    }
+
+    #[tool(name = "list_clients", description = "List all client organizations")]
+    async fn list_clients(
+        &self,
+        params: Parameters<inventory::ListClientsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(inventory::handle_list_clients(self, params.0).await)
+    }
+
+    #[tool(
+        name = "list_sites",
+        description = "List all sites, optionally filtered by client"
+    )]
+    async fn list_sites(
+        &self,
+        params: Parameters<inventory::ListSitesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(inventory::handle_list_sites(self, params.0).await)
+    }
+
+    #[tool(
+        name = "list_networks",
+        description = "List all networks, optionally filtered by site"
+    )]
+    async fn list_networks(
+        &self,
+        params: Parameters<inventory::ListNetworksParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(inventory::handle_list_networks(self, params.0).await)
+    }
+
+    #[tool(
         name = "search_inventory",
-        description = "Full-text search across servers, services, runbooks, and knowledge entries"
+        description = "Full-text search across servers, services, runbooks, knowledge, incidents, handoffs, vendors, clients, sites, and networks"
     )]
     async fn search_inventory(
         &self,
@@ -194,7 +235,7 @@ impl OpsBrain {
 
     #[tool(
         name = "upsert_vendor",
-        description = "Create a new vendor contact record"
+        description = "Create or update a vendor contact record. Provide id to update a specific vendor by UUID."
     )]
     async fn upsert_vendor(
         &self,
@@ -798,8 +839,8 @@ impl OpsBrain {
 
     #[tool(
         name = "delete_vendor",
-        description = "Delete a vendor by name (case-insensitive). Without confirm=true, returns a preview of linked entities. \
-        Client links and incident links are cascade-deleted."
+        description = "Delete a vendor by name or ID. Use ID to target a specific vendor when duplicates exist. \
+        Without confirm=true, returns a preview of linked entities. Client and incident links are cascade-deleted."
     )]
     async fn delete_vendor(
         &self,
@@ -817,7 +858,9 @@ impl ServerHandler for OpsBrain {
             .with_instructions(
                 "Operational intelligence server for IT infrastructure management. \
                  Use get_situational_awareness for comprehensive context about any \
-                 server, service, or client. Use search_inventory for full-text search. \
+                 server, service, or client. Use search_inventory for full-text search \
+                 across all entity types (servers, services, vendors, clients, sites, networks, \
+                 runbooks, knowledge, incidents, handoffs). \
                  Use semantic_search for AI-powered conceptual search across runbooks, \
                  knowledge, incidents, and handoffs (finds related content even without \
                  exact keyword matches). Use get_monitoring_summary for live infrastructure \
