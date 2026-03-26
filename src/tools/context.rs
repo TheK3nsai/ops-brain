@@ -11,6 +11,14 @@ pub struct GetSituationalAwarenessParams {
     pub client_slug: Option<String>,
     /// Set to true to release cross-client runbooks/knowledge that were withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
+    /// Compact mode: strip heavy fields (content, body, notes) from results, keeping only
+    /// identifiers and key metadata. Reduces response from ~94K to ~10K chars. Use drill-down
+    /// tools (get_runbook, get_incident, etc.) for full details. Default: false
+    pub compact: Option<bool>,
+    /// Limit response to specific sections. Valid values: server, site, client, services,
+    /// networks, vendors, incidents, runbooks, handoffs, knowledge, monitoring, tickets.
+    /// If omitted, all sections are included.
+    pub sections: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -23,6 +31,12 @@ pub struct GetServerContextParams {
     pub server_slug: String,
     /// Set to true to release cross-client runbooks/knowledge that were withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
+    /// Compact mode: strip heavy fields (content, body, notes) from results. Default: false
+    pub compact: Option<bool>,
+    /// Limit response to specific sections. Valid values: server, site, client, services,
+    /// networks, vendors, incidents, runbooks, knowledge, monitoring, tickets.
+    /// If omitted, all sections are included.
+    pub sections: Option<Vec<String>>,
 }
 
 // Response structures for context tools

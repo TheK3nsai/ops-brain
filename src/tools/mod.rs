@@ -211,6 +211,101 @@ fn inject_provenance(
     }
 }
 
+/// Fields to keep per entity type in compact mode. Everything else is stripped.
+fn compact_keep_fields(entity_type: &str) -> &'static [&'static str] {
+    match entity_type {
+        "server" => &[
+            "id",
+            "hostname",
+            "slug",
+            "os",
+            "ip_address",
+            "status",
+            "roles",
+            "site_id",
+        ],
+        "site" => &["id", "name", "slug", "address", "client_id"],
+        "client" => &["id", "name", "slug"],
+        "service" => &["id", "name", "slug", "port", "protocol", "criticality"],
+        "network" => &["id", "name", "cidr", "vlan_id"],
+        "vendor" => &["id", "name", "category"],
+        "incident" => &[
+            "id",
+            "title",
+            "severity",
+            "status",
+            "client_id",
+            "reported_at",
+            "resolved_at",
+            "time_to_resolve_minutes",
+            "cross_client_safe",
+            "_client_slug",
+            "_client_name",
+        ],
+        "runbook" => &[
+            "id",
+            "title",
+            "slug",
+            "category",
+            "client_id",
+            "cross_client_safe",
+            "_client_slug",
+            "_client_name",
+        ],
+        "handoff" => &[
+            "id",
+            "title",
+            "status",
+            "priority",
+            "from_machine",
+            "to_machine",
+            "created_at",
+        ],
+        "knowledge" => &[
+            "id",
+            "title",
+            "category",
+            "client_id",
+            "cross_client_safe",
+            "_client_slug",
+            "_client_name",
+        ],
+        "monitor" => &["name", "status_text", "monitor_type"],
+        "ticket" => &["ticket_id", "title", "state", "priority", "created_at"],
+        _ => &["id", "title", "slug", "name"],
+    }
+}
+
+/// Strip a JSON value down to only the fields allowed for its entity type.
+fn compact_value(val: &serde_json::Value, entity_type: &str) -> serde_json::Value {
+    let Some(obj) = val.as_object() else {
+        return val.clone();
+    };
+    let keep = compact_keep_fields(entity_type);
+    let compacted: serde_json::Map<String, serde_json::Value> = obj
+        .iter()
+        .filter(|(k, _)| keep.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    serde_json::Value::Object(compacted)
+}
+
+/// Apply compact mode to a Vec of JSON values.
+fn compact_vec(items: &[serde_json::Value], entity_type: &str) -> Vec<serde_json::Value> {
+    items
+        .iter()
+        .map(|v| compact_value(v, entity_type))
+        .collect()
+}
+
+/// Check if a section is included (None means all sections included).
+fn section_included(sections: &Option<Vec<String>>, name: &str) -> bool {
+    match sections {
+        None => true,
+        Some(list) => list.iter().any(|s| s == name),
+    }
+}
+
 #[tool_router]
 impl OpsBrain {
     pub fn new(
@@ -1281,7 +1376,9 @@ impl OpsBrain {
         description = "THE KEY TOOL: Get comprehensive situational awareness for a server, service, or client. \
         Gathers all related data: entity details, related entities, recent incidents, pending handoffs, \
         relevant runbooks, vendor contacts, and knowledge entries. Provide at least one of server_slug, \
-        service_slug, or client_slug."
+        service_slug, or client_slug. Use compact=true to reduce response size (~94K→~10K) by stripping \
+        content/body fields — use drill-down tools for full details. Use sections to limit which parts \
+        are returned (e.g. [\"server\",\"services\",\"monitoring\"])."
     )]
     async fn get_situational_awareness(
         &self,
@@ -1294,6 +1391,9 @@ impl OpsBrain {
                 "Provide at least one of: server_slug, service_slug, or client_slug",
             ));
         }
+
+        let compact = p.compact.unwrap_or(false);
+        let sections = p.sections;
 
         let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
 
@@ -1770,6 +1870,68 @@ impl OpsBrain {
             }
         }
 
+        // Apply compact mode and sections filtering
+        if compact || sections.is_some() {
+            if compact {
+                if let Some(ref v) = awareness.server {
+                    awareness.server = Some(compact_value(v, "server"));
+                }
+                if let Some(ref v) = awareness.site {
+                    awareness.site = Some(compact_value(v, "site"));
+                }
+                if let Some(ref v) = awareness.client {
+                    awareness.client = Some(compact_value(v, "client"));
+                }
+                awareness.services = compact_vec(&awareness.services, "service");
+                awareness.networks = compact_vec(&awareness.networks, "network");
+                awareness.vendors = compact_vec(&awareness.vendors, "vendor");
+                awareness.recent_incidents = compact_vec(&awareness.recent_incidents, "incident");
+                awareness.relevant_runbooks = compact_vec(&awareness.relevant_runbooks, "runbook");
+                awareness.pending_handoffs = compact_vec(&awareness.pending_handoffs, "handoff");
+                awareness.knowledge = compact_vec(&awareness.knowledge, "knowledge");
+                awareness.monitoring = compact_vec(&awareness.monitoring, "monitor");
+                awareness.linked_tickets = compact_vec(&awareness.linked_tickets, "ticket");
+            }
+            if sections.is_some() {
+                if !section_included(&sections, "server") {
+                    awareness.server = None;
+                }
+                if !section_included(&sections, "site") {
+                    awareness.site = None;
+                }
+                if !section_included(&sections, "client") {
+                    awareness.client = None;
+                }
+                if !section_included(&sections, "services") {
+                    awareness.services.clear();
+                }
+                if !section_included(&sections, "networks") {
+                    awareness.networks.clear();
+                }
+                if !section_included(&sections, "vendors") {
+                    awareness.vendors.clear();
+                }
+                if !section_included(&sections, "incidents") {
+                    awareness.recent_incidents.clear();
+                }
+                if !section_included(&sections, "runbooks") {
+                    awareness.relevant_runbooks.clear();
+                }
+                if !section_included(&sections, "handoffs") {
+                    awareness.pending_handoffs.clear();
+                }
+                if !section_included(&sections, "knowledge") {
+                    awareness.knowledge.clear();
+                }
+                if !section_included(&sections, "monitoring") {
+                    awareness.monitoring.clear();
+                }
+                if !section_included(&sections, "tickets") {
+                    awareness.linked_tickets.clear();
+                }
+            }
+        }
+
         Ok(json_result(&awareness))
     }
 
@@ -1900,7 +2062,8 @@ impl OpsBrain {
     #[tool(
         name = "get_server_context",
         description = "Get everything about a specific server: details, services, site, networks, \
-        recent incidents for this server, related runbooks, and vendor contacts"
+        recent incidents for this server, related runbooks, and vendor contacts. \
+        Use compact=true to reduce response size. Use sections to limit which parts are returned."
     )]
     async fn get_server_context(
         &self,
@@ -1908,6 +2071,8 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
+        let compact = p.compact.unwrap_or(false);
+        let sections = p.sections;
 
         let server =
             match crate::repo::server_repo::get_server_by_slug(&self.pool, &p.server_slug).await {
@@ -2188,20 +2353,100 @@ impl OpsBrain {
             }
         }
 
-        let mut result = serde_json::json!({
-            "server": server,
-            "services": services,
-            "site": site,
-            "client": client,
-            "networks": networks,
-            "vendors": vendors,
-            "recent_incidents": all_incidents,
-            "runbooks": all_runbooks,
-            "knowledge": all_knowledge,
-            "monitoring": monitoring,
-        });
-        if !linked_tickets.is_empty() {
-            result["linked_tickets"] = serde_json::json!(linked_tickets);
+        let server_json = serde_json::to_value(&server).unwrap_or_default();
+        let site_json = serde_json::to_value(&site).unwrap_or_default();
+        let client_json = serde_json::to_value(&client).unwrap_or_default();
+        let services_json: Vec<serde_json::Value> = services
+            .iter()
+            .filter_map(|s| serde_json::to_value(s).ok())
+            .collect();
+        let networks_json: Vec<serde_json::Value> = networks
+            .iter()
+            .filter_map(|n| serde_json::to_value(n).ok())
+            .collect();
+        let vendors_json: Vec<serde_json::Value> = vendors
+            .iter()
+            .filter_map(|v| serde_json::to_value(v).ok())
+            .collect();
+
+        let mut result = serde_json::json!({});
+
+        if section_included(&sections, "server") {
+            result["server"] = if compact {
+                compact_value(&server_json, "server")
+            } else {
+                server_json
+            };
+        }
+        if section_included(&sections, "services") {
+            result["services"] = if compact {
+                serde_json::to_value(compact_vec(&services_json, "service")).unwrap_or_default()
+            } else {
+                serde_json::to_value(&services_json).unwrap_or_default()
+            };
+        }
+        if section_included(&sections, "site") {
+            result["site"] = if compact {
+                compact_value(&site_json, "site")
+            } else {
+                site_json
+            };
+        }
+        if section_included(&sections, "client") {
+            result["client"] = if compact {
+                compact_value(&client_json, "client")
+            } else {
+                client_json
+            };
+        }
+        if section_included(&sections, "networks") {
+            result["networks"] = if compact {
+                serde_json::to_value(compact_vec(&networks_json, "network")).unwrap_or_default()
+            } else {
+                serde_json::to_value(&networks_json).unwrap_or_default()
+            };
+        }
+        if section_included(&sections, "vendors") {
+            result["vendors"] = if compact {
+                serde_json::to_value(compact_vec(&vendors_json, "vendor")).unwrap_or_default()
+            } else {
+                serde_json::to_value(&vendors_json).unwrap_or_default()
+            };
+        }
+        if section_included(&sections, "incidents") {
+            result["recent_incidents"] = if compact {
+                serde_json::to_value(compact_vec(&all_incidents, "incident")).unwrap_or_default()
+            } else {
+                serde_json::to_value(&all_incidents).unwrap_or_default()
+            };
+        }
+        if section_included(&sections, "runbooks") {
+            result["runbooks"] = if compact {
+                serde_json::to_value(compact_vec(&all_runbooks, "runbook")).unwrap_or_default()
+            } else {
+                serde_json::to_value(&all_runbooks).unwrap_or_default()
+            };
+        }
+        if section_included(&sections, "knowledge") {
+            result["knowledge"] = if compact {
+                serde_json::to_value(compact_vec(&all_knowledge, "knowledge")).unwrap_or_default()
+            } else {
+                serde_json::to_value(&all_knowledge).unwrap_or_default()
+            };
+        }
+        if section_included(&sections, "monitoring") && !monitoring.is_empty() {
+            result["monitoring"] = if compact {
+                serde_json::to_value(compact_vec(&monitoring, "monitor")).unwrap_or_default()
+            } else {
+                serde_json::to_value(&monitoring).unwrap_or_default()
+            };
+        }
+        if section_included(&sections, "tickets") && !linked_tickets.is_empty() {
+            result["linked_tickets"] = if compact {
+                serde_json::to_value(compact_vec(&linked_tickets, "ticket")).unwrap_or_default()
+            } else {
+                serde_json::to_value(&linked_tickets).unwrap_or_default()
+            };
         }
         if !cross_client_withheld.is_empty() {
             result["cross_client_withheld"] = serde_json::json!(cross_client_withheld);
@@ -4598,5 +4843,106 @@ mod tests {
 
         // Unknown client_id — no provenance injected (no crash)
         assert!(item.get("_client_slug").is_none());
+    }
+
+    // ===== compact mode tests =====
+
+    #[test]
+    fn compact_runbook_strips_content() {
+        let runbook = serde_json::json!({
+            "id": Uuid::now_v7().to_string(),
+            "title": "Reboot procedure",
+            "slug": "reboot",
+            "category": "ops",
+            "content": "Very long content that should be stripped in compact mode...",
+            "client_id": Uuid::now_v7().to_string(),
+            "cross_client_safe": false,
+            "created_at": "2026-03-26T00:00:00Z",
+            "updated_at": "2026-03-26T00:00:00Z",
+        });
+
+        let compacted = compact_value(&runbook, "runbook");
+        assert!(compacted.get("id").is_some());
+        assert!(compacted.get("title").is_some());
+        assert!(compacted.get("slug").is_some());
+        assert!(compacted.get("category").is_some());
+        assert!(compacted.get("content").is_none()); // stripped
+        assert!(compacted.get("created_at").is_none()); // stripped
+    }
+
+    #[test]
+    fn compact_incident_keeps_key_fields() {
+        let incident = serde_json::json!({
+            "id": Uuid::now_v7().to_string(),
+            "title": "Server down",
+            "severity": "critical",
+            "status": "open",
+            "client_id": Uuid::now_v7().to_string(),
+            "reported_at": "2026-03-26T00:00:00Z",
+            "symptoms": "Long symptoms text...",
+            "root_cause": "Long root cause text...",
+            "resolution": "Long resolution text...",
+            "notes": "Long notes...",
+        });
+
+        let compacted = compact_value(&incident, "incident");
+        assert!(compacted.get("title").is_some());
+        assert!(compacted.get("severity").is_some());
+        assert!(compacted.get("status").is_some());
+        assert!(compacted.get("symptoms").is_none()); // stripped
+        assert!(compacted.get("root_cause").is_none()); // stripped
+        assert!(compacted.get("resolution").is_none()); // stripped
+        assert!(compacted.get("notes").is_none()); // stripped
+    }
+
+    #[test]
+    fn compact_knowledge_strips_content() {
+        let knowledge = serde_json::json!({
+            "id": Uuid::now_v7().to_string(),
+            "title": "DNS gotcha",
+            "category": "networking",
+            "content": "Very long knowledge content...",
+            "client_id": null,
+        });
+
+        let compacted = compact_value(&knowledge, "knowledge");
+        assert!(compacted.get("title").is_some());
+        assert!(compacted.get("category").is_some());
+        assert!(compacted.get("content").is_none());
+    }
+
+    #[test]
+    fn compact_vec_applies_to_all() {
+        let items = vec![
+            serde_json::json!({"id": "1", "title": "A", "content": "long"}),
+            serde_json::json!({"id": "2", "title": "B", "content": "long"}),
+        ];
+        let compacted = compact_vec(&items, "knowledge");
+        assert_eq!(compacted.len(), 2);
+        for item in &compacted {
+            assert!(item.get("content").is_none());
+        }
+    }
+
+    #[test]
+    fn compact_non_object_returns_clone() {
+        let val = serde_json::json!("just a string");
+        let compacted = compact_value(&val, "runbook");
+        assert_eq!(compacted, val);
+    }
+
+    #[test]
+    fn section_included_none_means_all() {
+        assert!(section_included(&None, "server"));
+        assert!(section_included(&None, "anything"));
+    }
+
+    #[test]
+    fn section_included_filters() {
+        let sections = Some(vec!["server".to_string(), "monitoring".to_string()]);
+        assert!(section_included(&sections, "server"));
+        assert!(section_included(&sections, "monitoring"));
+        assert!(!section_included(&sections, "knowledge"));
+        assert!(!section_included(&sections, "runbooks"));
     }
 }
