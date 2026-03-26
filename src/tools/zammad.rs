@@ -1,6 +1,9 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use super::helpers::{error_result, json_result, not_found};
+use rmcp::model::*;
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListTicketsParams {
     /// Client slug to filter tickets by Zammad organization
@@ -93,4 +96,345 @@ pub struct LinkTicketParams {
 pub struct UnlinkTicketParams {
     /// Zammad ticket ID to unlink
     pub zammad_ticket_id: i64,
+}
+
+// ===== HANDLERS =====
+
+pub(crate) async fn handle_list_tickets(
+    brain: &super::OpsBrain,
+    p: ListTicketsParams,
+) -> CallToolResult {
+    let zammad = match &brain.zammad_config {
+        Some(c) => c,
+        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
+    };
+
+    let client =
+        match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return not_found("Client", &p.client_slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+
+    let org_id = match client.zammad_org_id {
+        Some(id) => id,
+        None => {
+            return error_result(&format!(
+            "Client '{}' has no Zammad org ID configured. Use upsert_client to set zammad_org_id.",
+            p.client_slug
+        ))
+        }
+    };
+
+    let mut query_parts = vec![format!("organization.id:{org_id}")];
+    if let Some(ref state) = p.state {
+        query_parts.push(format!("state.name:{state}"));
+    }
+    if let Some(ref priority) = p.priority {
+        query_parts.push(format!("priority.name:\"{priority}\""));
+    }
+    let query = query_parts.join(" AND ");
+    let limit = p.limit.unwrap_or(20);
+
+    match crate::zammad::search_tickets(zammad, &query, limit).await {
+        Ok(tickets) => {
+            let result = serde_json::json!({
+                "count": tickets.len(),
+                "client": p.client_slug,
+                "tickets": tickets,
+            });
+            json_result(&result)
+        }
+        Err(e) => error_result(&e),
+    }
+}
+
+pub(crate) async fn handle_get_ticket(
+    brain: &super::OpsBrain,
+    p: GetTicketParams,
+) -> CallToolResult {
+    let zammad = match &brain.zammad_config {
+        Some(c) => c,
+        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
+    };
+
+    let ticket = match crate::zammad::get_ticket(zammad, p.ticket_id).await {
+        Ok(t) => t,
+        Err(e) => return error_result(&e),
+    };
+
+    let articles = match crate::zammad::get_ticket_articles(zammad, p.ticket_id).await {
+        Ok(a) => a,
+        Err(e) => return error_result(&e),
+    };
+
+    let link =
+        crate::repo::ticket_link_repo::get_link_by_ticket_id(&brain.pool, p.ticket_id as i32)
+            .await
+            .ok()
+            .flatten();
+
+    let result = serde_json::json!({
+        "ticket": ticket,
+        "articles": articles,
+        "ops_brain_link": link,
+    });
+    json_result(&result)
+}
+
+pub(crate) async fn handle_create_ticket(
+    brain: &super::OpsBrain,
+    p: CreateTicketParams,
+) -> CallToolResult {
+    let zammad = match &brain.zammad_config {
+        Some(c) => c,
+        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
+    };
+
+    let client =
+        match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return not_found("Client", &p.client_slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+
+    let (group_id, customer_id, org_id) = match (client.zammad_group_id, client.zammad_customer_id, client.zammad_org_id) {
+        (Some(g), Some(c), org) => (g as i64, c as i64, org.map(|o| o as i64)),
+        _ => return error_result(&format!(
+            "Client '{}' missing Zammad IDs. Set zammad_group_id and zammad_customer_id via upsert_client.",
+            p.client_slug
+        )),
+    };
+
+    let state_id = match &p.state {
+        Some(s) => match crate::zammad::state_name_to_id(s) {
+            Some(id) => Some(id),
+            None => {
+                return error_result(&format!(
+                    "Unknown state: '{s}'. Use: new, open, pending_reminder, closed"
+                ))
+            }
+        },
+        None => None,
+    };
+
+    let priority_id = match &p.priority {
+        Some(pr) => match crate::zammad::priority_name_to_id(pr) {
+            Some(id) => Some(id),
+            None => {
+                return error_result(&format!("Unknown priority: '{pr}'. Use: low, normal, high"))
+            }
+        },
+        None => None,
+    };
+
+    let payload = crate::zammad::CreateTicketPayload {
+        title: p.title,
+        group_id,
+        customer_id,
+        organization_id: org_id,
+        state_id,
+        priority_id,
+        owner_id: Some(3), // Eduardo
+        tags: p.tags,
+        article: crate::zammad::CreateArticleInline {
+            body: p.body,
+            content_type: Some("text/plain".to_string()),
+            article_type: Some("note".to_string()),
+            internal: Some(false),
+            time_unit: p.time_unit,
+            time_accounting_type_id: p.time_accounting_type_id,
+        },
+    };
+
+    let ticket = match crate::zammad::create_ticket(zammad, &payload).await {
+        Ok(t) => t,
+        Err(e) => return error_result(&e),
+    };
+
+    // Auto-link to incident if provided
+    if let Some(ref incident_id_str) = p.incident_id {
+        if let Ok(incident_id) = uuid::Uuid::parse_str(incident_id_str) {
+            let _ = crate::repo::ticket_link_repo::create_link(
+                &brain.pool,
+                ticket.id as i32,
+                Some(incident_id),
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
+    }
+
+    json_result(&ticket)
+}
+
+pub(crate) async fn handle_update_ticket(
+    brain: &super::OpsBrain,
+    p: UpdateTicketParams,
+) -> CallToolResult {
+    let zammad = match &brain.zammad_config {
+        Some(c) => c,
+        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
+    };
+
+    let state_id = match &p.state {
+        Some(s) => match crate::zammad::state_name_to_id(s) {
+            Some(id) => Some(id),
+            None => {
+                return error_result(&format!(
+                    "Unknown state: '{s}'. Use: new, open, pending_reminder, closed"
+                ))
+            }
+        },
+        None => None,
+    };
+
+    let priority_id = match &p.priority {
+        Some(pr) => match crate::zammad::priority_name_to_id(pr) {
+            Some(id) => Some(id),
+            None => {
+                return error_result(&format!("Unknown priority: '{pr}'. Use: low, normal, high"))
+            }
+        },
+        None => None,
+    };
+
+    let payload = crate::zammad::UpdateTicketPayload {
+        title: p.title,
+        state_id,
+        priority_id,
+        owner_id: None,
+    };
+
+    match crate::zammad::update_ticket(zammad, p.ticket_id, &payload).await {
+        Ok(ticket) => json_result(&ticket),
+        Err(e) => error_result(&e),
+    }
+}
+
+pub(crate) async fn handle_add_ticket_note(
+    brain: &super::OpsBrain,
+    p: AddTicketNoteParams,
+) -> CallToolResult {
+    let zammad = match &brain.zammad_config {
+        Some(c) => c,
+        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
+    };
+
+    let payload = crate::zammad::CreateArticlePayload {
+        ticket_id: p.ticket_id,
+        body: p.body,
+        content_type: Some("text/plain".to_string()),
+        article_type: Some("note".to_string()),
+        internal: Some(p.internal.unwrap_or(true)),
+        time_unit: p.time_unit,
+        time_accounting_type_id: p.time_accounting_type_id,
+    };
+
+    match crate::zammad::add_ticket_article(zammad, &payload).await {
+        Ok(article) => json_result(&article),
+        Err(e) => error_result(&e),
+    }
+}
+
+pub(crate) async fn handle_search_tickets(
+    brain: &super::OpsBrain,
+    p: SearchTicketsParams,
+) -> CallToolResult {
+    let zammad = match &brain.zammad_config {
+        Some(c) => c,
+        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
+    };
+    let limit = p.limit.unwrap_or(20);
+
+    match crate::zammad::search_tickets(zammad, &p.query, limit).await {
+        Ok(tickets) => {
+            let result = serde_json::json!({
+                "count": tickets.len(),
+                "query": p.query,
+                "tickets": tickets,
+            });
+            json_result(&result)
+        }
+        Err(e) => error_result(&e),
+    }
+}
+
+pub(crate) async fn handle_link_ticket(
+    brain: &super::OpsBrain,
+    p: LinkTicketParams,
+) -> CallToolResult {
+    if p.incident_id.is_none() && p.server_slug.is_none() && p.service_slug.is_none() {
+        return error_result(
+            "At least one of incident_id, server_slug, or service_slug must be provided",
+        );
+    }
+
+    let incident_id = match &p.incident_id {
+        Some(id_str) => match uuid::Uuid::parse_str(id_str) {
+            Ok(id) => match crate::repo::incident_repo::get_incident(&brain.pool, id).await {
+                Ok(Some(_)) => Some(id),
+                Ok(None) => return not_found("Incident", id_str),
+                Err(e) => return error_result(&format!("Database error: {e}")),
+            },
+            Err(_) => return error_result(&format!("Invalid incident UUID: {}", id_str)),
+        },
+        None => None,
+    };
+
+    let server_id = match &p.server_slug {
+        Some(slug) => match crate::repo::server_repo::get_server_by_slug(&brain.pool, slug).await {
+            Ok(Some(s)) => Some(s.id),
+            Ok(None) => return not_found("Server", slug),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+
+    let service_id = match &p.service_slug {
+        Some(slug) => {
+            match crate::repo::service_repo::get_service_by_slug(&brain.pool, slug).await {
+                Ok(Some(s)) => Some(s.id),
+                Ok(None) => return not_found("Service", slug),
+                Err(e) => return error_result(&format!("Database error: {e}")),
+            }
+        }
+        None => None,
+    };
+
+    match crate::repo::ticket_link_repo::create_link(
+        &brain.pool,
+        p.zammad_ticket_id as i32,
+        incident_id,
+        server_id,
+        service_id,
+        p.notes.as_deref(),
+    )
+    .await
+    {
+        Ok(link) => json_result(&link),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_unlink_ticket(
+    brain: &super::OpsBrain,
+    p: UnlinkTicketParams,
+) -> CallToolResult {
+    match crate::repo::ticket_link_repo::delete_link(&brain.pool, p.zammad_ticket_id as i32).await {
+        Ok(true) => {
+            let result = serde_json::json!({
+                "status": "unlinked",
+                "zammad_ticket_id": p.zammad_ticket_id,
+            });
+            json_result(&result)
+        }
+        Ok(false) => error_result(&format!(
+            "No link found for Zammad ticket {}",
+            p.zammad_ticket_id
+        )),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
 }
