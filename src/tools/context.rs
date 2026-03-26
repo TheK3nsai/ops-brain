@@ -173,6 +173,7 @@ pub(crate) async fn handle_get_situational_awareness(
                 Some(server.id),
                 None,
                 None,
+                200,
             )
             .await
             {
@@ -232,6 +233,7 @@ pub(crate) async fn handle_get_situational_awareness(
                 None,
                 None,
                 None,
+                200,
             )
             .await
             {
@@ -273,7 +275,7 @@ pub(crate) async fn handle_get_situational_awareness(
 
         // Get knowledge for this client
         if let Ok(entries) =
-            crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid)).await
+            crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100).await
         {
             awareness.knowledge = entries
                 .iter()
@@ -313,7 +315,7 @@ pub(crate) async fn handle_get_situational_awareness(
 
     // Also add general knowledge (not client-specific)
     if let Ok(general_knowledge) =
-        crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None).await
+        crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None, 100).await
     {
         for entry in &general_knowledge {
             if let Ok(val) = serde_json::to_value(entry) {
@@ -601,7 +603,7 @@ pub(crate) async fn handle_get_client_overview(
         .unwrap_or_default();
 
     let servers =
-        crate::repo::server_repo::list_servers(&brain.pool, Some(client.id), None, None, None)
+        crate::repo::server_repo::list_servers(&brain.pool, Some(client.id), None, None, None, 200)
             .await
             .unwrap_or_default();
 
@@ -773,6 +775,7 @@ pub(crate) async fn handle_get_server_context(
         Some(server.id),
         None,
         None,
+        200,
     )
     .await
     .unwrap_or_default();
@@ -793,6 +796,7 @@ pub(crate) async fn handle_get_server_context(
             None,
             None,
             None,
+            200,
         )
         .await
         {
@@ -808,7 +812,7 @@ pub(crate) async fn handle_get_server_context(
 
     // Get knowledge entries for this client
     let mut all_knowledge: Vec<serde_json::Value> = if let Some(cid) = client_id {
-        crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid))
+        crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100)
             .await
             .unwrap_or_default()
             .iter()

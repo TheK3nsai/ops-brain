@@ -23,6 +23,7 @@ pub async fn list_servers(
     site_id: Option<Uuid>,
     role: Option<&str>,
     status: Option<&str>,
+    limit: i64,
 ) -> Result<Vec<Server>, sqlx::Error> {
     let mut query = String::from("SELECT s.* FROM servers s");
     let mut conditions: Vec<String> = Vec::new();
@@ -43,7 +44,7 @@ pub async fn list_servers(
     }
     if status.is_some() {
         conditions.push(format!("s.status = ${param_idx}"));
-        let _ = param_idx; // last one, no need to increment
+        param_idx += 1;
     }
 
     if !conditions.is_empty() {
@@ -51,6 +52,7 @@ pub async fn list_servers(
         query.push_str(&conditions.join(" AND "));
     }
     query.push_str(" ORDER BY s.hostname");
+    query.push_str(&format!(" LIMIT ${param_idx}"));
 
     let mut q = sqlx::query_as::<_, Server>(&query);
     if let Some(v) = client_id {
@@ -65,6 +67,7 @@ pub async fn list_servers(
     if let Some(v) = status {
         q = q.bind(v);
     }
+    q = q.bind(limit);
 
     q.fetch_all(pool).await
 }

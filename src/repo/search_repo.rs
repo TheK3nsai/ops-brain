@@ -18,55 +18,65 @@ pub struct SearchResults {
     pub handoffs: Vec<Handoff>,
 }
 
-pub async fn search_inventory(pool: &PgPool, query: &str) -> Result<SearchResults, sqlx::Error> {
+pub async fn search_inventory(
+    pool: &PgPool,
+    query: &str,
+    limit_per_type: i64,
+) -> Result<SearchResults, sqlx::Error> {
     let (servers, services, runbooks, knowledge, incidents, handoffs) = tokio::try_join!(
         sqlx::query_as::<_, Server>(
             "SELECT * FROM servers
              WHERE search_vector @@ plainto_tsquery('english', $1)
              ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-             LIMIT 10"
+             LIMIT $2"
         )
         .bind(query)
+        .bind(limit_per_type)
         .fetch_all(pool),
         sqlx::query_as::<_, Service>(
             "SELECT * FROM services
              WHERE search_vector @@ plainto_tsquery('english', $1)
              ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-             LIMIT 10"
+             LIMIT $2"
         )
         .bind(query)
+        .bind(limit_per_type)
         .fetch_all(pool),
         sqlx::query_as::<_, Runbook>(
             "SELECT * FROM runbooks
              WHERE search_vector @@ plainto_tsquery('english', $1)
              ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-             LIMIT 10"
+             LIMIT $2"
         )
         .bind(query)
+        .bind(limit_per_type)
         .fetch_all(pool),
         sqlx::query_as::<_, Knowledge>(
             "SELECT * FROM knowledge
              WHERE search_vector @@ plainto_tsquery('english', $1)
              ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-             LIMIT 10"
+             LIMIT $2"
         )
         .bind(query)
+        .bind(limit_per_type)
         .fetch_all(pool),
         sqlx::query_as::<_, Incident>(
             "SELECT * FROM incidents
              WHERE search_vector @@ plainto_tsquery('english', $1)
              ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-             LIMIT 10"
+             LIMIT $2"
         )
         .bind(query)
+        .bind(limit_per_type)
         .fetch_all(pool),
         sqlx::query_as::<_, Handoff>(
             "SELECT * FROM handoffs
              WHERE search_vector @@ plainto_tsquery('english', $1)
              ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-             LIMIT 10"
+             LIMIT $2"
         )
         .bind(query)
+        .bind(limit_per_type)
         .fetch_all(pool),
     )?;
 
@@ -80,13 +90,19 @@ pub async fn search_inventory(pool: &PgPool, query: &str) -> Result<SearchResult
     })
 }
 
-pub async fn search_runbooks(pool: &PgPool, query: &str) -> Result<Vec<Runbook>, sqlx::Error> {
+pub async fn search_runbooks(
+    pool: &PgPool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<Runbook>, sqlx::Error> {
     sqlx::query_as::<_, Runbook>(
         "SELECT * FROM runbooks
          WHERE search_vector @@ plainto_tsquery('english', $1)
-         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC",
+         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+         LIMIT $2",
     )
     .bind(query)
+    .bind(limit)
     .fetch_all(pool)
     .await
 }

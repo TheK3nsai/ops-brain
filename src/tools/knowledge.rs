@@ -27,6 +27,8 @@ pub struct SearchKnowledgeParams {
     pub client_slug: Option<String>,
     /// Set to true to release cross-client results that were withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
+    /// Max results (default 20)
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -51,6 +53,8 @@ pub struct DeleteKnowledgeParams {
 pub struct ListKnowledgeParams {
     pub category: Option<String>,
     pub client_slug: Option<String>,
+    /// Max results (default 50)
+    pub limit: Option<i64>,
 }
 
 // ===== HANDLERS =====
@@ -180,12 +184,13 @@ pub(crate) async fn handle_search_knowledge(
     };
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
 
+    let limit = p.limit.unwrap_or(20);
     let result = match mode {
         "semantic" => {
             let Some(emb) = get_query_embedding(&brain.embedding_client, &p.query).await else {
                 return error_result("Semantic search unavailable (OPENAI_API_KEY not set)");
             };
-            crate::repo::embedding_repo::vector_search_knowledge(&brain.pool, &emb, 20).await
+            crate::repo::embedding_repo::vector_search_knowledge(&brain.pool, &emb, limit).await
         }
         "hybrid" => {
             let emb = get_query_embedding(&brain.embedding_client, &p.query).await;
@@ -193,11 +198,11 @@ pub(crate) async fn handle_search_knowledge(
                 &brain.pool,
                 &p.query,
                 emb.as_deref(),
-                20,
+                limit,
             )
             .await
         }
-        _ => crate::repo::knowledge_repo::search_knowledge(&brain.pool, &p.query).await,
+        _ => crate::repo::knowledge_repo::search_knowledge(&brain.pool, &p.query, limit).await,
     };
     match result {
         Ok(entries) => {
@@ -247,8 +252,14 @@ pub(crate) async fn handle_list_knowledge(
         None => None,
     };
 
-    match crate::repo::knowledge_repo::list_knowledge(&brain.pool, p.category.as_deref(), client_id)
-        .await
+    let limit = p.limit.unwrap_or(50);
+    match crate::repo::knowledge_repo::list_knowledge(
+        &brain.pool,
+        p.category.as_deref(),
+        client_id,
+        limit,
+    )
+    .await
     {
         Ok(entries) => json_result(&entries),
         Err(e) => error_result(&format!("Database error: {e}")),

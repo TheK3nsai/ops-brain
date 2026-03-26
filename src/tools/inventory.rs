@@ -23,6 +23,8 @@ pub struct ListServersParams {
     pub role: Option<String>,
     /// Filter by status (e.g., "active", "decommissioned")
     pub status: Option<String>,
+    /// Max results (default 50)
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -35,6 +37,8 @@ pub struct GetServiceParams {
 pub struct ListServicesParams {
     /// Filter by category
     pub category: Option<String>,
+    /// Max results (default 50)
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -67,6 +71,8 @@ pub struct GetVendorParams {
 pub struct SearchInventoryParams {
     /// Search query
     pub query: String,
+    /// Max results per entity type (default 10)
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -220,12 +226,14 @@ pub(crate) async fn handle_list_servers(
         },
         None => None,
     };
+    let limit = p.limit.unwrap_or(50);
     match crate::repo::server_repo::list_servers(
         &brain.pool,
         client_id,
         site_id,
         p.role.as_deref(),
         p.status.as_deref(),
+        limit,
     )
     .await
     {
@@ -257,7 +265,9 @@ pub(crate) async fn handle_list_services(
     brain: &super::OpsBrain,
     p: ListServicesParams,
 ) -> CallToolResult {
-    match crate::repo::service_repo::list_services(&brain.pool, p.category.as_deref()).await {
+    let limit = p.limit.unwrap_or(50);
+    match crate::repo::service_repo::list_services(&brain.pool, p.category.as_deref(), limit).await
+    {
         Ok(services) => json_result(&services),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
@@ -270,7 +280,7 @@ pub(crate) async fn handle_get_site(brain: &super::OpsBrain, p: GetSiteParams) -
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
     let servers =
-        crate::repo::server_repo::list_servers(&brain.pool, None, Some(site.id), None, None)
+        crate::repo::server_repo::list_servers(&brain.pool, None, Some(site.id), None, None, 200)
             .await
             .unwrap_or_default();
     let networks = crate::repo::network_repo::list_networks(&brain.pool, Some(site.id))
@@ -339,7 +349,8 @@ pub(crate) async fn handle_search_inventory(
     brain: &super::OpsBrain,
     p: SearchInventoryParams,
 ) -> CallToolResult {
-    match crate::repo::search_repo::search_inventory(&brain.pool, &p.query).await {
+    let limit = p.limit.unwrap_or(10);
+    match crate::repo::search_repo::search_inventory(&brain.pool, &p.query, limit).await {
         Ok(results) => json_result(&results),
         Err(e) => error_result(&format!("Search error: {e}")),
     }
