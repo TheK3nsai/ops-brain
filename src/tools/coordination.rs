@@ -86,6 +86,19 @@ pub struct SearchHandoffsParams {
     pub limit: Option<i64>,
 }
 
+// ===== CATCHUP PARAMS =====
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCatchupParams {
+    /// ISO 8601 timestamp — show changes since this time (e.g. "2026-03-25T00:00:00Z")
+    pub since: String,
+    /// Filter to a specific machine (optional)
+    pub machine: Option<String>,
+    /// Max results per category (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
+    pub limit: Option<i64>,
+}
+
 // ===== SESSION HANDLERS =====
 
 pub(crate) async fn handle_start_session(
@@ -300,4 +313,148 @@ pub(crate) async fn handle_search_handoffs(
         Ok(handoffs) => json_result(&handoffs),
         Err(e) => error_result(&format!("Search error: {e}")),
     }
+}
+
+// ===== CATCHUP HANDLER =====
+
+pub(crate) async fn handle_get_catchup(
+    brain: &super::OpsBrain,
+    p: GetCatchupParams,
+) -> CallToolResult {
+    let since = match chrono::DateTime::parse_from_rfc3339(&p.since) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(_) => {
+            return error_result(&format!(
+                "Invalid timestamp '{}'. Use ISO 8601 format (e.g. 2026-03-25T00:00:00Z)",
+                p.since
+            ))
+        }
+    };
+    let limit = p.limit.unwrap_or(20);
+
+    let mut results = serde_json::Map::new();
+
+    // New/updated handoffs since timestamp
+    let handoffs = sqlx::query_as::<_, crate::models::handoff::Handoff>(
+        "SELECT * FROM handoffs WHERE updated_at > $1 ORDER BY updated_at DESC LIMIT $2",
+    )
+    .bind(since)
+    .bind(limit)
+    .fetch_all(&brain.pool)
+    .await;
+
+    match handoffs {
+        Ok(items) => {
+            // Optionally filter by machine
+            let filtered: Vec<_> = if let Some(ref machine) = p.machine {
+                items
+                    .into_iter()
+                    .filter(|h| {
+                        h.to_machine.as_deref() == Some(machine.as_str())
+                            || h.from_machine == *machine
+                    })
+                    .collect()
+            } else {
+                items
+            };
+            results.insert(
+                "handoffs".to_string(),
+                serde_json::json!({
+                    "count": filtered.len(),
+                    "items": filtered,
+                }),
+            );
+        }
+        Err(e) => {
+            results.insert(
+                "handoffs_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+        }
+    }
+
+    // New/updated incidents since timestamp
+    let incidents = sqlx::query_as::<_, crate::models::incident::Incident>(
+        "SELECT * FROM incidents WHERE updated_at > $1 ORDER BY updated_at DESC LIMIT $2",
+    )
+    .bind(since)
+    .bind(limit)
+    .fetch_all(&brain.pool)
+    .await;
+
+    match incidents {
+        Ok(items) => {
+            results.insert(
+                "incidents".to_string(),
+                serde_json::json!({
+                    "count": items.len(),
+                    "items": items,
+                }),
+            );
+        }
+        Err(e) => {
+            results.insert(
+                "incidents_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+        }
+    }
+
+    // New/updated knowledge since timestamp
+    let knowledge = sqlx::query_as::<_, crate::models::knowledge::Knowledge>(
+        "SELECT * FROM knowledge WHERE updated_at > $1 ORDER BY updated_at DESC LIMIT $2",
+    )
+    .bind(since)
+    .bind(limit)
+    .fetch_all(&brain.pool)
+    .await;
+
+    match knowledge {
+        Ok(items) => {
+            results.insert(
+                "knowledge".to_string(),
+                serde_json::json!({
+                    "count": items.len(),
+                    "items": items,
+                }),
+            );
+        }
+        Err(e) => {
+            results.insert(
+                "knowledge_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+        }
+    }
+
+    // New/updated runbooks since timestamp
+    let runbooks = sqlx::query_as::<_, crate::models::runbook::Runbook>(
+        "SELECT * FROM runbooks WHERE updated_at > $1 ORDER BY updated_at DESC LIMIT $2",
+    )
+    .bind(since)
+    .bind(limit)
+    .fetch_all(&brain.pool)
+    .await;
+
+    match runbooks {
+        Ok(items) => {
+            results.insert(
+                "runbooks".to_string(),
+                serde_json::json!({
+                    "count": items.len(),
+                    "items": items,
+                }),
+            );
+        }
+        Err(e) => {
+            results.insert(
+                "runbooks_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+        }
+    }
+
+    results.insert("since".to_string(), serde_json::Value::String(p.since));
+
+    json_result(&serde_json::Value::Object(results))
 }

@@ -12,7 +12,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
-## Tools (68)
+## Tools (71)
 
 ### Inventory (22)
 | Tool | Description |
@@ -32,12 +32,14 @@ get_situational_awareness(server_slug: "hvfs0")
 | `delete_service` | Soft-delete service by slug with preview + confirm safety gate |
 | `delete_vendor` | Soft-delete vendor by name or ID with preview + confirm safety gate |
 
-### Runbooks (5)
+### Runbooks (7)
 | Tool | Description |
 |------|-------------|
 | `get_runbook` / `list_runbooks` | Retrieve by slug or filter by category/service/server/tag/client. Configurable `limit` |
 | `search_runbooks` | Search runbook content (mode: fts/semantic/hybrid). Configurable `limit`. Supports `client_slug` scoping + `acknowledge_cross_client` gate |
 | `create_runbook` / `update_runbook` | CRUD with auto-versioning. Supports `client_slug` ownership + `cross_client_safe` flag |
+| `log_runbook_execution` | Record when a runbook was executed — who, result, duration, notes. Compliance audit trail |
+| `list_runbook_executions` | List execution history for a runbook or across all runbooks |
 
 ### Knowledge (3)
 | Tool | Description |
@@ -70,7 +72,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `end_session` | End a session with an optional summary |
 | `list_sessions` | List sessions, filter by machine or active status |
 
-### Handoffs (5)
+### Handoffs (6)
 | Tool | Description |
 |------|-------------|
 | `create_handoff` | Create a task for another machine/session to pick up |
@@ -78,8 +80,9 @@ get_situational_awareness(server_slug: "hvfs0")
 | `complete_handoff` | Mark a handoff as done |
 | `list_handoffs` | Filter by status, source/target machine |
 | `search_handoffs` | Search handoffs (mode: fts/semantic/hybrid). Configurable `limit` |
+| `get_catchup` | See what changed since a given timestamp — new/updated handoffs, incidents, knowledge, runbooks |
 
-### Monitoring (6)
+### Monitoring (7)
 | Tool | Description |
 |------|-------------|
 | `list_monitors` | All Uptime Kuma monitors with live status, filterable by up/down/pending/maintenance |
@@ -88,6 +91,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service |
 | `unlink_monitor` | Remove a monitor-to-entity mapping |
 | `list_watchdog_incidents` | List incidents auto-created by the proactive monitoring watchdog, filterable by status |
+| `check_health` | Quick server health check — returns HEALTHY/DOWN/UNKNOWN based on linked Uptime Kuma monitors |
 
 ### Zammad Ticketing (8)
 | Tool | Description |
@@ -108,11 +112,12 @@ get_situational_awareness(server_slug: "hvfs0")
 | `list_briefings` | List previously generated briefings, filterable by type and client |
 | `get_briefing` | Retrieve a specific briefing by ID |
 
-### Semantic Search (2)
+### Semantic Search (1)
 | Tool | Description |
 |------|-------------|
-| `semantic_search` | AI-powered cross-table search — finds conceptually related content. Supports `client_slug` scoping + `acknowledge_cross_client` gate for runbooks/knowledge/incidents |
 | `backfill_embeddings` | Generate embeddings for existing records (batch, with progress reporting) |
+
+> **Note:** `semantic_search` was merged into `search_knowledge` (Phase 10). Use `search_knowledge` with `tables=["knowledge","runbooks","incidents","handoffs"]` for cross-table semantic search.
 
 ## REST API
 
@@ -334,6 +339,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools (before Phase 9 additions)
 
 - [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge/incidents), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions, `compact` mode + `sections` filtering for context tools — 68 tools (incl. list_vendors, list_clients, list_sites, list_networks)
+- [x] **Phase 10**: CC-HSR assessment response — merged `semantic_search` into `search_knowledge` (multi-table via `tables` param), new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail), `runbook_executions` migration — 71 tools
 
 **Post-phase improvements:**
 

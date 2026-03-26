@@ -23,7 +23,7 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct + 68 #[tool] stubs (delegate to category modules)
+    mod.rs           # OpsBrain struct + 71 #[tool] stubs (delegate to category modules)
     helpers.rs       # Shared helpers: json_result, error_result, not_found_with_suggestions, filter_cross_client, compact_*, etc.
     shared.rs        # Shared async functions: embed_and_store, get_query_embedding, build_client_lookup, log_audit_entries
     inventory.rs     # Parameter structs + handler implementations for inventory tools (22 tools)
@@ -116,11 +116,12 @@ sqlx migrate info          # Show migration status
 - **Phase 2** (remote deploy): COMPLETE — HTTP transport + auth, deployed to kensai.cloud
 - **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
 - **Phase 4** (monitoring integration): COMPLETE & DEPLOYED — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data. All 32 monitors linked. Uptime Kuma admin creds configured in production .env.
-- **Phase 5** (semantic search): COMPLETE & DEPLOYED — 2 new tools (semantic_search, backfill_embeddings), 47 total. pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data. All seed data backfilled (local + remote).
+- **Phase 5** (semantic search): COMPLETE & DEPLOYED — pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data. All seed data backfilled (local + remote). Note: `semantic_search` was merged into `search_knowledge` in Phase 10.
 - **Phase 6** (proactive monitoring): COMPLETE & DEPLOYED — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
 - **Phase 7** (Zammad integration): COMPLETE — 8 new tools (list_tickets, get_ticket, create_ticket, update_ticket, add_ticket_note, search_tickets, link_ticket, unlink_ticket), 56 total. Live Zammad REST API queries via Token auth. Client mapping (zammad_org_id/group_id/customer_id on clients table). ticket_links table for linking tickets to incidents/servers/services. Context tools enriched with ticket data (get_client_overview shows recent tickets, get_situational_awareness and get_server_context show linked tickets). Env: `ZAMMAD_URL`, `ZAMMAD_API_TOKEN`.
 - **Phase 8** (scheduled briefings): COMPLETE & DEPLOYED — 3 new tools (generate_briefing, list_briefings, get_briefing), 59 total. REST API at `POST /api/briefing` (shared logic in `src/api.rs`). Aggregates monitoring health, open incidents (by severity), watchdog alerts, pending handoffs, and Zammad ticket activity into structured markdown summaries. Daily and weekly types. Weekly includes resolved incident stats (count, avg TTR) and watchdog auto-resolved count. Briefings stored in `briefings` table for historical review. Scheduled triggers deliver via Gmail: daily at 6 AM PR, weekly Monday 6 AM PR.
 - **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge/incidents, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping, `compact` mode + `sections` filtering for context tools. 68 tools (59 base + update_knowledge + delete_knowledge + delete_server + delete_service + delete_vendor + list_vendors + list_clients + list_sites + list_networks).
+- **Phase 10** (CC-HSR assessment response): COMPLETE — Merged `semantic_search` into `search_knowledge` (add `tables` param for multi-table search). 4 new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail). New migration: `runbook_executions` table. 71 tools total.
 
 ## Safety Design Principles (Phase 9 — Implemented)
 
@@ -152,7 +153,7 @@ Since there is no second pair of eyes, the system itself must act as the safety 
 - `get_server_context` — gates runbooks, knowledge, and incidents via resolved client_id
 - `search_runbooks` — optional `client_slug` + `acknowledge_cross_client` params
 - `search_knowledge` — optional `client_slug` + `acknowledge_cross_client` params
-- `semantic_search` — gates runbook, knowledge, and incident results (handoffs not gated — no client_id)
+- `search_knowledge` (multi-table mode) — gates runbook, knowledge, and incident results (handoffs not gated — no client_id)
 - `list_runbooks` — optional `client_slug` filter (DB-level, shows client + global)
 - `create_runbook` — optional `client_slug` + `cross_client_safe` params
 - `update_runbook` — optional `cross_client_safe` param
@@ -278,7 +279,8 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Tables**: runbooks, knowledge, incidents, handoffs
 - **Auto-embed**: create/update tools generate embeddings best-effort (graceful on failure)
 - **Backfill**: `backfill_embeddings` tool for existing data without embeddings
-- **Graceful degradation**: If embedding API unreachable, all FTS works unchanged. semantic_search falls back to FTS-only.
+- **Graceful degradation**: If embedding API unreachable, all FTS works unchanged. `search_knowledge` with hybrid mode falls back to FTS-only.
+- **`semantic_search` merged into `search_knowledge`** (Phase 10): Use `tables` param to search across multiple tables. Default is `["knowledge"]`; set `tables=["knowledge","runbooks","incidents","handoffs"]` for cross-table search. Mode defaults to `"hybrid"` for multi-table.
 - **Context enrichment**: `get_situational_awareness` and `get_server_context` use vector search to find related runbooks/knowledge beyond explicit links
 - **pgvector crate**: `pgvector 0.4` with `sqlx` feature for `Vector` type
 - **Local**: ollama service on stealth (RTX 3070, GPU-accelerated)

@@ -7,6 +7,7 @@ pub mod knowledge;
 pub mod monitor;
 pub mod network;
 pub mod runbook;
+pub mod runbook_execution;
 pub mod server;
 pub mod service;
 pub mod session;
