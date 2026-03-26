@@ -879,10 +879,18 @@ impl ServerHandler for OpsBrain {
                  your client scope (list_incidents). Address P1 handoffs before other work. \
                  If the user leads with a direct task, handle it first — check handoffs \
                  and incidents when there's a natural pause. \
+                 SESSIONS: start_session/end_session are OPTIONAL. Only use them when \
+                 accepting a handoff, creating a handoff, or doing long work with cross-CC \
+                 value. For quick tasks, the conversation IS the session. \
                  COMPLIANCE: Before creating or sharing cross-client content, reference \
                  search_knowledge query 'CC Team Compliance Data Sharing' for rules. \
                  STANDARDS: When authoring knowledge, runbooks, or incidents, reference \
-                 search_knowledge query 'CC Team Contribution Standards' for formatting. \
+                 search_knowledge query 'CC Team Contribution Standards' for formatting \
+                 and knowledge boundaries (what belongs in ops-brain vs. local docs). \
+                 HANDOFF ROUTING: Use hostname (not CC Name) in to_machine field. \
+                 Code changes → stealth, cloud infra → kensai-cloud, HSR servers → HV-FS0, \
+                 CPA servers → SMYT-SERVER. When unsure, route to stealth. \
+                 Full routing table: search_knowledge query 'CC Team Identity Naming'. \
                  ALWAYS: (1) get_situational_awareness before making infrastructure changes, \
                  (2) add_knowledge for gotchas and lessons learned, \
                  (3) create_handoff when another CC should pick up work or your session \
