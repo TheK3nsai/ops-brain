@@ -253,6 +253,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 # UPTIME_KUMA_PASSWORD=<password>          (if /metrics requires basic auth)
 # OPS_BRAIN_WATCHDOG_ENABLED=true          (enable proactive monitoring watchdog)
 # OPS_BRAIN_WATCHDOG_INTERVAL=60           (polling interval in seconds)
+# OPS_BRAIN_WATCHDOG_CONFIRM_POLLS=3       (consecutive DOWN polls before incident — flap suppression)
+# OPS_BRAIN_WATCHDOG_COOLDOWN_SECS=1800    (seconds after resolve before new incident — flap suppression)
 # ZAMMAD_URL=http://zammad-railsserver:3000  (optional, for ticketing integration)
 # ZAMMAD_API_TOKEN=<token>                 (Zammad API token)
 
@@ -344,6 +346,8 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] Build tooling: mold linker (`.cargo/config.toml`) + sqlx-cli for migration management
 - [x] CC team knowledge restructured: 3 focused entries (Identity & Naming, Compliance & Data Sharing, Contribution Standards & Session Protocol)
 - [x] Adaptive CC startup protocol: identity lookup once (then local memory), ops check when idle, compliance/standards on-demand, user tasks take priority over ceremony
+- [x] Watchdog flap suppression: grace period (N consecutive DOWN polls before incident) + cooldown (suppress re-incident after resolve). Eliminates push-monitor heartbeat jitter noise
+- [x] Lighter CC workflow: optional sessions, knowledge boundaries (ops-brain vs local), tool tiers, handoff routing table, quality bar for knowledge entries
 
 ## License
 
