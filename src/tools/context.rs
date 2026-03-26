@@ -67,6 +67,8 @@ pub struct SituationalAwareness {
     pub linked_tickets: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cross_client_withheld: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub _warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,6 +83,8 @@ pub struct ClientOverview {
     pub pending_handoffs: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub recent_tickets: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub _warnings: Vec<String>,
 }
 
 // ===== HANDLERS =====
@@ -97,6 +101,7 @@ pub(crate) async fn handle_get_situational_awareness(
     let sections = p.sections;
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
 
+    let mut warnings: Vec<String> = Vec::new();
     let mut awareness = SituationalAwareness {
         server: None,
         site: None,
@@ -111,6 +116,7 @@ pub(crate) async fn handle_get_situational_awareness(
         monitoring: Vec::new(),
         linked_tickets: Vec::new(),
         cross_client_withheld: Vec::new(),
+        _warnings: Vec::new(),
     };
 
     let mut client_id: Option<uuid::Uuid> = None;
@@ -264,29 +270,31 @@ pub(crate) async fn handle_get_situational_awareness(
 
     // Get vendors for client
     if let Some(cid) = client_id {
-        if let Ok(vendors) =
-            crate::repo::vendor_repo::get_vendors_for_client(&brain.pool, cid).await
-        {
-            awareness.vendors = vendors
-                .iter()
-                .filter_map(|v| serde_json::to_value(v).ok())
-                .collect();
+        match crate::repo::vendor_repo::get_vendors_for_client(&brain.pool, cid).await {
+            Ok(vendors) => {
+                awareness.vendors = vendors
+                    .iter()
+                    .filter_map(|v| serde_json::to_value(v).ok())
+                    .collect();
+            }
+            Err(e) => warnings.push(format!("Vendor lookup failed: {e}")),
         }
 
         // Get knowledge for this client
-        if let Ok(entries) =
-            crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100).await
-        {
-            awareness.knowledge = entries
-                .iter()
-                .filter_map(|k| serde_json::to_value(k).ok())
-                .collect();
+        match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100).await {
+            Ok(entries) => {
+                awareness.knowledge = entries
+                    .iter()
+                    .filter_map(|k| serde_json::to_value(k).ok())
+                    .collect();
+            }
+            Err(e) => warnings.push(format!("Knowledge lookup failed: {e}")),
         }
     }
 
     // Get all related incidents in a single UNION query (client + server + service)
     if section_included(&sections, "incidents") {
-        awareness.recent_incidents = crate::repo::incident_repo::get_related_incidents(
+        match crate::repo::incident_repo::get_related_incidents(
             &brain.pool,
             client_id,
             server_id,
@@ -294,40 +302,49 @@ pub(crate) async fn handle_get_situational_awareness(
             10,
         )
         .await
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|i| serde_json::to_value(i).ok())
-        .collect();
+        {
+            Ok(incidents) => {
+                awareness.recent_incidents = incidents
+                    .iter()
+                    .filter_map(|i| serde_json::to_value(i).ok())
+                    .collect();
+            }
+            Err(e) => warnings.push(format!("Incident lookup failed: {e}")),
+        }
     }
 
     // Get pending handoffs
-    let handoffs: Vec<Handoff> = sqlx::query_as::<_, Handoff>(
+    match sqlx::query_as::<_, Handoff>(
         "SELECT * FROM handoffs WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10",
     )
     .fetch_all(&brain.pool)
     .await
-    .unwrap_or_default();
-
-    awareness.pending_handoffs = handoffs
-        .iter()
-        .filter_map(|h| serde_json::to_value(h).ok())
-        .collect();
+    {
+        Ok(handoffs) => {
+            awareness.pending_handoffs = handoffs
+                .iter()
+                .filter_map(|h| serde_json::to_value(h).ok())
+                .collect();
+        }
+        Err(e) => warnings.push(format!("Handoff lookup failed: {e}")),
+    }
 
     // Also add general knowledge (not client-specific)
-    if let Ok(general_knowledge) =
-        crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None, 100).await
-    {
-        for entry in &general_knowledge {
-            if let Ok(val) = serde_json::to_value(entry) {
-                if !awareness
-                    .knowledge
-                    .iter()
-                    .any(|existing| existing.get("id") == val.get("id"))
-                {
-                    awareness.knowledge.push(val);
+    match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None, 100).await {
+        Ok(general_knowledge) => {
+            for entry in &general_knowledge {
+                if let Ok(val) = serde_json::to_value(entry) {
+                    if !awareness
+                        .knowledge
+                        .iter()
+                        .any(|existing| existing.get("id") == val.get("id"))
+                    {
+                        awareness.knowledge.push(val);
+                    }
                 }
             }
         }
+        Err(e) => warnings.push(format!("General knowledge lookup failed: {e}")),
     }
 
     // Semantic enrichment: find related runbooks/knowledge beyond explicit links
@@ -459,64 +476,71 @@ pub(crate) async fn handle_get_situational_awareness(
 
     // Fetch live monitoring data for linked servers/services
     if let Some(ref kuma_config) = brain.kuma_config {
-        if let Ok(metrics) = crate::metrics::fetch_metrics(kuma_config).await {
-            // Get monitor mappings for this server and its services
-            let mut monitor_names: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+        match crate::metrics::fetch_metrics(kuma_config).await {
+            Ok(metrics) => {
+                // Get monitor mappings for this server and its services
+                let mut monitor_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
 
-            if let Some(srv_id) = server_id {
-                if let Ok(monitors) =
-                    crate::repo::monitor_repo::get_monitors_for_server(&brain.pool, srv_id).await
-                {
-                    for m in &monitors {
-                        monitor_names.insert(m.monitor_name.clone());
+                if let Some(srv_id) = server_id {
+                    if let Ok(monitors) =
+                        crate::repo::monitor_repo::get_monitors_for_server(&brain.pool, srv_id)
+                            .await
+                    {
+                        for m in &monitors {
+                            monitor_names.insert(m.monitor_name.clone());
+                        }
+                    }
+                }
+
+                if let Some(svc_id) = service_id {
+                    if let Ok(monitors) =
+                        crate::repo::monitor_repo::get_monitors_for_service(&brain.pool, svc_id)
+                            .await
+                    {
+                        for m in &monitors {
+                            monitor_names.insert(m.monitor_name.clone());
+                        }
+                    }
+                }
+
+                // Match metrics to mapped monitors
+                for status in &metrics.monitors {
+                    if monitor_names.contains(&status.name) {
+                        if let Ok(val) = serde_json::to_value(status) {
+                            awareness.monitoring.push(val);
+                        }
                     }
                 }
             }
-
-            if let Some(svc_id) = service_id {
-                if let Ok(monitors) =
-                    crate::repo::monitor_repo::get_monitors_for_service(&brain.pool, svc_id).await
-                {
-                    for m in &monitors {
-                        monitor_names.insert(m.monitor_name.clone());
-                    }
-                }
-            }
-
-            // Match metrics to mapped monitors
-            for status in &metrics.monitors {
-                if monitor_names.contains(&status.name) {
-                    if let Ok(val) = serde_json::to_value(status) {
-                        awareness.monitoring.push(val);
-                    }
-                }
-            }
+            Err(e) => warnings.push(format!("Uptime Kuma unreachable: {e}")),
         }
     }
 
     // Zammad linked tickets for this server/service
     if brain.zammad_config.is_some() {
         if let Some(srv_id) = server_id {
-            if let Ok(links) =
-                crate::repo::ticket_link_repo::get_links_for_server(&brain.pool, srv_id).await
-            {
-                for link in &links {
-                    if let Ok(val) = serde_json::to_value(link) {
-                        awareness.linked_tickets.push(val);
+            match crate::repo::ticket_link_repo::get_links_for_server(&brain.pool, srv_id).await {
+                Ok(links) => {
+                    for link in &links {
+                        if let Ok(val) = serde_json::to_value(link) {
+                            awareness.linked_tickets.push(val);
+                        }
                     }
                 }
+                Err(e) => warnings.push(format!("Ticket links (server) failed: {e}")),
             }
         }
         if let Some(svc_id) = service_id {
-            if let Ok(links) =
-                crate::repo::ticket_link_repo::get_links_for_service(&brain.pool, svc_id).await
-            {
-                for link in &links {
-                    if let Ok(val) = serde_json::to_value(link) {
-                        awareness.linked_tickets.push(val);
+            match crate::repo::ticket_link_repo::get_links_for_service(&brain.pool, svc_id).await {
+                Ok(links) => {
+                    for link in &links {
+                        if let Ok(val) = serde_json::to_value(link) {
+                            awareness.linked_tickets.push(val);
+                        }
                     }
                 }
+                Err(e) => warnings.push(format!("Ticket links (service) failed: {e}")),
             }
         }
     }
@@ -583,6 +607,7 @@ pub(crate) async fn handle_get_situational_awareness(
         }
     }
 
+    awareness._warnings = warnings;
     json_result(&awareness)
 }
 
@@ -598,14 +623,22 @@ pub(crate) async fn handle_get_client_overview(
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
 
+    let mut warnings: Vec<String> = Vec::new();
+
     let sites = crate::repo::site_repo::list_sites(&brain.pool, Some(client.id))
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            warnings.push(format!("Sites lookup failed: {e}"));
+            Vec::new()
+        });
 
     let servers =
         crate::repo::server_repo::list_servers(&brain.pool, Some(client.id), None, None, None, 200)
             .await
-            .unwrap_or_default();
+            .unwrap_or_else(|e| {
+                warnings.push(format!("Servers lookup failed: {e}"));
+                Vec::new()
+            });
 
     // Collect all service IDs from all servers
     let mut all_services = Vec::new();
@@ -633,7 +666,10 @@ pub(crate) async fn handle_get_client_overview(
 
     let vendors = crate::repo::vendor_repo::get_vendors_for_client(&brain.pool, client.id)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            warnings.push(format!("Vendor lookup failed: {e}"));
+            Vec::new()
+        });
 
     let recent_incidents: Vec<Incident> = sqlx::query_as::<_, Incident>(
         "SELECT * FROM incidents WHERE client_id = $1 ORDER BY reported_at DESC LIMIT 10",
@@ -641,14 +677,20 @@ pub(crate) async fn handle_get_client_overview(
     .bind(client.id)
     .fetch_all(&brain.pool)
     .await
-    .unwrap_or_default();
+    .unwrap_or_else(|e| {
+        warnings.push(format!("Incident lookup failed: {e}"));
+        Vec::new()
+    });
 
     let pending_handoffs: Vec<Handoff> = sqlx::query_as::<_, Handoff>(
         "SELECT * FROM handoffs WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10",
     )
     .fetch_all(&brain.pool)
     .await
-    .unwrap_or_default();
+    .unwrap_or_else(|e| {
+        warnings.push(format!("Handoff lookup failed: {e}"));
+        Vec::new()
+    });
 
     let mut overview = ClientOverview {
         client: serde_json::to_value(&client).unwrap_or(serde_json::Value::Null),
@@ -681,6 +723,7 @@ pub(crate) async fn handle_get_client_overview(
             .filter_map(|h| serde_json::to_value(h).ok())
             .collect(),
         recent_tickets: Vec::new(),
+        _warnings: Vec::new(),
     };
 
     // Fetch recent Zammad tickets for this client
@@ -694,13 +737,12 @@ pub(crate) async fn handle_get_client_overview(
                         .filter_map(|t| serde_json::to_value(t).ok())
                         .collect();
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to fetch Zammad tickets for client overview: {e}");
-                }
+                Err(e) => warnings.push(format!("Zammad ticket search failed: {e}")),
             }
         }
     }
 
+    overview._warnings = warnings;
     json_result(&overview)
 }
 
@@ -711,6 +753,7 @@ pub(crate) async fn handle_get_server_context(
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
     let compact = p.compact.unwrap_or(false);
     let sections = p.sections;
+    let mut warnings: Vec<String> = Vec::new();
 
     let server = match crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.server_slug)
         .await
@@ -747,14 +790,17 @@ pub(crate) async fn handle_get_server_context(
     let vendors = if let Some(cid) = client_id {
         crate::repo::vendor_repo::get_vendors_for_client(&brain.pool, cid)
             .await
-            .unwrap_or_default()
+            .unwrap_or_else(|e| {
+                warnings.push(format!("Vendor lookup failed: {e}"));
+                Vec::new()
+            })
     } else {
         Vec::new()
     };
 
     // Get all related incidents in a single UNION query (client + server)
     let mut all_incidents: Vec<serde_json::Value> =
-        crate::repo::incident_repo::get_related_incidents(
+        match crate::repo::incident_repo::get_related_incidents(
             &brain.pool,
             client_id,
             Some(server.id),
@@ -762,10 +808,16 @@ pub(crate) async fn handle_get_server_context(
             10,
         )
         .await
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|i| serde_json::to_value(i).ok())
-        .collect();
+        {
+            Ok(incidents) => incidents
+                .iter()
+                .filter_map(|i| serde_json::to_value(i).ok())
+                .collect(),
+            Err(e) => {
+                warnings.push(format!("Incident lookup failed: {e}"));
+                Vec::new()
+            }
+        };
 
     // Get runbooks linked to this server
     let runbooks = crate::repo::runbook_repo::list_runbooks(
@@ -812,12 +864,16 @@ pub(crate) async fn handle_get_server_context(
 
     // Get knowledge entries for this client
     let mut all_knowledge: Vec<serde_json::Value> = if let Some(cid) = client_id {
-        crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100)
-            .await
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|k| serde_json::to_value(k).ok())
-            .collect()
+        match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100).await {
+            Ok(entries) => entries
+                .iter()
+                .filter_map(|k| serde_json::to_value(k).ok())
+                .collect(),
+            Err(e) => {
+                warnings.push(format!("Knowledge lookup failed: {e}"));
+                Vec::new()
+            }
+        }
     } else {
         Vec::new()
     };
@@ -929,49 +985,54 @@ pub(crate) async fn handle_get_server_context(
     // Fetch live monitoring data for this server and its services
     let mut monitoring: Vec<serde_json::Value> = Vec::new();
     if let Some(ref kuma_config) = brain.kuma_config {
-        if let Ok(metrics) = crate::metrics::fetch_metrics(kuma_config).await {
-            let mut monitor_names: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+        match crate::metrics::fetch_metrics(kuma_config).await {
+            Ok(metrics) => {
+                let mut monitor_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
 
-            if let Ok(monitors) =
-                crate::repo::monitor_repo::get_monitors_for_server(&brain.pool, server.id).await
-            {
-                for m in &monitors {
-                    monitor_names.insert(m.monitor_name.clone());
-                }
-            }
-
-            for svc in &services {
                 if let Ok(monitors) =
-                    crate::repo::monitor_repo::get_monitors_for_service(&brain.pool, svc.id).await
+                    crate::repo::monitor_repo::get_monitors_for_server(&brain.pool, server.id).await
                 {
                     for m in &monitors {
                         monitor_names.insert(m.monitor_name.clone());
                     }
                 }
-            }
 
-            for status in &metrics.monitors {
-                if monitor_names.contains(&status.name) {
-                    if let Ok(val) = serde_json::to_value(status) {
-                        monitoring.push(val);
+                for svc in &services {
+                    if let Ok(monitors) =
+                        crate::repo::monitor_repo::get_monitors_for_service(&brain.pool, svc.id)
+                            .await
+                    {
+                        for m in &monitors {
+                            monitor_names.insert(m.monitor_name.clone());
+                        }
+                    }
+                }
+
+                for status in &metrics.monitors {
+                    if monitor_names.contains(&status.name) {
+                        if let Ok(val) = serde_json::to_value(status) {
+                            monitoring.push(val);
+                        }
                     }
                 }
             }
+            Err(e) => warnings.push(format!("Uptime Kuma unreachable: {e}")),
         }
     }
 
     // Zammad linked tickets for this server
     let mut linked_tickets: Vec<serde_json::Value> = Vec::new();
     if brain.zammad_config.is_some() {
-        if let Ok(links) =
-            crate::repo::ticket_link_repo::get_links_for_server(&brain.pool, server.id).await
-        {
-            for link in &links {
-                if let Ok(val) = serde_json::to_value(link) {
-                    linked_tickets.push(val);
+        match crate::repo::ticket_link_repo::get_links_for_server(&brain.pool, server.id).await {
+            Ok(links) => {
+                for link in &links {
+                    if let Ok(val) = serde_json::to_value(link) {
+                        linked_tickets.push(val);
+                    }
                 }
             }
+            Err(e) => warnings.push(format!("Ticket links failed: {e}")),
         }
     }
 
@@ -1072,6 +1133,9 @@ pub(crate) async fn handle_get_server_context(
     }
     if !cross_client_withheld.is_empty() {
         result["cross_client_withheld"] = serde_json::json!(cross_client_withheld);
+    }
+    if !warnings.is_empty() {
+        result["_warnings"] = serde_json::json!(warnings);
     }
 
     json_result(&result)
