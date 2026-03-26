@@ -122,6 +122,7 @@ sqlx migrate info          # Show migration status
 - **Phase 8** (scheduled briefings): COMPLETE & DEPLOYED — 3 new tools (generate_briefing, list_briefings, get_briefing), 59 total. REST API at `POST /api/briefing` (shared logic in `src/api.rs`). Aggregates monitoring health, open incidents (by severity), watchdog alerts, pending handoffs, and Zammad ticket activity into structured markdown summaries. Daily and weekly types. Weekly includes resolved incident stats (count, avg TTR) and watchdog auto-resolved count. Briefings stored in `briefings` table for historical review. Scheduled triggers deliver via Gmail: daily at 6 AM PR, weekly Monday 6 AM PR.
 - **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge/incidents, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping, `compact` mode + `sections` filtering for context tools. 68 tools (59 base + update_knowledge + delete_knowledge + delete_server + delete_service + delete_vendor + list_vendors + list_clients + list_sites + list_networks).
 - **Phase 10** (CC-HSR assessment response): COMPLETE — Merged `semantic_search` into `search_knowledge` (add `tables` param for multi-table search). 4 new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail). New migration: `runbook_executions` table. 71 tools total.
+- **Phase 10.1** (CC-HSR assessment fixes): COMPLETE — `get_catchup` compact mode (default true, ~3KB vs 61-97KB), excludes completed handoffs. `client_slug` on `runbook_executions` for HIPAA audit trails. Fixed 4 stale runbook slugs (veeam-backup-failure→backup-infrastructure, etc.). 30 migrations, 71 tools.
 
 ## Safety Design Principles (Phase 9 — Implemented)
 
@@ -322,6 +323,15 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **CPA network missing**: 192.168.0.0/24 not in networks table (HSR and Eduardo home are there).
 - **Embedding backfill**: Knowledge and incidents pushed from local to remote don't have embeddings yet. Run `backfill_embeddings` from a remote CC instance.
 - **Historical incidents**: 5 incidents still reference fictional hostnames (HVDC01, HVRDS01, HVFS01) in their text. Low priority — they're marked resolved/historical.
+
+### Future Improvements (from CC-HSR Phase 10 Assessment)
+- **Dashboard UI**: Web dashboard for Eduardo to view ops-brain data without opening a Claude session. Agreed #1 priority across all CCs.
+- **Multi-instance Uptime Kuma**: ops-brain currently only connects to kensai.cloud's Uptime Kuma. HSR runs a separate instance at status.ihmpr.com with ~18 monitors. `check_health` and `get_monitoring_summary` are blind to HSR infrastructure. Options: multi-instance config, federation, or manual monitor linking.
+- **`search_knowledge` compact mode**: Multi-table semantic search can return 77KB+. Consider a `compact` flag that returns title + snippet + score instead of full content bodies.
+- **Handoff count in MCP preamble**: Show pending handoff count in the server instructions so CCs notice them without calling `list_handoffs`.
+- **Tool groups / admin tier**: Separate tools into admin vs. daily-use tiers to reduce cognitive load.
+- **Auto-deploy on merge**: GitHub Actions workflow to auto-deploy to kensai.cloud when main is updated.
+- **Branch protection**: Require PR + CI pass before merging to main.
 
 ### Infrastructure Audits (On-Site / SSH)
 - **Backup audit**: Verify what backup solution is actually running at HSR (Veeam? WSB? Synology Active Backup?) and CPA. The "Backup Infrastructure" runbook has action items.
