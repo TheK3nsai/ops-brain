@@ -72,7 +72,19 @@ just check          # fmt + clippy + test
 
 # Manual seed (if using system PostgreSQL):
 psql -U ops_brain -d ops_brain -f seed/seed.sql
+
+# Migration management (sqlx-cli):
+sqlx migrate add <name>   # Scaffold new timestamped migration
+sqlx migrate run           # Run pending migrations (standalone, no app startup)
+sqlx migrate info          # Show migration status
 ```
+
+### Build Tooling
+
+- **Linker**: [mold](https://github.com/rui314/mold) via `.cargo/config.toml` — incremental dev builds ~2s with hot cache
+- **Migrations**: [sqlx-cli](https://github.com/launchbadge/sqlx/tree/main/sqlx-cli) — `cargo install sqlx-cli --features postgres --no-default-features`
+- **Dev commands**: [just](https://github.com/casey/just) — see `justfile` for all recipes
+- **File watcher**: [watchexec](https://github.com/watchexec/watchexec) — used by `just watch`
 
 ## Environment Variables
 
@@ -276,6 +288,8 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **seed.sql is foundational only** — clients, sites, networks. All other data comes from live CC sessions. Never add fictional/placeholder data to seed.sql.
 - **SSH to kensai.cloud**: use `ssh kensai.cloud` (Host alias), NOT `ssh ssh.kensai.cloud -p 22022`. The alias picks up the correct key, port, and user from `~/.ssh/config`.
 - **Deploy workflow**: git repo is at `~/ops-brain/` but Docker build context is `~/docker/ops-brain/`. After `git pull` in `~/ops-brain/`, sync to build context with: `rsync -a --exclude=target --exclude=.git --exclude=.env ~/ops-brain/ ~/docker/ops-brain/` (note: **exclude `.env`** to avoid nuking secrets). Then `docker compose -f docker-compose.prod.yml up -d --build` in `~/docker/ops-brain/`.
+- **mold linker is local only** — `.cargo/config.toml` uses mold for fast local builds. The Docker build uses its own linker (musl/gcc inside the container). CCs on other machines without mold can ignore this file — Cargo falls back to the default linker if mold isn't installed.
+- **sqlx-cli requires `DATABASE_URL`** — set it in `.env` or export it before running `sqlx migrate` commands. Same connection string the app uses.
 
 ## Next Steps
 

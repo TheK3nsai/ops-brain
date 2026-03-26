@@ -158,6 +158,8 @@ curl -s -X POST https://ops.kensai.cloud/api/briefing \
 - Rust 1.83+
 - PostgreSQL 16+ (18 recommended) with [pgvector](https://github.com/pgvector/pgvector) extension
 - [ollama](https://ollama.com/) with `nomic-embed-text` model (for semantic search)
+- [mold](https://github.com/rui314/mold) linker (optional, for faster builds — `.cargo/config.toml` uses it)
+- [sqlx-cli](https://github.com/launchbadge/sqlx/tree/main/sqlx-cli) (optional, for migration management)
 - [just](https://github.com/casey/just) (optional, for dev commands)
 
 ### Local Development
@@ -184,11 +186,20 @@ psql -U postgres -d ops_brain -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 # Pull embedding model
 ollama pull nomic-embed-text
 
+# Optional: install mold for faster builds (Gentoo: emerge sys-devel/mold)
+# Optional: install sqlx-cli for migration management
+cargo install sqlx-cli --features postgres --no-default-features
+
 # Build and run (auto-migrates on startup)
 cargo run
 
 # Seed with sample data
 psql -U ops_brain -d ops_brain -f seed/seed.sql
+
+# Migration management (with sqlx-cli)
+sqlx migrate add <name>   # Scaffold new timestamped migration
+sqlx migrate run           # Run pending migrations standalone
+sqlx migrate info          # Show migration status
 ```
 
 ### Claude Code Configuration
@@ -328,6 +339,8 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] `_warnings` array on context tools (surfaces transient sub-query failures instead of silent empty results)
 - [x] Consistent result limits (`limit` param on all list/search tools, standardized defaults)
 - [x] Soft deletes (servers/services/vendors set `status='deleted'` — FK references and audit trail preserved)
+- [x] Build tooling: mold linker (`.cargo/config.toml`) + sqlx-cli for migration management
+- [x] CC team knowledge restructured: 3 focused entries (Identity & Naming, Compliance & Data Sharing, Contribution Standards & Session Protocol)
 
 ## License
 
