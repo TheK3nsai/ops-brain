@@ -1,7 +1,37 @@
-//! Input validation for tool parameters.
+//! Input validation and serde helpers for tool parameters.
 //!
 //! Validates free-form string fields against known values and returns
 //! helpful error messages listing valid options.
+
+use serde::Deserialize;
+
+/// Deserialize an `Option<i64>` that accepts both `50` (number) and `"50"` (string).
+///
+/// Some MCP clients serialize integers as JSON strings. This deserializer
+/// handles both forms gracefully so tools never reject valid limit values.
+pub fn deserialize_flexible_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum FlexibleI64 {
+        Int(i64),
+        Str(String),
+    }
+
+    let opt: Option<FlexibleI64> = Option::deserialize(deserializer)?;
+    match opt {
+        None => Ok(None),
+        Some(FlexibleI64::Int(n)) => Ok(Some(n)),
+        Some(FlexibleI64::Str(s)) => s
+            .parse::<i64>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("invalid integer string: \"{s}\""))),
+    }
+}
 
 pub const INCIDENT_SEVERITIES: &[&str] = &["low", "medium", "high", "critical"];
 pub const INCIDENT_STATUSES: &[&str] = &["open", "resolved"];
@@ -132,5 +162,43 @@ mod tests {
         for t in BRIEFING_TYPES {
             assert!(validate_required(t, "type", BRIEFING_TYPES).is_ok());
         }
+    }
+
+    // deserialize_flexible_i64
+
+    #[derive(Debug, serde::Deserialize)]
+    struct TestLimit {
+        #[serde(default, deserialize_with = "super::deserialize_flexible_i64")]
+        limit: Option<i64>,
+    }
+
+    #[test]
+    fn flexible_i64_from_number() {
+        let v: TestLimit = serde_json::from_str(r#"{"limit": 50}"#).unwrap();
+        assert_eq!(v.limit, Some(50));
+    }
+
+    #[test]
+    fn flexible_i64_from_string() {
+        let v: TestLimit = serde_json::from_str(r#"{"limit": "50"}"#).unwrap();
+        assert_eq!(v.limit, Some(50));
+    }
+
+    #[test]
+    fn flexible_i64_null() {
+        let v: TestLimit = serde_json::from_str(r#"{"limit": null}"#).unwrap();
+        assert_eq!(v.limit, None);
+    }
+
+    #[test]
+    fn flexible_i64_missing() {
+        let v: TestLimit = serde_json::from_str(r#"{}"#).unwrap();
+        assert_eq!(v.limit, None);
+    }
+
+    #[test]
+    fn flexible_i64_invalid_string() {
+        let result: Result<TestLimit, _> = serde_json::from_str(r#"{"limit": "abc"}"#);
+        assert!(result.is_err());
     }
 }

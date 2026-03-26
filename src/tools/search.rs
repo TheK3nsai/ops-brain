@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{error_result, filter_cross_client, json_result, not_found_with_suggestions};
 use super::shared::{build_client_lookup, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
@@ -12,6 +14,7 @@ pub struct SemanticSearchParams {
     /// Tables to search (runbooks, knowledge, incidents, handoffs). Default: all.
     pub tables: Option<Vec<String>>,
     /// Max results per table (default 5)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
     /// Scope results to a client. Cross-client runbooks/knowledge are withheld unless acknowledged.
     pub client_slug: Option<String>,
@@ -24,6 +27,7 @@ pub struct BackfillEmbeddingsParams {
     /// Specific table to backfill (runbooks, knowledge, incidents, handoffs). Default: all.
     pub table: Option<String>,
     /// Records per batch (default 10)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub batch_size: Option<i64>,
 }
 

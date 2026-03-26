@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{
     error_result, filter_cross_client, json_result, not_found, not_found_with_suggestions,
 };
@@ -28,6 +30,7 @@ pub struct SearchKnowledgeParams {
     /// Set to true to release cross-client results that were withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
     /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -54,6 +57,7 @@ pub struct ListKnowledgeParams {
     pub category: Option<String>,
     pub client_slug: Option<String>,
     /// Max results (default 50)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 

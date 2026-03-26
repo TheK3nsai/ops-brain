@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{error_result, json_result, not_found, not_found_with_suggestions};
 use rmcp::model::*;
 
@@ -19,6 +21,7 @@ pub struct ListBriefingsParams {
     /// Filter by client slug
     pub client_slug: Option<String>,
     /// Max results (default 10)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 

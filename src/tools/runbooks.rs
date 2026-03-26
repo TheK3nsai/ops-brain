@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{error_result, filter_cross_client, json_result, not_found_with_suggestions};
 use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
@@ -20,6 +22,7 @@ pub struct ListRunbooksParams {
     /// Filter by owning client
     pub client_slug: Option<String>,
     /// Max results (default 50)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -34,6 +37,7 @@ pub struct SearchRunbooksParams {
     /// Set to true to release cross-client results that were withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
     /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 

@@ -23,10 +23,10 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct + 64 #[tool] stubs (delegate to category modules)
+    mod.rs           # OpsBrain struct + 68 #[tool] stubs (delegate to category modules)
     helpers.rs       # Shared helpers: json_result, error_result, not_found_with_suggestions, filter_cross_client, compact_*, etc.
     shared.rs        # Shared async functions: embed_and_store, get_query_embedding, build_client_lookup, log_audit_entries
-    inventory.rs     # Parameter structs + handler implementations for inventory tools
+    inventory.rs     # Parameter structs + handler implementations for inventory tools (22 tools)
     runbooks.rs      # Parameter structs + handler implementations for runbook tools
     knowledge.rs     # Parameter structs + handler implementations for knowledge tools
     context.rs       # Parameter/response structs + handler implementations for context tools
@@ -118,7 +118,7 @@ sqlx migrate info          # Show migration status
 - **Phase 6** (proactive monitoring): COMPLETE & DEPLOYED — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
 - **Phase 7** (Zammad integration): COMPLETE — 8 new tools (list_tickets, get_ticket, create_ticket, update_ticket, add_ticket_note, search_tickets, link_ticket, unlink_ticket), 56 total. Live Zammad REST API queries via Token auth. Client mapping (zammad_org_id/group_id/customer_id on clients table). ticket_links table for linking tickets to incidents/servers/services. Context tools enriched with ticket data (get_client_overview shows recent tickets, get_situational_awareness and get_server_context show linked tickets). Env: `ZAMMAD_URL`, `ZAMMAD_API_TOKEN`.
 - **Phase 8** (scheduled briefings): COMPLETE & DEPLOYED — 3 new tools (generate_briefing, list_briefings, get_briefing), 59 total. REST API at `POST /api/briefing` (shared logic in `src/api.rs`). Aggregates monitoring health, open incidents (by severity), watchdog alerts, pending handoffs, and Zammad ticket activity into structured markdown summaries. Daily and weekly types. Weekly includes resolved incident stats (count, avg TTR) and watchdog auto-resolved count. Briefings stored in `briefings` table for historical review. Scheduled triggers deliver via Gmail: daily at 6 AM PR, weekly Monday 6 AM PR.
-- **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge/incidents, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping, `compact` mode + `sections` filtering for context tools. 64 tools (59 base + update_knowledge + delete_knowledge + delete_server + delete_service + delete_vendor).
+- **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge/incidents, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping, `compact` mode + `sections` filtering for context tools. 68 tools (59 base + update_knowledge + delete_knowledge + delete_server + delete_service + delete_vendor + list_vendors + list_clients + list_sites + list_networks).
 
 ## Safety Design Principles (Phase 9 — Implemented)
 
@@ -302,9 +302,13 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **_warnings array (P6)**: DONE — Context tools (`get_situational_awareness`, `get_client_overview`, `get_server_context`) surface transient sub-query failures in `_warnings` array instead of silently returning empty data. Covers vendors, knowledge, incidents, handoffs, Kuma, Zammad.
 - **Consistent result limits (P7)**: DONE — All list/search tools accept `limit` parameter. List defaults: 50, search defaults: 20. No hard-coded limits remain.
 - **Soft deletes (P8)**: DONE — `delete_server`/`delete_service`/`delete_vendor` set `status='deleted'` instead of hard DELETE. FK references preserved. Migration adds `status` column to services and vendors tables. All list/search/lookup queries exclude deleted records.
+- **ID-based vendor ops (P9)**: DONE — `get_vendor`, `delete_vendor`, `upsert_vendor` accept optional `id` (UUID) parameter. When provided, targets a specific vendor by ID instead of name-based lookup. Fixes duplicate-name disambiguation.
+- **Flexible limit params (P10)**: DONE — All `limit` (and `batch_size`) parameters accept both `50` (number) and `"50"` (string) via custom serde deserializer. Fixes MCP client serialization mismatches.
+- **List tools completeness (P11)**: DONE — Added `list_vendors`, `list_clients`, `list_sites`, `list_networks`. All entity types now have list tools.
+- **search_inventory expansion (P12)**: DONE — Added vendors, clients, sites, networks to FTS search_inventory. Migration adds `search_vector` columns + GIN indexes to all four tables.
 
 ### Data Quality
-- **Vendor deduplication**: 19 vendors on remote, several duplicates. Need to merge and link to correct clients.
+- **Vendor deduplication**: DONE (2026-03-26) — 19→12 vendors, deduplicated via direct SQL by CC-Cloud.
 - **CPA network missing**: 192.168.0.0/24 not in networks table (HSR and Eduardo home are there).
 - **Embedding backfill**: Knowledge and incidents pushed from local to remote don't have embeddings yet. Run `backfill_embeddings` from a remote CC instance.
 - **Historical incidents**: 5 incidents still reference fictional hostnames (HVDC01, HVRDS01, HVFS01) in their text. Low priority — they're marked resolved/historical.

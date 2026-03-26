@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{error_result, json_result, not_found, not_found_with_suggestions};
 use rmcp::model::*;
 
@@ -13,6 +15,7 @@ pub struct ListTicketsParams {
     /// Filter by priority: "low", "normal", "high" (optional)
     pub priority: Option<String>,
     /// Maximum number of tickets to return (default: 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -75,6 +78,7 @@ pub struct SearchTicketsParams {
     /// Search query text (Zammad Elasticsearch syntax)
     pub query: String,
     /// Maximum results (default: 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 

@@ -125,6 +125,49 @@ pub async fn upsert_vendor(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn update_vendor_by_id(
+    pool: &PgPool,
+    id: Uuid,
+    name: &str,
+    category: Option<&str>,
+    account_number: Option<&str>,
+    support_phone: Option<&str>,
+    support_email: Option<&str>,
+    support_portal: Option<&str>,
+    sla_summary: Option<&str>,
+    contract_end: Option<NaiveDate>,
+    notes: Option<&str>,
+) -> Result<Vendor, sqlx::Error> {
+    sqlx::query_as::<_, Vendor>(
+        "UPDATE vendors SET
+            name = $2,
+            category = COALESCE($3, category),
+            account_number = COALESCE($4, account_number),
+            support_phone = COALESCE($5, support_phone),
+            support_email = COALESCE($6, support_email),
+            support_portal = COALESCE($7, support_portal),
+            sla_summary = COALESCE($8, sla_summary),
+            contract_end = COALESCE($9, contract_end),
+            notes = COALESCE($10, notes),
+            updated_at = NOW()
+         WHERE id = $1 AND status != 'deleted'
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(category)
+    .bind(account_number)
+    .bind(support_phone)
+    .bind(support_email)
+    .bind(support_portal)
+    .bind(sla_summary)
+    .bind(contract_end)
+    .bind(notes)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn link_vendor_client(
     pool: &PgPool,
     vendor_id: Uuid,

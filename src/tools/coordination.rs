@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{error_result, json_result, not_found};
 use super::shared::{embed_and_store, get_query_embedding};
 use rmcp::model::*;
@@ -30,6 +32,7 @@ pub struct ListSessionsParams {
     /// Only show active (not ended) sessions
     pub active_only: Option<bool>,
     /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -68,6 +71,7 @@ pub struct ListHandoffsParams {
     /// Filter by source machine
     pub from_machine: Option<String>,
     /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -78,6 +82,7 @@ pub struct SearchHandoffsParams {
     /// Search mode: "fts" (default), "semantic" (vector only), or "hybrid" (FTS + vector RRF)
     pub mode: Option<String>,
     /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 

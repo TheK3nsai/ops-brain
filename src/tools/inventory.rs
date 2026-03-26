@@ -2,6 +2,8 @@ use rmcp::model::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::validation::deserialize_flexible_i64;
+
 use super::helpers::{
     error_result, json_result, not_found, not_found_vendor_with_suggestions,
     not_found_with_suggestions,
@@ -24,6 +26,7 @@ pub struct ListServersParams {
     /// Filter by status (e.g., "active", "decommissioned")
     pub status: Option<String>,
     /// Max results (default 50)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -38,6 +41,7 @@ pub struct ListServicesParams {
     /// Filter by category
     pub category: Option<String>,
     /// Max results (default 50)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -63,8 +67,10 @@ pub struct GetNetworkParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetVendorParams {
-    /// Vendor name
-    pub name: String,
+    /// Vendor name (case-insensitive). Ignored if id is provided.
+    pub name: Option<String>,
+    /// Vendor ID (UUID). Takes precedence over name for disambiguation.
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -72,6 +78,7 @@ pub struct SearchInventoryParams {
     /// Search query
     pub query: String,
     /// Max results per entity type (default 10)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
 
@@ -130,7 +137,10 @@ pub struct UpsertServiceParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpsertVendorParams {
+    /// Vendor name (required for create, used for matching on upsert)
     pub name: String,
+    /// Vendor ID (UUID). When provided, updates the specific vendor by ID instead of name-based upsert.
+    pub id: Option<String>,
     pub category: Option<String>,
     pub account_number: Option<String>,
     pub support_phone: Option<String>,
@@ -159,10 +169,48 @@ pub struct DeleteServiceParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DeleteVendorParams {
-    /// Vendor name to delete (case-insensitive match)
-    pub name: String,
+    /// Vendor name to delete (case-insensitive match). Ignored if id is provided.
+    pub name: Option<String>,
+    /// Vendor ID (UUID). Takes precedence over name for disambiguation.
+    pub id: Option<String>,
     /// Must be true to confirm deletion. If false/omitted, returns a preview of what would be affected.
     pub confirm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListVendorsParams {
+    /// Filter by vendor category (e.g., "isp", "saas", "hardware")
+    pub category: Option<String>,
+    /// Filter by client slug (show only vendors linked to this client)
+    pub client_slug: Option<String>,
+    /// Max results (default 50)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListClientsParams {
+    /// Max results (default 50)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListSitesParams {
+    /// Filter by client slug
+    pub client_slug: Option<String>,
+    /// Max results (default 50)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListNetworksParams {
+    /// Filter by site slug
+    pub site_slug: Option<String>,
+    /// Max results (default 50)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -334,14 +382,40 @@ pub(crate) async fn handle_get_network(
     }
 }
 
+/// Resolve a vendor by ID (preferred) or name. Returns Ok(vendor) or a CallToolResult error.
+async fn resolve_vendor(
+    pool: &sqlx::PgPool,
+    id: Option<&str>,
+    name: Option<&str>,
+) -> Result<crate::models::vendor::Vendor, CallToolResult> {
+    if let Some(id_str) = id {
+        let uuid = match uuid::Uuid::parse_str(id_str) {
+            Ok(u) => u,
+            Err(_) => return Err(error_result(&format!("Invalid UUID: {id_str}"))),
+        };
+        return match crate::repo::vendor_repo::get_vendor(pool, uuid).await {
+            Ok(Some(v)) if v.status != "deleted" => Ok(v),
+            Ok(_) => Err(not_found("Vendor", id_str)),
+            Err(e) => Err(error_result(&format!("Database error: {e}"))),
+        };
+    }
+    if let Some(name_str) = name {
+        return match crate::repo::vendor_repo::get_vendor_by_name(pool, name_str).await {
+            Ok(Some(v)) => Ok(v),
+            Ok(None) => Err(not_found_vendor_with_suggestions(pool, name_str).await),
+            Err(e) => Err(error_result(&format!("Database error: {e}"))),
+        };
+    }
+    Err(error_result("Either 'id' or 'name' must be provided"))
+}
+
 pub(crate) async fn handle_get_vendor(
     brain: &super::OpsBrain,
     p: GetVendorParams,
 ) -> CallToolResult {
-    match crate::repo::vendor_repo::get_vendor_by_name(&brain.pool, &p.name).await {
-        Ok(Some(vendor)) => json_result(&vendor),
-        Ok(None) => not_found_vendor_with_suggestions(&brain.pool, &p.name).await,
-        Err(e) => error_result(&format!("Database error: {e}")),
+    match resolve_vendor(&brain.pool, p.id.as_deref(), p.name.as_deref()).await {
+        Ok(vendor) => json_result(&vendor),
+        Err(err) => err,
     }
 }
 
@@ -489,6 +563,31 @@ pub(crate) async fn handle_upsert_vendor(
         },
         None => None,
     };
+    // If ID is provided, update that specific vendor
+    if let Some(id_str) = &p.id {
+        let id = match uuid::Uuid::parse_str(id_str) {
+            Ok(u) => u,
+            Err(_) => return error_result(&format!("Invalid UUID: {id_str}")),
+        };
+        return match crate::repo::vendor_repo::update_vendor_by_id(
+            &brain.pool,
+            id,
+            &p.name,
+            p.category.as_deref(),
+            p.account_number.as_deref(),
+            p.support_phone.as_deref(),
+            p.support_email.as_deref(),
+            p.support_portal.as_deref(),
+            p.sla_summary.as_deref(),
+            contract_end,
+            p.notes.as_deref(),
+        )
+        .await
+        {
+            Ok(vendor) => json_result(&vendor),
+            Err(e) => error_result(&format!("Database error: {e}")),
+        };
+    }
     match crate::repo::vendor_repo::upsert_vendor(
         &brain.pool,
         &p.name,
@@ -540,6 +639,88 @@ pub(crate) async fn handle_link_server_service(
             "Linked server '{}' to service '{}'",
             p.server_slug, p.service_slug
         ))]),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_list_vendors(
+    brain: &super::OpsBrain,
+    p: ListVendorsParams,
+) -> CallToolResult {
+    let client_id = match &p.client_slug {
+        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+            Ok(Some(c)) => Some(c.id),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+    match crate::repo::vendor_repo::list_vendors(&brain.pool, client_id, p.category.as_deref())
+        .await
+    {
+        Ok(mut vendors) => {
+            let limit = p.limit.unwrap_or(50) as usize;
+            vendors.truncate(limit);
+            json_result(&vendors)
+        }
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_list_clients(
+    brain: &super::OpsBrain,
+    p: ListClientsParams,
+) -> CallToolResult {
+    match crate::repo::client_repo::list_clients(&brain.pool).await {
+        Ok(mut clients) => {
+            let limit = p.limit.unwrap_or(50) as usize;
+            clients.truncate(limit);
+            json_result(&clients)
+        }
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_list_sites(
+    brain: &super::OpsBrain,
+    p: ListSitesParams,
+) -> CallToolResult {
+    let client_id = match &p.client_slug {
+        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+            Ok(Some(c)) => Some(c.id),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+    match crate::repo::site_repo::list_sites(&brain.pool, client_id).await {
+        Ok(mut sites) => {
+            let limit = p.limit.unwrap_or(50) as usize;
+            sites.truncate(limit);
+            json_result(&sites)
+        }
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_list_networks(
+    brain: &super::OpsBrain,
+    p: ListNetworksParams,
+) -> CallToolResult {
+    let site_id = match &p.site_slug {
+        Some(slug) => match crate::repo::site_repo::get_site_by_slug(&brain.pool, slug).await {
+            Ok(Some(s)) => Some(s.id),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Site", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+    match crate::repo::network_repo::list_networks(&brain.pool, site_id).await {
+        Ok(mut networks) => {
+            let limit = p.limit.unwrap_or(50) as usize;
+            networks.truncate(limit);
+            json_result(&networks)
+        }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -648,12 +829,11 @@ pub(crate) async fn handle_delete_vendor(
     brain: &super::OpsBrain,
     params: DeleteVendorParams,
 ) -> CallToolResult {
-    let vendor = match crate::repo::vendor_repo::get_vendor_by_name(&brain.pool, &params.name).await
-    {
-        Ok(Some(v)) => v,
-        Ok(None) => return not_found_vendor_with_suggestions(&brain.pool, &params.name).await,
-        Err(e) => return error_result(&format!("Database error: {e}")),
-    };
+    let vendor =
+        match resolve_vendor(&brain.pool, params.id.as_deref(), params.name.as_deref()).await {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
     let refs = match crate::repo::vendor_repo::count_vendor_references(&brain.pool, vendor.id).await
     {
         Ok(r) => r,
@@ -688,7 +868,7 @@ pub(crate) async fn handle_delete_vendor(
             "id": vendor.id.to_string(),
             "note": "Vendor marked as deleted (soft delete). FK references preserved.",
         })),
-        Ok(false) => not_found("Vendor", &params.name),
+        Ok(false) => not_found("Vendor", &vendor.id.to_string()),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
