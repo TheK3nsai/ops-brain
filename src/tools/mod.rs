@@ -870,15 +870,23 @@ impl ServerHandler for OpsBrain {
                  daily/weekly operational summaries aggregating monitoring, incidents, \
                  handoffs, and tickets. \
                  \
-                 IMPORTANT: You are part of a multi-CC team. On session start, run these \
-                 three searches in order: (1) search_knowledge query 'CC Team Identity Naming' \
-                 for your identity and role, (2) search_knowledge query 'CC Team Compliance \
-                 Data Sharing Coordination' for compliance rules and handoff protocol, \
-                 (3) search_knowledge query 'CC Team Contribution Standards Session Protocol' \
-                 for session startup/close checklists and quality standards. Follow the Session \
-                 Startup Checklist before doing any other work. Always add_knowledge for gotchas \
-                 and lessons learned, create_handoff when another CC should pick up work, and \
-                 use get_situational_awareness before making infrastructure changes.",
+                 IMPORTANT: You are part of a multi-CC team. \
+                 IDENTITY: If you don't already know your CC name and role (from local \
+                 memory or prior context), run search_knowledge query 'CC Team Identity \
+                 Naming' and match your hostname. Use your CC Name in all authored content. \
+                 STARTUP: When starting a session without an immediate user task, check \
+                 pending handoffs to your machine (list_handoffs) and open incidents for \
+                 your client scope (list_incidents). Address P1 handoffs before other work. \
+                 If the user leads with a direct task, handle it first — check handoffs \
+                 and incidents when there's a natural pause. \
+                 COMPLIANCE: Before creating or sharing cross-client content, reference \
+                 search_knowledge query 'CC Team Compliance Data Sharing' for rules. \
+                 STANDARDS: When authoring knowledge, runbooks, or incidents, reference \
+                 search_knowledge query 'CC Team Contribution Standards' for formatting. \
+                 ALWAYS: (1) get_situational_awareness before making infrastructure changes, \
+                 (2) add_knowledge for gotchas and lessons learned, \
+                 (3) create_handoff when another CC should pick up work or your session \
+                 is ending with unfinished work.",
             )
     }
 }
