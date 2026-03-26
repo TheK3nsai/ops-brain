@@ -18,38 +18,38 @@ get_situational_awareness(server_slug: "hvfs0")
 | Tool | Description |
 |------|-------------|
 | `get_server` | Server details + services, site, networks. Fuzzy slug suggestions on typos ("Did you mean: ...?") |
-| `list_servers` | Filter by client, site, role, status |
-| `get_service` / `list_services` | Service details + which servers run it |
+| `list_servers` | Filter by client, site, role, status. Configurable `limit` (default 50) |
+| `get_service` / `list_services` | Service details + which servers run it. Configurable `limit` |
 | `get_site` / `get_client` | Entity lookups with related data |
 | `get_network` / `get_vendor` | Network and vendor lookups |
-| `search_inventory` | Full-text search across all entities (servers, services, runbooks, knowledge, incidents, handoffs) |
+| `search_inventory` | Full-text search across all entities. Configurable `limit` per type (default 10) |
 | `upsert_client` / `upsert_site` / `upsert_server` | Create or update records |
 | `upsert_service` / `upsert_vendor` | Create or update records |
 | `link_server_service` | Associate a service with a server |
-| `delete_server` | Delete server by slug with preview + confirm safety gate |
-| `delete_service` | Delete service by slug with preview + confirm safety gate |
-| `delete_vendor` | Delete vendor by name with preview + confirm safety gate |
+| `delete_server` | Soft-delete server by slug with preview + confirm safety gate |
+| `delete_service` | Soft-delete service by slug with preview + confirm safety gate |
+| `delete_vendor` | Soft-delete vendor by name with preview + confirm safety gate |
 
 ### Runbooks (5)
 | Tool | Description |
 |------|-------------|
-| `get_runbook` / `list_runbooks` | Retrieve by slug or filter by category/service/server/tag/client |
-| `search_runbooks` | Search runbook content (mode: fts/semantic/hybrid). Supports `client_slug` scoping + `acknowledge_cross_client` gate |
+| `get_runbook` / `list_runbooks` | Retrieve by slug or filter by category/service/server/tag/client. Configurable `limit` |
+| `search_runbooks` | Search runbook content (mode: fts/semantic/hybrid). Configurable `limit`. Supports `client_slug` scoping + `acknowledge_cross_client` gate |
 | `create_runbook` / `update_runbook` | CRUD with auto-versioning. Supports `client_slug` ownership + `cross_client_safe` flag |
 
 ### Knowledge (3)
 | Tool | Description |
 |------|-------------|
 | `add_knowledge` | Store operational facts, gotchas, tips. Supports `cross_client_safe` flag |
-| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid). Supports `client_slug` scoping + `acknowledge_cross_client` gate |
-| `list_knowledge` | Filter by category or client |
+| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid). Configurable `limit`. Supports `client_slug` scoping + `acknowledge_cross_client` gate |
+| `list_knowledge` | Filter by category or client. Configurable `limit` |
 
 ### Context (3)
 | Tool | Description |
 |------|-------------|
-| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Cross-client runbooks/knowledge/incidents auto-gated; use `acknowledge_cross_client` to release. Supports `compact=true` (~94K→~10K) and `sections` filtering |
-| `get_client_overview` | Full client briefing with all related data |
-| `get_server_context` | Everything about a specific server. Cross-client runbooks/knowledge/incidents auto-gated; use `acknowledge_cross_client` to release. Supports `compact=true` and `sections` filtering |
+| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Cross-client auto-gated. `compact=true` (~94K→~10K), `sections` filtering. Returns `_warnings` on transient failures |
+| `get_client_overview` | Full client briefing with all related data. Returns `_warnings` on transient failures |
+| `get_server_context` | Everything about a specific server. Cross-client auto-gated. `compact=true`, `sections` filtering. Returns `_warnings` on transient failures |
 
 ### Incidents (6)
 | Tool | Description |
@@ -58,7 +58,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `update_incident` | Update fields; setting status to `resolved` auto-calculates TTR. Supports `cross_client_safe` flag |
 | `get_incident` | Full incident details with linked servers, services |
 | `list_incidents` | Filter by client, status, severity |
-| `search_incidents` | Search incidents (mode: fts/semantic/hybrid) |
+| `search_incidents` | Search incidents (mode: fts/semantic/hybrid). Configurable `limit` |
 | `link_incident` | Link servers, services, runbooks (with usage tracking), and vendors |
 
 ### Sessions (3)
@@ -75,7 +75,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `accept_handoff` | Accept a pending handoff |
 | `complete_handoff` | Mark a handoff as done |
 | `list_handoffs` | Filter by status, source/target machine |
-| `search_handoffs` | Search handoffs (mode: fts/semantic/hybrid) |
+| `search_handoffs` | Search handoffs (mode: fts/semantic/hybrid). Configurable `limit` |
 
 ### Monitoring (6)
 | Tool | Description |
@@ -319,6 +319,15 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools (before Phase 9 additions)
 
 - [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge/incidents), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions, `compact` mode + `sections` filtering for context tools — 64 tools
+
+**Post-phase improvements:**
+
+- [x] Fuzzy slug suggestions (pg_trgm "Did you mean: ...?" on 404s)
+- [x] UNION incident queries (single query replaces N+1 pattern)
+- [x] Push monitor diagnostic hints (DOWN = heartbeat expired, not service failure)
+- [x] `_warnings` array on context tools (surfaces transient sub-query failures instead of silent empty results)
+- [x] Consistent result limits (`limit` param on all list/search tools, standardized defaults)
+- [x] Soft deletes (servers/services/vendors set `status='deleted'` — FK references and audit trail preserved)
 
 ## License
 
