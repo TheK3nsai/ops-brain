@@ -219,6 +219,69 @@ pub async fn link_incident_vendor(
     Ok(())
 }
 
+/// Get related incidents from all sources in a single query.
+///
+/// Combines client-level, server-linked, and service-linked incidents using
+/// UNION, deduplicating via DISTINCT. Replaces 2-3 separate queries + app-level dedup.
+pub async fn get_related_incidents(
+    pool: &PgPool,
+    client_id: Option<Uuid>,
+    server_id: Option<Uuid>,
+    service_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<Incident>, sqlx::Error> {
+    // Build UNION branches based on which IDs are present
+    let mut unions: Vec<String> = Vec::new();
+    let mut param_idx = 1u32;
+    let mut binds: Vec<Uuid> = Vec::new();
+
+    if let Some(cid) = client_id {
+        unions.push(format!(
+            "SELECT * FROM incidents WHERE client_id = ${param_idx}"
+        ));
+        param_idx += 1;
+        binds.push(cid);
+    }
+    if let Some(sid) = server_id {
+        unions.push(format!(
+            "SELECT i.* FROM incidents i \
+             JOIN incident_servers isv ON i.id = isv.incident_id \
+             WHERE isv.server_id = ${param_idx}"
+        ));
+        param_idx += 1;
+        binds.push(sid);
+    }
+    if let Some(svc_id) = service_id {
+        unions.push(format!(
+            "SELECT i.* FROM incidents i \
+             JOIN incident_services iss ON i.id = iss.incident_id \
+             WHERE iss.service_id = ${param_idx}"
+        ));
+        param_idx += 1;
+        binds.push(svc_id);
+    }
+
+    if unions.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let query = format!(
+        "SELECT DISTINCT ON (id) * FROM ({}) sub \
+         ORDER BY id, reported_at DESC",
+        unions.join(" UNION ALL ")
+    );
+    // Wrap to apply final ordering + limit
+    let query =
+        format!("SELECT * FROM ({query}) deduped ORDER BY reported_at DESC LIMIT ${param_idx}");
+
+    let mut q = sqlx::query_as::<_, Incident>(&query);
+    for id in &binds {
+        q = q.bind(id);
+    }
+    q = q.bind(limit);
+    q.fetch_all(pool).await
+}
+
 /// Get incidents linked to a specific server
 pub async fn get_incidents_for_server(
     pool: &PgPool,

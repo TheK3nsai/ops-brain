@@ -271,20 +271,6 @@ pub(crate) async fn handle_get_situational_awareness(
                 .collect();
         }
 
-        // Get recent incidents for this client
-        let incidents: Vec<Incident> = sqlx::query_as::<_, Incident>(
-            "SELECT * FROM incidents WHERE client_id = $1 ORDER BY reported_at DESC LIMIT 10",
-        )
-        .bind(cid)
-        .fetch_all(&brain.pool)
-        .await
-        .unwrap_or_default();
-
-        awareness.recent_incidents = incidents
-            .iter()
-            .filter_map(|i| serde_json::to_value(i).ok())
-            .collect();
-
         // Get knowledge for this client
         if let Ok(entries) =
             crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid)).await
@@ -296,57 +282,20 @@ pub(crate) async fn handle_get_situational_awareness(
         }
     }
 
-    // If we have a server, also get incidents linked to that server
-    if let Some(srv_id) = server_id {
-        let server_incidents: Vec<Incident> = sqlx::query_as::<_, Incident>(
-            "SELECT i.* FROM incidents i \
-             JOIN incident_servers isv ON i.id = isv.incident_id \
-             WHERE isv.server_id = $1 \
-             ORDER BY i.reported_at DESC LIMIT 10",
+    // Get all related incidents in a single UNION query (client + server + service)
+    if section_included(&sections, "incidents") {
+        awareness.recent_incidents = crate::repo::incident_repo::get_related_incidents(
+            &brain.pool,
+            client_id,
+            server_id,
+            service_id,
+            10,
         )
-        .bind(srv_id)
-        .fetch_all(&brain.pool)
         .await
-        .unwrap_or_default();
-
-        // Merge with existing incidents (avoid duplicates by ID)
-        for inc in &server_incidents {
-            if let Ok(val) = serde_json::to_value(inc) {
-                if !awareness
-                    .recent_incidents
-                    .iter()
-                    .any(|existing| existing.get("id") == val.get("id"))
-                {
-                    awareness.recent_incidents.push(val);
-                }
-            }
-        }
-    }
-
-    // If we have a service, also get incidents linked to that service
-    if let Some(svc_id) = service_id {
-        let service_incidents: Vec<Incident> = sqlx::query_as::<_, Incident>(
-            "SELECT i.* FROM incidents i \
-             JOIN incident_services iss ON i.id = iss.incident_id \
-             WHERE iss.service_id = $1 \
-             ORDER BY i.reported_at DESC LIMIT 10",
-        )
-        .bind(svc_id)
-        .fetch_all(&brain.pool)
-        .await
-        .unwrap_or_default();
-
-        for inc in &service_incidents {
-            if let Ok(val) = serde_json::to_value(inc) {
-                if !awareness
-                    .recent_incidents
-                    .iter()
-                    .any(|existing| existing.get("id") == val.get("id"))
-                {
-                    awareness.recent_incidents.push(val);
-                }
-            }
-        }
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|i| serde_json::to_value(i).ok())
+        .collect();
     }
 
     // Get pending handoffs
@@ -801,41 +750,20 @@ pub(crate) async fn handle_get_server_context(
         Vec::new()
     };
 
-    // Get incidents linked to this server
-    let incidents: Vec<Incident> = sqlx::query_as::<_, Incident>(
-        "SELECT i.* FROM incidents i \
-         JOIN incident_servers isv ON i.id = isv.incident_id \
-         WHERE isv.server_id = $1 \
-         ORDER BY i.reported_at DESC LIMIT 10",
-    )
-    .bind(server.id)
-    .fetch_all(&brain.pool)
-    .await
-    .unwrap_or_default();
-
-    // Also get client-level incidents
-    let client_incidents: Vec<Incident> = if let Some(cid) = client_id {
-        sqlx::query_as::<_, Incident>(
-            "SELECT * FROM incidents WHERE client_id = $1 ORDER BY reported_at DESC LIMIT 10",
+    // Get all related incidents in a single UNION query (client + server)
+    let mut all_incidents: Vec<serde_json::Value> =
+        crate::repo::incident_repo::get_related_incidents(
+            &brain.pool,
+            client_id,
+            Some(server.id),
+            None,
+            10,
         )
-        .bind(cid)
-        .fetch_all(&brain.pool)
         .await
         .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    // Merge incidents, dedup by id
-    let mut all_incidents: Vec<serde_json::Value> = Vec::new();
-    let mut seen_ids = std::collections::HashSet::new();
-    for inc in incidents.iter().chain(client_incidents.iter()) {
-        if seen_ids.insert(inc.id) {
-            if let Ok(val) = serde_json::to_value(inc) {
-                all_incidents.push(val);
-            }
-        }
-    }
+        .iter()
+        .filter_map(|i| serde_json::to_value(i).ok())
+        .collect();
 
     // Get runbooks linked to this server
     let runbooks = crate::repo::runbook_repo::list_runbooks(
