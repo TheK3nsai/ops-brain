@@ -40,7 +40,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 25 sqlx migration files (auto-run on startup)
+migrations/        # 26 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -279,16 +279,14 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 ## Next Steps
 
 ### Code — Completed Improvements
-- **`delete_server`**: DONE — accepts slug, shows preview of linked entities, requires confirm=true. CASCADE handles junction tables.
-- **`delete_service`**: DONE — same pattern as delete_server.
-- **`delete_vendor`**: DONE — accepts name (case-insensitive), same preview+confirm pattern.
+- **`delete_server`**: DONE — accepts slug, shows preview of linked entities, requires confirm=true. Soft delete (status='deleted').
+- **`delete_service`**: DONE — same pattern as delete_server. Soft delete.
+- **`delete_vendor`**: DONE — accepts name (case-insensitive), same preview+confirm pattern. Soft delete.
 - **Fuzzy slug suggestions (P2)**: DONE — pg_trgm extension, GIN trigram indexes, `not_found_with_suggestions()` async helper. 43 slug lookup sites updated. `suggest_repo.rs` handles generic similarity queries.
 - **UNION incident queries (P5)**: DONE — `get_related_incidents()` replaces 2-3 separate queries + app-level dedup with single UNION ALL + DISTINCT ON query. Used in `get_situational_awareness` and `get_server_context`.
-
-### Code — Remaining Proposals (from kensai-cloud CC handoff)
-- **P6 — Silent failures / _warnings array**: `get_situational_awareness` uses `unwrap_or_default()` on sub-queries — caller can't tell if a section is empty vs failed. Add `_warnings` array to surface transient errors.
-- **P7 — Inconsistent result limits**: Incidents hard-coded LIMIT 10, handoffs default 20, monitors unlimited, searches hard-coded 20. Standardize on configurable `limit` parameter.
-- **P8 — Soft deletes**: `delete_server`/`delete_service`/`delete_vendor` are hard deletes. Consider `status = 'deleted'` or CASCADE SET NULL with a note.
+- **_warnings array (P6)**: DONE — Context tools (`get_situational_awareness`, `get_client_overview`, `get_server_context`) surface transient sub-query failures in `_warnings` array instead of silently returning empty data. Covers vendors, knowledge, incidents, handoffs, Kuma, Zammad.
+- **Consistent result limits (P7)**: DONE — All list/search tools accept `limit` parameter. List defaults: 50, search defaults: 20. No hard-coded limits remain.
+- **Soft deletes (P8)**: DONE — `delete_server`/`delete_service`/`delete_vendor` set `status='deleted'` instead of hard DELETE. FK references preserved. Migration adds `status` column to services and vendors tables. All list/search/lookup queries exclude deleted records.
 
 ### Data Quality
 - **Vendor deduplication**: 19 vendors on remote, several duplicates. Need to merge and link to correct clients.
