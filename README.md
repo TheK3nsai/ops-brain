@@ -47,15 +47,15 @@ get_situational_awareness(server_slug: "hvfs0")
 ### Context (3)
 | Tool | Description |
 |------|-------------|
-| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Cross-client runbooks/knowledge auto-gated via resolved client; use `acknowledge_cross_client` to release |
+| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Cross-client runbooks/knowledge/incidents auto-gated; use `acknowledge_cross_client` to release. Supports `compact=true` (~94K→~10K) and `sections` filtering |
 | `get_client_overview` | Full client briefing with all related data |
-| `get_server_context` | Everything about a specific server. Cross-client runbooks/knowledge auto-gated; use `acknowledge_cross_client` to release |
+| `get_server_context` | Everything about a specific server. Cross-client runbooks/knowledge/incidents auto-gated; use `acknowledge_cross_client` to release. Supports `compact=true` and `sections` filtering |
 
 ### Incidents (6)
 | Tool | Description |
 |------|-------------|
-| `create_incident` | Open a new incident, optionally linking servers and services |
-| `update_incident` | Update fields; setting status to `resolved` auto-calculates TTR |
+| `create_incident` | Open a new incident, optionally linking servers and services. Supports `cross_client_safe` flag |
+| `update_incident` | Update fields; setting status to `resolved` auto-calculates TTR. Supports `cross_client_safe` flag |
 | `get_incident` | Full incident details with linked servers, services |
 | `list_incidents` | Filter by client, status, severity |
 | `search_incidents` | Search incidents (mode: fts/semantic/hybrid) |
@@ -109,7 +109,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ### Semantic Search (2)
 | Tool | Description |
 |------|-------------|
-| `semantic_search` | AI-powered cross-table search — finds conceptually related content. Supports `client_slug` scoping + `acknowledge_cross_client` gate for runbooks/knowledge |
+| `semantic_search` | AI-powered cross-table search — finds conceptually related content. Supports `client_slug` scoping + `acknowledge_cross_client` gate for runbooks/knowledge/incidents |
 | `backfill_embeddings` | Generate embeddings for existing records (batch, with progress reporting) |
 
 ## REST API
@@ -215,7 +215,7 @@ psql -U ops_brain -d ops_brain -f seed/seed.sql
 {
   "mcpServers": {
     "ops-brain": {
-      "type": "streamable-http",
+      "type": "http",
       "url": "https://ops.example.com/mcp",
       "headers": {
         "Authorization": "Bearer <your-token>"
@@ -284,9 +284,9 @@ ops-brain serves a solo operator managing two clients with different compliance 
 
 ### How It Works
 
-- **Runbooks** and **knowledge entries** can be assigned to a client via `client_slug` (unset = global)
+- **Runbooks**, **knowledge entries**, and **incidents** can be assigned to a client via `client_slug` (unset = global)
 - A `cross_client_safe` flag (default: false) controls whether content can surface outside its owning client
-- **Context tools** (`get_situational_awareness`, `get_server_context`) automatically resolve the client from the server/service chain and gate runbooks/knowledge
+- **Context tools** (`get_situational_awareness`, `get_server_context`) automatically resolve the client from the server/service chain and gate runbooks/knowledge/incidents
 - **Search tools** accept optional `client_slug` to explicitly scope results
 - When cross-client content is detected without acknowledgment, the **actual content is withheld** — only a notice with count and owning client is returned
 - Pass `acknowledge_cross_client: true` on a second call to release withheld content
@@ -317,7 +317,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 7**: Zammad integration — live Zammad REST API queries, ticket CRUD with time accounting, ticket-to-entity linking, context tools enriched with ticket data — 56 tools
 - [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools (before Phase 9 additions)
 
-- [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions — 64 tools
+- [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge/incidents), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions, `compact` mode + `sections` filtering for context tools — 64 tools
 
 ## License
 
