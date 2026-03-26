@@ -316,8 +316,8 @@ impl OpsBrain {
     #[tool(
         name = "log_runbook_execution",
         description = "Record that a runbook was executed. Creates an audit trail entry with who ran it, \
-        the result (success/failure/partial/skipped), duration, and notes. \
-        Useful for compliance audits (e.g. 'when was the last DR test?')."
+        the result (success/failure/partial/skipped), duration, notes, and optional client_slug for \
+        HIPAA audit trails. Useful for compliance audits (e.g. 'when was the last DR test?')."
     )]
     async fn log_runbook_execution(
         &self,
@@ -607,7 +607,8 @@ impl OpsBrain {
     #[tool(
         name = "get_catchup",
         description = "See what changed since you were last here. Returns new/updated handoffs, incidents, \
-        knowledge, and runbooks since a given timestamp. Reduces startup friction for returning CCs."
+        knowledge, and runbooks since a given timestamp. Compact mode (default) returns summary fields only \
+        and excludes completed handoffs — set compact=false for full bodies."
     )]
     async fn get_catchup(
         &self,

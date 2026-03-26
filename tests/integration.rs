@@ -1198,6 +1198,7 @@ mod runbook_execution_tests {
             Some("DR test completed, all systems restored"),
             Some(45),
             None,
+            Some("hsr"),
         )
         .await
         .unwrap();
@@ -1210,6 +1211,7 @@ mod runbook_execution_tests {
             Some("DR test completed, all systems restored")
         );
         assert_eq!(exec.duration_minutes, Some(45));
+        assert_eq!(exec.client_slug.as_deref(), Some("hsr"));
 
         // Log another execution
         let exec2 = ops_brain::repo::runbook_execution_repo::log_execution(
@@ -1219,6 +1221,7 @@ mod runbook_execution_tests {
             "failure",
             Some("Network issue during step 3"),
             Some(15),
+            None,
             None,
         )
         .await

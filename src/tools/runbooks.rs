@@ -85,6 +85,9 @@ pub struct LogRunbookExecutionParams {
     pub duration_minutes: Option<i32>,
     /// When the runbook was executed (ISO 8601). Defaults to now.
     pub executed_at: Option<String>,
+    /// Client context for this execution (e.g. "hsr", "cpa"). For HIPAA audit trails
+    /// when a cross-client runbook is executed for a specific client.
+    pub client_slug: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -365,6 +368,15 @@ pub(crate) async fn handle_log_runbook_execution(
         None => None,
     };
 
+    // Validate client_slug if provided
+    if let Some(ref slug) = p.client_slug {
+        match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+            Ok(Some(_)) => {}
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        }
+    }
+
     match crate::repo::runbook_execution_repo::log_execution(
         &brain.pool,
         runbook.id,
@@ -373,6 +385,7 @@ pub(crate) async fn handle_log_runbook_execution(
         p.notes.as_deref(),
         p.duration_minutes,
         executed_at,
+        p.client_slug.as_deref(),
     )
     .await
     {

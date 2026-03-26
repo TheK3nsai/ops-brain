@@ -12,4 +12,5 @@ pub struct RunbookExecution {
     pub duration_minutes: Option<i32>,
     pub executed_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    pub client_slug: Option<String>,
 }

@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::models::runbook_execution::RunbookExecution;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn log_execution(
     pool: &PgPool,
     runbook_id: Uuid,
@@ -11,11 +12,12 @@ pub async fn log_execution(
     notes: Option<&str>,
     duration_minutes: Option<i32>,
     executed_at: Option<chrono::DateTime<chrono::Utc>>,
+    client_slug: Option<&str>,
 ) -> Result<RunbookExecution, sqlx::Error> {
     let now = executed_at.unwrap_or_else(chrono::Utc::now);
     sqlx::query_as::<_, RunbookExecution>(
-        "INSERT INTO runbook_executions (id, runbook_id, executor, result, notes, duration_minutes, executed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO runbook_executions (id, runbook_id, executor, result, notes, duration_minutes, executed_at, client_slug)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *",
     )
     .bind(Uuid::now_v7())
@@ -25,6 +27,7 @@ pub async fn log_execution(
     .bind(notes)
     .bind(duration_minutes)
     .bind(now)
+    .bind(client_slug)
     .fetch_one(pool)
     .await
 }

@@ -97,6 +97,9 @@ pub struct GetCatchupParams {
     /// Max results per category (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
+    /// Compact mode (default true): returns summary fields only (title, status, priority).
+    /// Set to false for full content bodies. Compact also excludes completed handoffs.
+    pub compact: Option<bool>,
 }
 
 // ===== SESSION HANDLERS =====
@@ -331,17 +334,22 @@ pub(crate) async fn handle_get_catchup(
         }
     };
     let limit = p.limit.unwrap_or(20);
+    let compact = p.compact.unwrap_or(true);
 
     let mut results = serde_json::Map::new();
 
     // New/updated handoffs since timestamp
-    let handoffs = sqlx::query_as::<_, crate::models::handoff::Handoff>(
-        "SELECT * FROM handoffs WHERE updated_at > $1 ORDER BY updated_at DESC LIMIT $2",
-    )
-    .bind(since)
-    .bind(limit)
-    .fetch_all(&brain.pool)
-    .await;
+    // In compact mode, exclude completed handoffs (noise for orientation)
+    let handoff_query = if compact {
+        "SELECT * FROM handoffs WHERE updated_at > $1 AND status != 'completed' ORDER BY updated_at DESC LIMIT $2"
+    } else {
+        "SELECT * FROM handoffs WHERE updated_at > $1 ORDER BY updated_at DESC LIMIT $2"
+    };
+    let handoffs = sqlx::query_as::<_, crate::models::handoff::Handoff>(handoff_query)
+        .bind(since)
+        .bind(limit)
+        .fetch_all(&brain.pool)
+        .await;
 
     match handoffs {
         Ok(items) => {
@@ -357,13 +365,28 @@ pub(crate) async fn handle_get_catchup(
             } else {
                 items
             };
-            results.insert(
-                "handoffs".to_string(),
-                serde_json::json!({
-                    "count": filtered.len(),
-                    "items": filtered,
-                }),
-            );
+            if compact {
+                let json_items: Vec<serde_json::Value> = filtered
+                    .iter()
+                    .filter_map(|h| serde_json::to_value(h).ok())
+                    .collect();
+                let compacted = super::helpers::compact_vec(&json_items, "handoff");
+                results.insert(
+                    "handoffs".to_string(),
+                    serde_json::json!({
+                        "count": compacted.len(),
+                        "items": compacted,
+                    }),
+                );
+            } else {
+                results.insert(
+                    "handoffs".to_string(),
+                    serde_json::json!({
+                        "count": filtered.len(),
+                        "items": filtered,
+                    }),
+                );
+            }
         }
         Err(e) => {
             results.insert(
@@ -384,13 +407,28 @@ pub(crate) async fn handle_get_catchup(
 
     match incidents {
         Ok(items) => {
-            results.insert(
-                "incidents".to_string(),
-                serde_json::json!({
-                    "count": items.len(),
-                    "items": items,
-                }),
-            );
+            if compact {
+                let json_items: Vec<serde_json::Value> = items
+                    .iter()
+                    .filter_map(|i| serde_json::to_value(i).ok())
+                    .collect();
+                let compacted = super::helpers::compact_vec(&json_items, "incident");
+                results.insert(
+                    "incidents".to_string(),
+                    serde_json::json!({
+                        "count": compacted.len(),
+                        "items": compacted,
+                    }),
+                );
+            } else {
+                results.insert(
+                    "incidents".to_string(),
+                    serde_json::json!({
+                        "count": items.len(),
+                        "items": items,
+                    }),
+                );
+            }
         }
         Err(e) => {
             results.insert(
@@ -411,13 +449,28 @@ pub(crate) async fn handle_get_catchup(
 
     match knowledge {
         Ok(items) => {
-            results.insert(
-                "knowledge".to_string(),
-                serde_json::json!({
-                    "count": items.len(),
-                    "items": items,
-                }),
-            );
+            if compact {
+                let json_items: Vec<serde_json::Value> = items
+                    .iter()
+                    .filter_map(|k| serde_json::to_value(k).ok())
+                    .collect();
+                let compacted = super::helpers::compact_vec(&json_items, "knowledge");
+                results.insert(
+                    "knowledge".to_string(),
+                    serde_json::json!({
+                        "count": compacted.len(),
+                        "items": compacted,
+                    }),
+                );
+            } else {
+                results.insert(
+                    "knowledge".to_string(),
+                    serde_json::json!({
+                        "count": items.len(),
+                        "items": items,
+                    }),
+                );
+            }
         }
         Err(e) => {
             results.insert(
@@ -438,13 +491,28 @@ pub(crate) async fn handle_get_catchup(
 
     match runbooks {
         Ok(items) => {
-            results.insert(
-                "runbooks".to_string(),
-                serde_json::json!({
-                    "count": items.len(),
-                    "items": items,
-                }),
-            );
+            if compact {
+                let json_items: Vec<serde_json::Value> = items
+                    .iter()
+                    .filter_map(|r| serde_json::to_value(r).ok())
+                    .collect();
+                let compacted = super::helpers::compact_vec(&json_items, "runbook");
+                results.insert(
+                    "runbooks".to_string(),
+                    serde_json::json!({
+                        "count": compacted.len(),
+                        "items": compacted,
+                    }),
+                );
+            } else {
+                results.insert(
+                    "runbooks".to_string(),
+                    serde_json::json!({
+                        "count": items.len(),
+                        "items": items,
+                    }),
+                );
+            }
         }
         Err(e) => {
             results.insert(
@@ -455,6 +523,16 @@ pub(crate) async fn handle_get_catchup(
     }
 
     results.insert("since".to_string(), serde_json::Value::String(p.since));
+    if compact {
+        results.insert(
+            "_tip".to_string(),
+            serde_json::Value::String(
+                "Compact mode: summary fields only, completed handoffs excluded. \
+                 Use compact=false for full bodies, or drill down with get_incident/get_runbook/get_ticket."
+                    .to_string(),
+            ),
+        );
+    }
 
     json_result(&serde_json::Value::Object(results))
 }

@@ -246,6 +246,7 @@ pub(crate) fn compact_keep_fields(entity_type: &str) -> &'static [&'static str] 
             "client_id",
             "reported_at",
             "resolved_at",
+            "updated_at",
             "time_to_resolve_minutes",
             "cross_client_safe",
             "_client_slug",
@@ -269,6 +270,7 @@ pub(crate) fn compact_keep_fields(entity_type: &str) -> &'static [&'static str] 
             "from_machine",
             "to_machine",
             "created_at",
+            "updated_at",
         ],
         "knowledge" => &[
             "id",
