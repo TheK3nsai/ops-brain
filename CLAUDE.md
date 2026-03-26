@@ -24,7 +24,7 @@ src/
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
     mod.rs           # OpsBrain struct + 64 #[tool] stubs (delegate to category modules)
-    helpers.rs       # Shared helpers: json_result, error_result, filter_cross_client, compact_*, etc.
+    helpers.rs       # Shared helpers: json_result, error_result, not_found_with_suggestions, filter_cross_client, compact_*, etc.
     shared.rs        # Shared async functions: embed_and_store, get_query_embedding, build_client_lookup, log_audit_entries
     inventory.rs     # Parameter structs + handler implementations for inventory tools
     runbooks.rs      # Parameter structs + handler implementations for runbook tools
@@ -40,7 +40,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 24 sqlx migration files (auto-run on startup)
+migrations/        # 25 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -51,10 +51,11 @@ seed/seed.sql      # Idempotent seed data with real infrastructure
 - Shared helpers (json_result, filter_cross_client, compact_*) live in `tools/helpers.rs`; shared async functions (embed_and_store, get_query_embedding, etc.) live in `tools/shared.rs`
 - OpsBrain fields are `pub(crate)` so category modules can access pool, kuma_config, embedding_client, zammad_config
 - Tool errors return `Ok(CallToolResult::error(...))`, never `Err(McpError)`
-- Slugs are the public API (not UUIDs) — tools resolve slugs to IDs internally
+- Slugs are the public API (not UUIDs) — tools resolve slugs to IDs internally. On miss, pg_trgm suggests similar slugs ("Did you mean: ...?") via `not_found_with_suggestions()` in helpers.rs
 - Tracing writes to stderr (critical: stdout is the MCP stdio transport)
 - IDs use UUIDv7 (`Uuid::now_v7()`) for time-ordered sorting
 - FTS uses PostgreSQL tsvector with weighted columns + GIN indexes
+- Fuzzy slug matching uses pg_trgm (trigram similarity) + GIN indexes on slug/name columns
 - Semantic search uses pgvector (HNSW cosine) + ollama nomic-embed-text (768 dims)
 - Embedding API is OpenAI-compatible (works with ollama, OpenAI, or any compatible provider)
 - Embedding column is nullable — records work fine without embeddings
@@ -253,7 +254,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 
 ## Semantic Search
 
-- **Extension**: pgvector (HNSW indexes, cosine distance)
+- **Extensions**: pgvector (HNSW indexes, cosine distance), pg_trgm (trigram similarity for fuzzy slug matching)
 - **Embeddings**: ollama nomic-embed-text (768 dims) via OpenAI-compatible API, nullable column
 - **Search**: Hybrid RRF (Reciprocal Rank Fusion) combines FTS rank + vector similarity
 - **Tables**: runbooks, knowledge, incidents, handoffs
@@ -277,10 +278,17 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 
 ## Next Steps
 
-### Code — New Tools
+### Code — Completed Improvements
 - **`delete_server`**: DONE — accepts slug, shows preview of linked entities, requires confirm=true. CASCADE handles junction tables.
 - **`delete_service`**: DONE — same pattern as delete_server.
 - **`delete_vendor`**: DONE — accepts name (case-insensitive), same preview+confirm pattern.
+- **Fuzzy slug suggestions (P2)**: DONE — pg_trgm extension, GIN trigram indexes, `not_found_with_suggestions()` async helper. 43 slug lookup sites updated. `suggest_repo.rs` handles generic similarity queries.
+- **UNION incident queries (P5)**: DONE — `get_related_incidents()` replaces 2-3 separate queries + app-level dedup with single UNION ALL + DISTINCT ON query. Used in `get_situational_awareness` and `get_server_context`.
+
+### Code — Remaining Proposals (from kensai-cloud CC handoff)
+- **P6 — Silent failures / _warnings array**: `get_situational_awareness` uses `unwrap_or_default()` on sub-queries — caller can't tell if a section is empty vs failed. Add `_warnings` array to surface transient errors.
+- **P7 — Inconsistent result limits**: Incidents hard-coded LIMIT 10, handoffs default 20, monitors unlimited, searches hard-coded 20. Standardize on configurable `limit` parameter.
+- **P8 — Soft deletes**: `delete_server`/`delete_service`/`delete_vendor` are hard deletes. Consider `status = 'deleted'` or CASCADE SET NULL with a note.
 
 ### Data Quality
 - **Vendor deduplication**: 19 vendors on remote, several duplicates. Need to merge and link to correct clients.

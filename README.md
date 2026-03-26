@@ -17,7 +17,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ### Inventory (18)
 | Tool | Description |
 |------|-------------|
-| `get_server` | Server details + services, site, networks |
+| `get_server` | Server details + services, site, networks. Fuzzy slug suggestions on typos ("Did you mean: ...?") |
 | `list_servers` | Filter by client, site, role, status |
 | `get_service` / `list_services` | Service details + which servers run it |
 | `get_site` / `get_client` | Entity lookups with related data |
@@ -145,7 +145,7 @@ curl -s -X POST https://ops.kensai.cloud/api/briefing \
 | SQL | sqlx (async, runtime queries) |
 | Async | tokio |
 | IDs | UUID v7 (time-ordered) |
-| Search | PostgreSQL tsvector + GIN indexes (FTS), pgvector HNSW (semantic) |
+| Search | PostgreSQL tsvector + GIN indexes (FTS), pgvector HNSW (semantic), pg_trgm (fuzzy slug matching) |
 | Embeddings | ollama nomic-embed-text (768 dims) via OpenAI-compatible API |
 | Monitoring | Uptime Kuma /metrics (Prometheus format, on-demand scraping) |
 | Ticketing | Zammad REST API (Token auth, live queries) |
@@ -177,8 +177,9 @@ just db-up
 # Option B: Use system PostgreSQL
 createuser ops_brain
 createdb ops_brain -O ops_brain
-# pgvector extension (requires superuser):
+# Extensions (require superuser):
 psql -U postgres -d ops_brain -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql -U postgres -d ops_brain -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
 # Pull embedding model
 ollama pull nomic-embed-text
@@ -249,7 +250,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 # OPS_BRAIN_EMBEDDING_URL=http://ollama:11434/v1/embeddings
 
 # PostgreSQL must use pgvector-enabled image (pgvector/pgvector:pg18)
-# and the extension must be created: CREATE EXTENSION IF NOT EXISTS vector;
+# Extensions auto-created by migrations: vector, pg_trgm
 
 # Seed the database
 cat seed/seed.sql | docker exec -i shared-postgres psql -U ops_brain -d ops_brain
