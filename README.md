@@ -343,6 +343,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] Soft deletes (servers/services/vendors set `status='deleted'` — FK references and audit trail preserved)
 - [x] Build tooling: mold linker (`.cargo/config.toml`) + sqlx-cli for migration management
 - [x] CC team knowledge restructured: 3 focused entries (Identity & Naming, Compliance & Data Sharing, Contribution Standards & Session Protocol)
+- [x] Adaptive CC startup protocol: identity lookup once (then local memory), ops check when idle, compliance/standards on-demand, user tasks take priority over ceremony
 
 ## License
 
