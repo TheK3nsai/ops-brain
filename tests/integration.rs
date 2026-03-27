@@ -1199,6 +1199,7 @@ mod runbook_execution_tests {
             Some(45),
             None,
             Some("hsr"),
+            None,
         )
         .await
         .unwrap();
@@ -1221,6 +1222,7 @@ mod runbook_execution_tests {
             "failure",
             Some("Network issue during step 3"),
             Some(15),
+            None,
             None,
             None,
         )

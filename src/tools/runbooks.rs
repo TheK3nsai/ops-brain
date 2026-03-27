@@ -3,7 +3,9 @@ use serde::Deserialize;
 
 use crate::validation::deserialize_flexible_i64;
 
-use super::helpers::{error_result, filter_cross_client, json_result, not_found_with_suggestions};
+use super::helpers::{
+    error_result, filter_cross_client, json_result, not_found, not_found_with_suggestions,
+};
 use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
 
@@ -88,6 +90,9 @@ pub struct LogRunbookExecutionParams {
     /// Client context for this execution (e.g. "hsr", "cpa"). For HIPAA audit trails
     /// when a cross-client runbook is executed for a specific client.
     pub client_slug: Option<String>,
+    /// Link this execution to an incident (UUID). Creates a bi-directional link:
+    /// the incident shows which runbooks were used, the runbook shows which incidents it resolved.
+    pub incident_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -377,6 +382,19 @@ pub(crate) async fn handle_log_runbook_execution(
         }
     }
 
+    // Parse and validate optional incident_id
+    let incident_id = match &p.incident_id {
+        Some(id_str) => match uuid::Uuid::parse_str(id_str) {
+            Ok(id) => match crate::repo::incident_repo::get_incident(&brain.pool, id).await {
+                Ok(Some(_)) => Some(id),
+                Ok(None) => return not_found("Incident", id_str),
+                Err(e) => return error_result(&format!("Database error: {e}")),
+            },
+            Err(_) => return error_result(&format!("Invalid incident UUID: {id_str}")),
+        },
+        None => None,
+    };
+
     match crate::repo::runbook_execution_repo::log_execution(
         &brain.pool,
         runbook.id,
@@ -386,6 +404,7 @@ pub(crate) async fn handle_log_runbook_execution(
         p.duration_minutes,
         executed_at,
         p.client_slug.as_deref(),
+        incident_id,
     )
     .await
     {
