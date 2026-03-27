@@ -117,14 +117,31 @@ pub async fn search_knowledge(
     query: &str,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
-    sqlx::query_as::<_, Knowledge>(
+    let results = sqlx::query_as::<_, Knowledge>(
         "SELECT * FROM knowledge
-         WHERE search_vector @@ plainto_tsquery('english', $1)
-         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+         WHERE search_vector @@ websearch_to_tsquery('english', $1)
+         ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
          LIMIT $2",
     )
     .bind(query)
     .bind(limit)
     .fetch_all(pool)
-    .await
+    .await?;
+
+    if results.is_empty() {
+        if let Some(or_text) = super::build_or_tsquery_text(query) {
+            return sqlx::query_as::<_, Knowledge>(
+                "SELECT * FROM knowledge
+                 WHERE search_vector @@ to_tsquery('english', $1)
+                 ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
+                 LIMIT $2",
+            )
+            .bind(&or_text)
+            .bind(limit)
+            .fetch_all(pool)
+            .await;
+        }
+    }
+
+    Ok(results)
 }
