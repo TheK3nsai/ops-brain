@@ -298,16 +298,20 @@ pub(crate) async fn handle_search_knowledge(
     let browse_mode = query_trimmed.is_empty() || query_trimmed == "*";
 
     if browse_mode {
-        return browse_recent_entries(brain, &tables, multi_table, p.client_slug.as_deref(),
+        return browse_recent_entries(
+            brain,
+            &tables,
+            multi_table,
+            p.client_slug.as_deref(),
             p.acknowledge_cross_client.unwrap_or(false),
-            p.limit.unwrap_or(20), p.compact.unwrap_or(true)).await;
+            p.limit.unwrap_or(20),
+            p.compact.unwrap_or(true),
+        )
+        .await;
     }
 
     // Default mode: "hybrid" for all searches (single or multi-table)
-    let mode = p
-        .mode
-        .as_deref()
-        .unwrap_or("hybrid");
+    let mode = p.mode.as_deref().unwrap_or("hybrid");
     if let Err(msg) =
         crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
     {
@@ -389,8 +393,12 @@ pub(crate) async fn handle_search_knowledge(
                         .await
                     }
                     _ => {
-                        crate::repo::knowledge_repo::search_knowledge(&brain.pool, &raw_query, limit)
-                            .await
+                        crate::repo::knowledge_repo::search_knowledge(
+                            &brain.pool,
+                            &raw_query,
+                            limit,
+                        )
+                        .await
                     }
                 };
                 match search_result {
@@ -719,9 +727,18 @@ async fn browse_recent_entries(
     }
 
     if !all_withheld.is_empty() {
-        results.insert("_cross_client_withheld".to_string(), serde_json::to_value(&all_withheld).unwrap_or_default());
+        results.insert(
+            "_cross_client_withheld".to_string(),
+            serde_json::to_value(&all_withheld).unwrap_or_default(),
+        );
     }
-    results.insert("_browse_mode".to_string(), serde_json::Value::String("Showing recent entries (no search query). Use a specific query for ranked results.".to_string()));
+    results.insert(
+        "_browse_mode".to_string(),
+        serde_json::Value::String(
+            "Showing recent entries (no search query). Use a specific query for ranked results."
+                .to_string(),
+        ),
+    );
 
     json_result(&serde_json::Value::Object(results))
 }

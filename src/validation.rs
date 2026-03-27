@@ -33,6 +33,31 @@ where
     }
 }
 
+/// Deserialize an `Option<i32>` that accepts both `5` (number) and `"5"` (string).
+pub fn deserialize_flexible_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum FlexibleI32 {
+        Int(i32),
+        Str(String),
+    }
+
+    let opt: Option<FlexibleI32> = Option::deserialize(deserializer)?;
+    match opt {
+        None => Ok(None),
+        Some(FlexibleI32::Int(n)) => Ok(Some(n)),
+        Some(FlexibleI32::Str(s)) => s
+            .parse::<i32>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("invalid integer string: \"{s}\""))),
+    }
+}
+
 pub const INCIDENT_SEVERITIES: &[&str] = &["low", "medium", "high", "critical"];
 pub const INCIDENT_STATUSES: &[&str] = &["open", "resolved"];
 pub const HANDOFF_STATUSES: &[&str] = &["pending", "accepted", "completed"];

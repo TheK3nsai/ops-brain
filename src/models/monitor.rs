@@ -12,6 +12,9 @@ pub struct Monitor {
     /// Override watchdog severity for this monitor. Values: low, medium, high, critical.
     /// NULL = use default role-based logic from server roles.
     pub severity_override: Option<String>,
+    /// Chronic flapper threshold. When recurrence_count >= threshold, severity auto-downgrades.
+    /// When >= 2*threshold, incident is auto-resolved immediately. NULL = use global default.
+    pub flap_threshold: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

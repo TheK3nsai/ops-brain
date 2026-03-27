@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::validation::deserialize_flexible_i64;
+use crate::validation::{deserialize_flexible_i32, deserialize_flexible_i64};
 
 use super::helpers::{error_result, json_result, not_found, not_found_with_suggestions};
 use crate::models::incident::Incident;
@@ -36,6 +36,11 @@ pub struct LinkMonitorParams {
     /// When set, watchdog uses this instead of role-based severity from server roles.
     /// Useful for critical services (e.g. EHR) that may run on non-critical-role servers.
     pub severity_override: Option<String>,
+    /// Chronic flapper threshold. When an incident's recurrence_count reaches this value,
+    /// severity auto-downgrades to "low". At 2x threshold, incidents are auto-resolved immediately.
+    /// Omit or set null to use the global default (OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD, default 5).
+    #[serde(default, deserialize_with = "deserialize_flexible_i32")]
+    pub flap_threshold: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -252,8 +257,13 @@ pub(crate) async fn handle_link_monitor(
         }
     }
 
-    if server_id.is_none() && service_id.is_none() && p.notes.is_none() && p.severity_override.is_none() {
-        return error_result("Provide at least one of: server_slug, service_slug, notes, or severity_override");
+    if server_id.is_none()
+        && service_id.is_none()
+        && p.notes.is_none()
+        && p.severity_override.is_none()
+        && p.flap_threshold.is_none()
+    {
+        return error_result("Provide at least one of: server_slug, service_slug, notes, severity_override, or flap_threshold");
     }
 
     match crate::repo::monitor_repo::upsert_monitor(
@@ -263,6 +273,7 @@ pub(crate) async fn handle_link_monitor(
         service_id,
         p.notes.as_deref(),
         p.severity_override.as_deref(),
+        p.flap_threshold,
     )
     .await
     {

@@ -84,4 +84,11 @@ pub struct Config {
     /// monitor (flap suppression). Default: 1800 (30 minutes).
     #[arg(long, env = "OPS_BRAIN_WATCHDOG_COOLDOWN_SECS", default_value = "1800")]
     pub watchdog_cooldown_secs: u64,
+
+    /// Global chronic flapper threshold. When a reopened incident's recurrence_count reaches
+    /// this value, severity auto-downgrades to "low". At 2x threshold, the incident is
+    /// auto-resolved immediately. Per-monitor flap_threshold (via link_monitor) overrides this.
+    /// Default: 5.
+    #[arg(long, env = "OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD", default_value = "5")]
+    pub watchdog_flap_threshold: u32,
 }

@@ -568,13 +568,11 @@ pub(crate) async fn handle_upsert_vendor(
 
     // Resolve client_slug to client_id for auto-linking
     let client_id = match &p.client_slug {
-        Some(slug) => {
-            match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
-                Ok(Some(c)) => Some(c.id),
-                Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
-                Err(e) => return error_result(&format!("Database error: {e}")),
-            }
-        }
+        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+            Ok(Some(c)) => Some(c.id),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
         None => None,
     };
 
@@ -629,8 +627,7 @@ pub(crate) async fn handle_upsert_vendor(
             // Auto-link vendor to client if client_slug was provided
             if let Some(cid) = client_id {
                 let _ =
-                    crate::repo::vendor_repo::link_vendor_client(&brain.pool, vendor.id, cid)
-                        .await;
+                    crate::repo::vendor_repo::link_vendor_client(&brain.pool, vendor.id, cid).await;
             }
             json_result(&vendor)
         }

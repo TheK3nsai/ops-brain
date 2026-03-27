@@ -48,6 +48,10 @@ pub struct WatchdogConfig {
     pub confirm_polls: u32,
     /// Seconds to suppress new incidents for a monitor after its last incident was resolved.
     pub cooldown_secs: u64,
+    /// Global default for chronic flapper threshold. Per-monitor `flap_threshold` overrides this.
+    /// When recurrence_count >= threshold, severity auto-downgrades to "low".
+    /// When recurrence_count >= 2*threshold, incident is auto-resolved immediately.
+    pub flap_threshold: u32,
 }
 
 /// Tracks the last-known status of each monitor.
@@ -105,10 +109,12 @@ pub async fn run(
         interval_secs = watchdog_config.interval_secs,
         confirm_polls = watchdog_config.confirm_polls,
         cooldown_secs = watchdog_config.cooldown_secs,
-        "Watchdog started — polling Uptime Kuma every {}s (confirm after {} polls, {}s cooldown)",
+        flap_threshold = watchdog_config.flap_threshold,
+        "Watchdog started — polling every {}s (confirm: {} polls, cooldown: {}s, flap threshold: {})",
         watchdog_config.interval_secs,
         watchdog_config.confirm_polls,
         watchdog_config.cooldown_secs,
+        watchdog_config.flap_threshold,
     );
 
     let mut states: HashMap<String, MonitorState> = HashMap::new();
@@ -217,7 +223,8 @@ async fn process_monitors(
                 if config.confirm_polls <= 1 {
                     // Threshold is 1 (or 0) — create immediately
                     let incident_id =
-                        handle_down_transition(pool, embedding_client, name, &monitor).await;
+                        handle_down_transition(pool, embedding_client, name, &monitor, config)
+                            .await;
                     state.incident_id = incident_id;
                 } else {
                     tracing::info!(
@@ -243,7 +250,8 @@ async fn process_monitors(
                 if config.confirm_polls <= 1 && !state.in_cooldown(config.cooldown_secs) {
                     tracing::warn!(monitor = %name, prev_status = prev, "Monitor went DOWN");
                     let incident_id =
-                        handle_down_transition(pool, embedding_client, name, &monitor).await;
+                        handle_down_transition(pool, embedding_client, name, &monitor, config)
+                            .await;
                     state.incident_id = incident_id;
                 } else if state.in_cooldown(config.cooldown_secs) {
                     tracing::info!(
@@ -284,7 +292,8 @@ async fn process_monitors(
                         count,
                     );
                     let incident_id =
-                        handle_down_transition(pool, embedding_client, name, &monitor).await;
+                        handle_down_transition(pool, embedding_client, name, &monitor, config)
+                            .await;
                     state.incident_id = incident_id;
                 } else if count >= config.confirm_polls
                     && state.incident_id.is_none()
@@ -364,6 +373,7 @@ async fn handle_down_transition(
     embedding_client: &Option<EmbeddingClient>,
     monitor_name: &str,
     monitor_status: &MonitorStatus,
+    config: &WatchdogConfig,
 ) -> Option<Uuid> {
     // Look up the monitor mapping in the DB
     let monitor_mapping = crate::repo::monitor_repo::get_monitor_by_name(pool, monitor_name)
@@ -485,6 +495,78 @@ async fn handle_down_transition(
             }
         }
     };
+
+    // Chronic flapper suppression: check recurrence_count against threshold
+    let flap_threshold = monitor_mapping
+        .as_ref()
+        .and_then(|m| m.flap_threshold)
+        .unwrap_or(config.flap_threshold as i32);
+
+    if flap_threshold > 0 && incident.recurrence_count >= flap_threshold {
+        let suppress_threshold = flap_threshold * 2;
+
+        if incident.recurrence_count >= suppress_threshold {
+            // Full suppression: auto-resolve immediately
+            let note = format!(
+                "Chronic flapper suppressed: recurrence #{} exceeds 2x threshold ({suppress_threshold}). \
+                 Auto-resolving. Configure flap_threshold on this monitor via link_monitor to adjust.",
+                incident.recurrence_count
+            );
+            let _ = crate::repo::incident_repo::update_incident(
+                pool,
+                incident.id,
+                None,
+                Some("resolved"),
+                Some("low"),
+                None,
+                Some("Chronic flapper — auto-suppressed by watchdog"),
+                Some(&note),
+                None,
+                None,
+                None,
+            )
+            .await;
+            tracing::info!(
+                monitor = %monitor_name,
+                incident_id = %incident.id,
+                recurrence_count = incident.recurrence_count,
+                threshold = suppress_threshold,
+                "Chronic flapper suppressed — auto-resolved immediately"
+            );
+            return Some(incident.id);
+        } else {
+            // Severity downgrade to "low"
+            let note = format!(
+                "Chronic flapper: recurrence #{} reached threshold ({flap_threshold}). \
+                 Severity auto-downgraded to 'low'. Will auto-suppress at {suppress_threshold} recurrences.",
+                incident.recurrence_count
+            );
+            let _ = crate::repo::incident_repo::update_incident(
+                pool,
+                incident.id,
+                None,
+                None,
+                Some("low"),
+                None,
+                None,
+                Some(&note),
+                None,
+                Some(&format!(
+                    "{}\n{note}",
+                    incident.notes.as_deref().unwrap_or("")
+                )),
+                None,
+            )
+            .await;
+            tracing::info!(
+                monitor = %monitor_name,
+                incident_id = %incident.id,
+                recurrence_count = incident.recurrence_count,
+                threshold = flap_threshold,
+                "Chronic flapper — severity downgraded to 'low'"
+            );
+        }
+    }
 
     // Link server and service
     if let Some(sid) = server_id {
