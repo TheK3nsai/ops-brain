@@ -86,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
                 interval_secs: config.watchdog_interval_secs,
                 confirm_polls: config.watchdog_confirm_polls,
                 cooldown_secs: config.watchdog_cooldown_secs,
+                flap_threshold: config.watchdog_flap_threshold,
             };
             tracing::info!(
                 interval = watchdog_config.interval_secs,

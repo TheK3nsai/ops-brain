@@ -293,7 +293,10 @@ pub(crate) async fn handle_list_handoffs(
                                 } else {
                                     body.clone()
                                 };
-                                obj.insert("body".to_string(), serde_json::Value::String(truncated));
+                                obj.insert(
+                                    "body".to_string(),
+                                    serde_json::Value::String(truncated),
+                                );
                             }
                         }
                         Some(val)
