@@ -318,7 +318,9 @@ impl OpsBrain {
         name = "log_runbook_execution",
         description = "Record that a runbook was executed. Creates an audit trail entry with who ran it, \
         the result (success/failure/partial/skipped), duration, notes, and optional client_slug for \
-        HIPAA audit trails. Useful for compliance audits (e.g. 'when was the last DR test?')."
+        HIPAA audit trails. Optionally link to an incident via incident_id for bi-directional tracking \
+        (incident shows which runbooks resolved it, runbook shows which incidents it was used for). \
+        Successful executions update the runbook's last_verified_at timestamp."
     )]
     async fn log_runbook_execution(
         &self,

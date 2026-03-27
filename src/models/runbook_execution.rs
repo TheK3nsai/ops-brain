@@ -13,4 +13,5 @@ pub struct RunbookExecution {
     pub executed_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub client_slug: Option<String>,
+    pub incident_id: Option<Uuid>,
 }
