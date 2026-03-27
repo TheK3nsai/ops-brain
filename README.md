@@ -12,7 +12,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
-## Tools (71)
+## Tools (72)
 
 ### Inventory (22)
 | Tool | Description |
@@ -80,7 +80,12 @@ get_situational_awareness(server_slug: "hvfs0")
 | `complete_handoff` | Mark a handoff as done |
 | `list_handoffs` | Filter by status, source/target machine. Compact mode (default) truncates bodies to 200 chars |
 | `search_handoffs` | Search handoffs (mode: fts/semantic/hybrid). Configurable `limit` |
-| `get_catchup` | See what changed since a given timestamp — new/updated handoffs, incidents, knowledge, runbooks |
+| `get_catchup` | See what changed since a given timestamp — new/updated handoffs, incidents, knowledge, runbooks. Surfaces stale runbooks (>30 days unverified) |
+
+### Preferences (1)
+| Tool | Description |
+|------|-------------|
+| `set_preference` | Set a global default (e.g. `compact=true`). Explicit tool params always override. Scoped: global, machine, or client |
 
 ### Monitoring (7)
 | Tool | Description |
@@ -347,6 +352,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 13.1**: Chronic flapper suppression — automatic severity degradation for monitors that repeatedly flap. `recurrence_count >= threshold` (default 5) → severity "low"; `>= 2x threshold` → auto-resolved. Per-monitor config via `link_monitor` `flap_threshold` param, global default via `OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD` env var. Natural 24h reset — 71 tools, 33 migrations
 - [x] **Phase 14**: CC team field validation fixes — Zammad `time_unit` string/number deserialization fix (PR #16), RRF candidate pool widened 20→50, multi-instance Uptime Kuma design documented, MCP server instructions condensed, CC team knowledge restructured — 71 tools, 33 migrations
 - [x] **Phase 14.1**: Search relevance tuning — `websearch_to_tsquery` replaces `plainto_tsquery` in all 40 FTS call sites (quoted phrases, `or`, `-exclusion`), OR fallback when AND returns zero results (2+ word queries retry with OR-joined terms), title boosting in embedding text preparation (requires `backfill_embeddings`) — 71 tools, 33 migrations
+- [x] **Phase 14.2**: Backlog improvements — embedding truncation fix (24K char cap on `prepare_*_text()`), runbook staleness tracking (`last_verified_at` + `get_catchup` warnings), duplicate knowledge detection (cosine similarity >85% warns before insert), global compact preference (`set_preference` tool + `preferences` table), runbook-incident bi-directional linkage (`incident_id` on `log_runbook_execution`) — 72 tools, 35 migrations
 
 **Post-phase improvements:**
 
@@ -370,9 +376,9 @@ Prioritized from CC-CPA and CC-HSR field assessments (2026-03-27):
 - [ ] **Multi-instance Uptime Kuma**: Connect CPA's local Kuma (LAN-only) and HSR's Kuma to ops-brain's watchdog. Options: push agent on remote servers, Cloudflare Tunnel route, or CC-driven periodic push
 - [ ] **Handoff push notifications**: Email on handoff creation (P1/critical → immediate, normal → daily briefing). Zammad ticket auto-creation for high/critical handoffs
 - [ ] **Web dashboard**: Read-only operational dashboard at `/dashboard` — monitoring health, open incidents, pending handoffs, CC activity, client cards. Server-rendered HTML (Askama/HTMX) or static JSON API + lightweight frontend
-- [ ] **Duplicate knowledge detection**: Cosine similarity check on new entries against existing embeddings
-- [ ] **Runbook staleness tracking**: `last_verified_at` field + catchup warnings for 30+ day old runbooks
-- [ ] **Runbook-incident linkage**: Bi-directional — link executions to incidents, track mean-time-to-resolve by runbook category, auto-suggest relevant runbooks on incident creation
+- [x] **Duplicate knowledge detection**: Cosine similarity check on `add_knowledge` — warns if >85% match, `force=true` to bypass (Phase 14.2)
+- [x] **Runbook staleness tracking**: `last_verified_at` field auto-set on successful execution, `get_catchup` warns about 30+ day stale runbooks (Phase 14.2)
+- [x] **Runbook-incident linkage**: Optional `incident_id` on `log_runbook_execution` for bi-directional tracking, `list_executions_for_incident()` reverse lookup (Phase 14.2)
 - [ ] **Briefing automation**: Auto-email daily/weekly briefings via cron on kensai-cloud (currently via Claude Code scheduled triggers)
 - [ ] **Trend analysis**: Daily metric snapshots — backup freshness, disk usage trends, incident frequency over time
 - [ ] **CC coordination**: Incident "claimed" state, incident comment timeline, cross-CC message board
