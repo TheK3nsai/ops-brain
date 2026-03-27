@@ -45,13 +45,13 @@ get_situational_awareness(server_slug: "hvfs0")
 | Tool | Description |
 |------|-------------|
 | `add_knowledge` | Store operational facts, gotchas, tips. Supports `cross_client_safe` flag |
-| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid). Configurable `limit`. Supports `client_slug` scoping + `acknowledge_cross_client` gate |
+| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid). Multi-table via `tables` param. `compact` mode (default for multi-table) returns title/snippet instead of full bodies. Supports `client_slug` scoping + `acknowledge_cross_client` gate |
 | `list_knowledge` | Filter by category or client. Configurable `limit` |
 
 ### Context (3)
 | Tool | Description |
 |------|-------------|
-| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Cross-client auto-gated. `compact=true` (~94K→~10K), `sections` filtering. Returns `_warnings` on transient failures |
+| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Client-level queries aggregate services/networks across all servers. Cross-client auto-gated. `compact=true` (~94K→~10K), `sections` filtering. Returns `_warnings` on transient failures |
 | `get_client_overview` | Full client briefing with all related data. Returns `_warnings` on transient failures |
 | `get_server_context` | Everything about a specific server. Cross-client auto-gated. `compact=true`, `sections` filtering. Returns `_warnings` on transient failures |
 
@@ -90,8 +90,8 @@ get_situational_awareness(server_slug: "hvfs0")
 | `get_monitoring_summary` | Quick health check — ALL_CLEAR or DEGRADED with down monitor list |
 | `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service |
 | `unlink_monitor` | Remove a monitor-to-entity mapping |
-| `list_watchdog_incidents` | List incidents auto-created by the proactive monitoring watchdog, filterable by status |
-| `check_health` | Quick server health check — returns HEALTHY/DOWN/UNKNOWN based on linked Uptime Kuma monitors |
+| `list_watchdog_incidents` | List incidents auto-created by the proactive monitoring watchdog, filterable by status. Includes `source` and `recurrence_count` fields |
+| `check_health` | Quick server health check — returns HEALTHY/DOWN/UNKNOWN based on linked Uptime Kuma monitors. Helpful guidance for unlinked servers |
 
 ### Zammad Ticketing (8)
 | Tool | Description |
@@ -340,6 +340,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 
 - [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge/incidents), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions, `compact` mode + `sections` filtering for context tools — 68 tools (incl. list_vendors, list_clients, list_sites, list_networks)
 - [x] **Phase 10**: CC-HSR assessment response — merged `semantic_search` into `search_knowledge` (multi-table via `tables` param), new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail), `runbook_executions` migration — 71 tools
+- [x] **Phase 11**: Noise reduction + signal quality — watchdog incident deduplication (reopens recent incidents instead of duplicating, `recurrence_count` tracking), `search_knowledge` compact mode (67KB→~5KB for multi-table), client-level SA aggregation (services/networks/vendors via server traversal), `source` field on incidents (`watchdog`/`manual`/`seed`), historical incident TTR fix, `check_health` UX improvements — 71 tools, 31 migrations
 
 **Post-phase improvements:**
 
@@ -352,7 +353,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] Build tooling: mold linker (`.cargo/config.toml`) + sqlx-cli for migration management
 - [x] CC team knowledge restructured: 3 focused entries (Identity & Naming, Compliance & Data Sharing, Contribution Standards & Session Protocol)
 - [x] Adaptive CC startup protocol: identity lookup once (then local memory), ops check when idle, compliance/standards on-demand, user tasks take priority over ceremony
-- [x] Watchdog flap suppression: grace period (N consecutive DOWN polls before incident) + cooldown (suppress re-incident after resolve). Eliminates push-monitor heartbeat jitter noise
+- [x] Watchdog flap suppression: grace period (N consecutive DOWN polls before incident) + cooldown (suppress re-incident after resolve) + deduplication (reopen recent incidents instead of creating duplicates). Eliminates push-monitor heartbeat jitter noise
 - [x] Lighter CC workflow: optional sessions, knowledge boundaries (ops-brain vs local), tool tiers, handoff routing table, quality bar for knowledge entries
 
 ## License
