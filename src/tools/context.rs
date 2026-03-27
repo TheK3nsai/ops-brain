@@ -327,25 +327,31 @@ pub(crate) async fn handle_get_situational_awareness(
 
     // Get vendors for client
     if let Some(cid) = client_id {
-        match crate::repo::vendor_repo::get_vendors_for_client(&brain.pool, cid).await {
-            Ok(vendors) => {
-                awareness.vendors = vendors
-                    .iter()
-                    .filter_map(|v| serde_json::to_value(v).ok())
-                    .collect();
+        if section_included(&sections, "vendors") {
+            match crate::repo::vendor_repo::get_vendors_for_client(&brain.pool, cid).await {
+                Ok(vendors) => {
+                    awareness.vendors = vendors
+                        .iter()
+                        .filter_map(|v| serde_json::to_value(v).ok())
+                        .collect();
+                }
+                Err(e) => warnings.push(format!("Vendor lookup failed: {e}")),
             }
-            Err(e) => warnings.push(format!("Vendor lookup failed: {e}")),
         }
 
         // Get knowledge for this client
-        match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100).await {
-            Ok(entries) => {
-                awareness.knowledge = entries
-                    .iter()
-                    .filter_map(|k| serde_json::to_value(k).ok())
-                    .collect();
+        if section_included(&sections, "knowledge") {
+            match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100)
+                .await
+            {
+                Ok(entries) => {
+                    awareness.knowledge = entries
+                        .iter()
+                        .filter_map(|k| serde_json::to_value(k).ok())
+                        .collect();
+                }
+                Err(e) => warnings.push(format!("Knowledge lookup failed: {e}")),
             }
-            Err(e) => warnings.push(format!("Knowledge lookup failed: {e}")),
         }
     }
 

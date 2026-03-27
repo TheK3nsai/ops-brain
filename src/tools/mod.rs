@@ -235,7 +235,8 @@ impl OpsBrain {
 
     #[tool(
         name = "upsert_vendor",
-        description = "Create or update a vendor contact record. Provide id to update a specific vendor by UUID."
+        description = "Create or update a vendor contact record. Provide id to update a specific vendor by UUID. \
+        Provide client_slug to auto-link the vendor to a client (vendor_clients association)."
     )]
     async fn upsert_vendor(
         &self,
@@ -674,7 +675,9 @@ impl OpsBrain {
         name = "link_monitor",
         description = "Link an Uptime Kuma monitor to an ops-brain server and/or service. \
         This mapping enriches get_situational_awareness with live monitoring data. \
-        The monitor_name must match exactly as shown in list_monitors."
+        The monitor_name must match exactly as shown in list_monitors. \
+        Use severity_override to set watchdog incident severity (low/medium/high/critical) \
+        instead of the default role-based logic."
     )]
     async fn link_monitor(
         &self,

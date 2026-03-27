@@ -393,8 +393,8 @@ async fn handle_down_transition(
             None
         };
 
-        // Determine severity based on monitor type and server roles
-        let severity = determine_severity(server.as_ref());
+        // Determine severity: monitor override > server roles > default
+        let severity = determine_severity(server.as_ref(), mapping.severity_override.as_deref());
 
         (mapping.server_id, mapping.service_id, client_id, severity)
     } else {
@@ -560,8 +560,16 @@ async fn handle_up_transition(pool: &PgPool, incident_id: Uuid, monitor_name: &s
     }
 }
 
-/// Determine incident severity based on server roles and criticality.
-fn determine_severity(server: Option<&crate::models::server::Server>) -> String {
+/// Determine incident severity. Priority: monitor override > server roles > default "medium".
+fn determine_severity(
+    server: Option<&crate::models::server::Server>,
+    severity_override: Option<&str>,
+) -> String {
+    // Monitor-level override takes priority (set via link_monitor)
+    if let Some(sev) = severity_override {
+        return sev.to_string();
+    }
+
     let Some(server) = server else {
         return "medium".to_string();
     };
@@ -688,76 +696,90 @@ mod tests {
 
     #[test]
     fn severity_no_server_is_medium() {
-        assert_eq!(determine_severity(None), "medium");
+        assert_eq!(determine_severity(None, None), "medium");
     }
 
     #[test]
     fn severity_domain_controller_is_critical() {
         let server = make_server(vec!["domain-controller"]);
-        assert_eq!(determine_severity(Some(&server)), "critical");
+        assert_eq!(determine_severity(Some(&server), None), "critical");
     }
 
     #[test]
     fn severity_dc_is_critical() {
         let server = make_server(vec!["dc"]);
-        assert_eq!(determine_severity(Some(&server)), "critical");
+        assert_eq!(determine_severity(Some(&server), None), "critical");
     }
 
     #[test]
     fn severity_dns_is_critical() {
         let server = make_server(vec!["dns"]);
-        assert_eq!(determine_severity(Some(&server)), "critical");
+        assert_eq!(determine_severity(Some(&server), None), "critical");
     }
 
     #[test]
     fn severity_dhcp_is_critical() {
         let server = make_server(vec!["dhcp"]);
-        assert_eq!(determine_severity(Some(&server)), "critical");
+        assert_eq!(determine_severity(Some(&server), None), "critical");
     }
 
     #[test]
     fn severity_file_server_is_high() {
         let server = make_server(vec!["file-server"]);
-        assert_eq!(determine_severity(Some(&server)), "high");
+        assert_eq!(determine_severity(Some(&server), None), "high");
     }
 
     #[test]
     fn severity_rds_is_high() {
         let server = make_server(vec!["rds"]);
-        assert_eq!(determine_severity(Some(&server)), "high");
+        assert_eq!(determine_severity(Some(&server), None), "high");
     }
 
     #[test]
     fn severity_database_is_high() {
         let server = make_server(vec!["database"]);
-        assert_eq!(determine_severity(Some(&server)), "high");
+        assert_eq!(determine_severity(Some(&server), None), "high");
     }
 
     #[test]
     fn severity_backup_is_high() {
         let server = make_server(vec!["backup"]);
-        assert_eq!(determine_severity(Some(&server)), "high");
+        assert_eq!(determine_severity(Some(&server), None), "high");
     }
 
     #[test]
     fn severity_print_server_is_medium() {
         let server = make_server(vec!["print-server"]);
-        assert_eq!(determine_severity(Some(&server)), "medium");
+        assert_eq!(determine_severity(Some(&server), None), "medium");
     }
 
     #[test]
     fn severity_multiple_roles_critical_wins() {
         let server = make_server(vec!["file-server", "dns"]);
-        assert_eq!(determine_severity(Some(&server)), "critical");
+        assert_eq!(determine_severity(Some(&server), None), "critical");
     }
 
     #[test]
     fn severity_case_insensitive() {
         let server = make_server(vec!["DNS"]);
-        assert_eq!(determine_severity(Some(&server)), "critical");
+        assert_eq!(determine_severity(Some(&server), None), "critical");
 
         let server = make_server(vec!["File-Server"]);
-        assert_eq!(determine_severity(Some(&server)), "high");
+        assert_eq!(determine_severity(Some(&server), None), "high");
+    }
+
+    #[test]
+    fn severity_override_takes_priority() {
+        // Override beats role-based logic
+        let server = make_server(vec!["dns"]); // would be "critical" without override
+        assert_eq!(determine_severity(Some(&server), Some("low")), "low");
+
+        // Override works with no server
+        assert_eq!(determine_severity(None, Some("critical")), "critical");
+
+        // None override falls through to role-based
+        let server = make_server(vec!["dns"]);
+        assert_eq!(determine_severity(Some(&server), None), "critical");
     }
 
     #[test]

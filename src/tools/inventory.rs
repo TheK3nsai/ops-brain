@@ -141,6 +141,8 @@ pub struct UpsertVendorParams {
     pub name: String,
     /// Vendor ID (UUID). When provided, updates the specific vendor by ID instead of name-based upsert.
     pub id: Option<String>,
+    /// Client slug to link this vendor to (optional). Creates vendor_clients association.
+    pub client_slug: Option<String>,
     pub category: Option<String>,
     pub account_number: Option<String>,
     pub support_phone: Option<String>,
@@ -563,6 +565,19 @@ pub(crate) async fn handle_upsert_vendor(
         },
         None => None,
     };
+
+    // Resolve client_slug to client_id for auto-linking
+    let client_id = match &p.client_slug {
+        Some(slug) => {
+            match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+                Ok(Some(c)) => Some(c.id),
+                Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
+                Err(e) => return error_result(&format!("Database error: {e}")),
+            }
+        }
+        None => None,
+    };
+
     // If ID is provided, update that specific vendor
     if let Some(id_str) = &p.id {
         let id = match uuid::Uuid::parse_str(id_str) {
@@ -584,7 +599,15 @@ pub(crate) async fn handle_upsert_vendor(
         )
         .await
         {
-            Ok(vendor) => json_result(&vendor),
+            Ok(vendor) => {
+                // Auto-link vendor to client if client_slug was provided
+                if let Some(cid) = client_id {
+                    let _ =
+                        crate::repo::vendor_repo::link_vendor_client(&brain.pool, vendor.id, cid)
+                            .await;
+                }
+                json_result(&vendor)
+            }
             Err(e) => error_result(&format!("Database error: {e}")),
         };
     }
@@ -602,7 +625,15 @@ pub(crate) async fn handle_upsert_vendor(
     )
     .await
     {
-        Ok(vendor) => json_result(&vendor),
+        Ok(vendor) => {
+            // Auto-link vendor to client if client_slug was provided
+            if let Some(cid) = client_id {
+                let _ =
+                    crate::repo::vendor_repo::link_vendor_client(&brain.pool, vendor.id, cid)
+                        .await;
+            }
+            json_result(&vendor)
+        }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }

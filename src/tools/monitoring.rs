@@ -32,6 +32,10 @@ pub struct LinkMonitorParams {
     pub service_slug: Option<String>,
     /// Notes about what this monitor watches (optional)
     pub notes: Option<String>,
+    /// Override watchdog incident severity for this monitor. Values: low, medium, high, critical.
+    /// When set, watchdog uses this instead of role-based severity from server roles.
+    /// Useful for critical services (e.g. EHR) that may run on non-critical-role servers.
+    pub severity_override: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -237,8 +241,19 @@ pub(crate) async fn handle_link_monitor(
         None => None,
     };
 
-    if server_id.is_none() && service_id.is_none() && p.notes.is_none() {
-        return error_result("Provide at least one of: server_slug, service_slug, or notes");
+    // Validate severity_override if provided
+    if let Some(ref sev) = p.severity_override {
+        let valid = ["low", "medium", "high", "critical"];
+        if !valid.contains(&sev.as_str()) {
+            return error_result(&format!(
+                "Invalid severity_override '{}'. Valid values: low, medium, high, critical",
+                sev
+            ));
+        }
+    }
+
+    if server_id.is_none() && service_id.is_none() && p.notes.is_none() && p.severity_override.is_none() {
+        return error_result("Provide at least one of: server_slug, service_slug, notes, or severity_override");
     }
 
     match crate::repo::monitor_repo::upsert_monitor(
@@ -247,6 +262,7 @@ pub(crate) async fn handle_link_monitor(
         server_id,
         service_id,
         p.notes.as_deref(),
+        p.severity_override.as_deref(),
     )
     .await
     {

@@ -9,14 +9,16 @@ pub async fn upsert_monitor(
     server_id: Option<Uuid>,
     service_id: Option<Uuid>,
     notes: Option<&str>,
+    severity_override: Option<&str>,
 ) -> Result<Monitor, sqlx::Error> {
     sqlx::query_as::<_, Monitor>(
-        "INSERT INTO monitors (id, monitor_name, server_id, service_id, notes)
-         VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO monitors (id, monitor_name, server_id, service_id, notes, severity_override)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (monitor_name) DO UPDATE SET
              server_id = COALESCE(EXCLUDED.server_id, monitors.server_id),
              service_id = COALESCE(EXCLUDED.service_id, monitors.service_id),
              notes = COALESCE(EXCLUDED.notes, monitors.notes),
+             severity_override = COALESCE(EXCLUDED.severity_override, monitors.severity_override),
              updated_at = now()
          RETURNING *",
     )
@@ -25,6 +27,7 @@ pub async fn upsert_monitor(
     .bind(server_id)
     .bind(service_id)
     .bind(notes)
+    .bind(severity_override)
     .fetch_one(pool)
     .await
 }
