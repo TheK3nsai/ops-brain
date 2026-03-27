@@ -78,17 +78,35 @@ impl EmbeddingClient {
 // Title is repeated to boost its weight in the embedding vector — semantic
 // search will more strongly match queries that align with the title.
 
+/// nomic-embed-text has an 8192-token context window (~4 chars/token).
+/// Truncate to ~6000 tokens worth of chars to leave headroom.
+const MAX_EMBEDDING_CHARS: usize = 24_000;
+
+fn truncate_for_embedding(text: String) -> String {
+    if text.len() <= MAX_EMBEDDING_CHARS {
+        return text;
+    }
+    // Truncate at a char boundary (floor_char_boundary equivalent)
+    let mut end = MAX_EMBEDDING_CHARS;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut truncated = text[..end].to_string();
+    truncated.push_str("\n\n[truncated for embedding]");
+    truncated
+}
+
 pub fn prepare_runbook_text(r: &Runbook) -> String {
     let mut text = format!("{}\n{}\n\n{}", r.title, r.title, r.content);
     if let Some(notes) = &r.notes {
         text.push_str("\n\n");
         text.push_str(notes);
     }
-    text
+    truncate_for_embedding(text)
 }
 
 pub fn prepare_knowledge_text(k: &Knowledge) -> String {
-    format!("{}\n{}\n\n{}", k.title, k.title, k.content)
+    truncate_for_embedding(format!("{}\n{}\n\n{}", k.title, k.title, k.content))
 }
 
 pub fn prepare_incident_text(i: &Incident) -> String {
@@ -109,11 +127,11 @@ pub fn prepare_incident_text(i: &Incident) -> String {
         text.push_str("\n\nPrevention: ");
         text.push_str(prevention);
     }
-    text
+    truncate_for_embedding(text)
 }
 
 pub fn prepare_handoff_text(h: &Handoff) -> String {
-    format!("{}\n{}\n\n{}", h.title, h.title, h.body)
+    truncate_for_embedding(format!("{}\n{}\n\n{}", h.title, h.title, h.body))
 }
 
 #[cfg(test)]
@@ -247,6 +265,56 @@ mod tests {
 
         let text = prepare_incident_text(&incident);
         assert_eq!(text, "Minor Issue\nMinor Issue");
+    }
+
+    #[test]
+    fn truncate_for_embedding_short_text() {
+        let text = "short text".to_string();
+        assert_eq!(truncate_for_embedding(text.clone()), text);
+    }
+
+    #[test]
+    fn truncate_for_embedding_long_text() {
+        let text = "x".repeat(30_000);
+        let result = truncate_for_embedding(text);
+        assert!(result.len() < 30_000);
+        assert!(result.ends_with("[truncated for embedding]"));
+        // The truncated content should be MAX_EMBEDDING_CHARS worth of x's
+        assert!(result.starts_with("xxxx"));
+    }
+
+    #[test]
+    fn truncate_for_embedding_multibyte() {
+        // Ensure we don't split in the middle of a multi-byte char
+        let mut text = "a".repeat(MAX_EMBEDDING_CHARS - 1);
+        text.push('é'); // 2-byte char that would straddle the boundary
+        text.push_str(&"b".repeat(100));
+        let result = truncate_for_embedding(text);
+        assert!(result.ends_with("[truncated for embedding]"));
+        // Should be valid UTF-8 (would panic on invalid)
+        let _ = result.as_str();
+    }
+
+    #[test]
+    fn prepare_handoff_text_truncates_long_body() {
+        let handoff = Handoff {
+            id: Uuid::now_v7(),
+            from_session_id: None,
+            from_machine: "stealth".to_string(),
+            to_machine: Some("cloudlab".to_string()),
+            status: "pending".to_string(),
+            priority: "high".to_string(),
+            title: "Big handoff".to_string(),
+            body: "x".repeat(30_000),
+            context: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let text = prepare_handoff_text(&handoff);
+        assert!(text.len() < 30_000);
+        assert!(text.ends_with("[truncated for embedding]"));
+        assert!(text.starts_with("Big handoff"));
     }
 
     #[test]
