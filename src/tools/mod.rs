@@ -378,8 +378,9 @@ impl OpsBrain {
         name = "search_knowledge",
         description = "Search across knowledge, runbooks, incidents, and handoffs. \
         Default searches knowledge only; set tables=['knowledge','runbooks','incidents','handoffs'] for multi-table search. \
-        Modes: 'fts' (keyword match, default for single-table), 'semantic' (AI vector similarity), \
-        or 'hybrid' (combined FTS + vector via RRF ranking, default for multi-table). \
+        Modes: 'fts' (keyword match), 'semantic' (AI vector similarity), \
+        or 'hybrid' (combined FTS + vector via RRF ranking, default for all searches). \
+        Use empty query or '*' to browse recent entries across tables (great for 'show me everything'). \
         Replaces the old semantic_search tool — use tables param for cross-table search."
     )]
     async fn search_knowledge(
@@ -727,7 +728,7 @@ impl OpsBrain {
 
     #[tool(
         name = "list_tickets",
-        description = "List Zammad tickets for a client, filtered by state and priority. Requires client_slug to resolve the Zammad organization."
+        description = "List Zammad tickets, optionally filtered by client, state, and priority. Omit client_slug to see tickets across all clients."
     )]
     async fn list_tickets(
         &self,

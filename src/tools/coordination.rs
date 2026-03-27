@@ -73,6 +73,8 @@ pub struct ListHandoffsParams {
     /// Max results (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
+    /// Compact mode: truncate body to first 200 chars (default: true). Set to false for full bodies.
+    pub compact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -259,6 +261,7 @@ pub(crate) async fn handle_list_handoffs(
     p: ListHandoffsParams,
 ) -> CallToolResult {
     let limit = p.limit.unwrap_or(20);
+    let compact = p.compact.unwrap_or(true);
 
     if let Err(msg) = crate::validation::validate_option(
         p.status.as_deref(),
@@ -277,7 +280,30 @@ pub(crate) async fn handle_list_handoffs(
     )
     .await
     {
-        Ok(handoffs) => json_result(&handoffs),
+        Ok(handoffs) => {
+            if compact {
+                let compacted: Vec<serde_json::Value> = handoffs
+                    .iter()
+                    .filter_map(|h| {
+                        let mut val = serde_json::to_value(h).ok()?;
+                        if let Some(obj) = val.as_object_mut() {
+                            if let Some(serde_json::Value::String(body)) = obj.get("body") {
+                                let truncated = if body.len() > 200 {
+                                    format!("{}...", &body[..body.floor_char_boundary(200)])
+                                } else {
+                                    body.clone()
+                                };
+                                obj.insert("body".to_string(), serde_json::Value::String(truncated));
+                            }
+                        }
+                        Some(val)
+                    })
+                    .collect();
+                json_result(&compacted)
+            } else {
+                json_result(&handoffs)
+            }
+        }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }

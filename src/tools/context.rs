@@ -18,6 +18,8 @@ pub struct GetSituationalAwarenessParams {
     pub service_slug: Option<String>,
     /// Client slug to get context for
     pub client_slug: Option<String>,
+    /// Your machine hostname — filters pending handoffs to show only those addressed to you
+    pub machine: Option<String>,
     /// Set to true to release cross-client runbooks/knowledge that were withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
     /// Compact mode: strip heavy fields (content, body, notes) from results, keeping only
@@ -376,13 +378,22 @@ pub(crate) async fn handle_get_situational_awareness(
         }
     }
 
-    // Get pending handoffs
-    match sqlx::query_as::<_, Handoff>(
-        "SELECT * FROM handoffs WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10",
-    )
-    .fetch_all(&brain.pool)
-    .await
-    {
+    // Get pending handoffs (scoped to machine if provided)
+    let handoff_result = if let Some(ref machine) = p.machine {
+        sqlx::query_as::<_, Handoff>(
+            "SELECT * FROM handoffs WHERE status = 'pending' AND to_machine = $1 ORDER BY created_at DESC LIMIT 10",
+        )
+        .bind(machine)
+        .fetch_all(&brain.pool)
+        .await
+    } else {
+        sqlx::query_as::<_, Handoff>(
+            "SELECT * FROM handoffs WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10",
+        )
+        .fetch_all(&brain.pool)
+        .await
+    };
+    match handoff_result {
         Ok(handoffs) => {
             awareness.pending_handoffs = handoffs
                 .iter()

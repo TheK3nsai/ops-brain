@@ -8,8 +8,8 @@ use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListTicketsParams {
-    /// Client slug to filter tickets by Zammad organization
-    pub client_slug: String,
+    /// Client slug to filter tickets by Zammad organization (optional — omit for all clients)
+    pub client_slug: Option<String>,
     /// Filter by state: "new", "open", "pending_reminder", "closed" (optional, default: all)
     pub state: Option<String>,
     /// Filter by priority: "low", "normal", "high" (optional)
@@ -113,39 +113,49 @@ pub(crate) async fn handle_list_tickets(
         None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
     };
 
-    let client = match crate::repo::client_repo::get_client_by_slug(&brain.pool, &p.client_slug)
-        .await
-    {
-        Ok(Some(c)) => c,
-        Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", &p.client_slug).await,
-        Err(e) => return error_result(&format!("Database error: {e}")),
+    let mut query_parts = Vec::new();
+
+    // If client_slug provided, scope to that client's Zammad org
+    let client_label = if let Some(ref slug) = p.client_slug {
+        let client = match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        };
+        let org_id = match client.zammad_org_id {
+            Some(id) => id,
+            None => {
+                return error_result(&format!(
+                    "Client '{slug}' has no Zammad org ID configured. Use upsert_client to set zammad_org_id."
+                ))
+            }
+        };
+        query_parts.push(format!("organization.id:{org_id}"));
+        slug.clone()
+    } else {
+        "all".to_string()
     };
 
-    let org_id = match client.zammad_org_id {
-        Some(id) => id,
-        None => {
-            return error_result(&format!(
-            "Client '{}' has no Zammad org ID configured. Use upsert_client to set zammad_org_id.",
-            p.client_slug
-        ))
-        }
-    };
-
-    let mut query_parts = vec![format!("organization.id:{org_id}")];
     if let Some(ref state) = p.state {
         query_parts.push(format!("state.name:{state}"));
     }
     if let Some(ref priority) = p.priority {
         query_parts.push(format!("priority.name:\"{priority}\""));
     }
-    let query = query_parts.join(" AND ");
+
+    // If no filters at all, use wildcard to get all tickets
+    let query = if query_parts.is_empty() {
+        "*".to_string()
+    } else {
+        query_parts.join(" AND ")
+    };
     let limit = p.limit.unwrap_or(20);
 
     match crate::zammad::search_tickets(zammad, &query, limit).await {
         Ok(tickets) => {
             let result = serde_json::json!({
                 "count": tickets.len(),
-                "client": p.client_slug,
+                "client": client_label,
                 "tickets": tickets,
             });
             json_result(&result)
