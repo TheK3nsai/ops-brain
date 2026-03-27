@@ -78,9 +78,10 @@ impl EmbeddingClient {
 // Title is repeated to boost its weight in the embedding vector — semantic
 // search will more strongly match queries that align with the title.
 
-/// nomic-embed-text has an 8192-token context window (~4 chars/token).
-/// Truncate to ~6000 tokens worth of chars to leave headroom.
-const MAX_EMBEDDING_CHARS: usize = 24_000;
+/// nomic-embed-text has an 8192-token context window. Real content
+/// (markdown, code, JSON) tokenizes at ~1-1.15 chars/token.
+/// 6000 chars ≈ ~5200-6000 tokens, leaving ample headroom.
+const MAX_EMBEDDING_CHARS: usize = 6_000;
 
 fn truncate_for_embedding(text: String) -> String {
     if text.len() <= MAX_EMBEDDING_CHARS {
