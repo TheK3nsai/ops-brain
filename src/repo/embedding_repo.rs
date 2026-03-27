@@ -381,6 +381,37 @@ pub async fn vector_search_knowledge(
     .await
 }
 
+/// Find knowledge entries similar to the given embedding within a cosine distance threshold.
+/// Returns (id, title, category, cosine_distance) for duplicate detection.
+pub async fn find_similar_knowledge(
+    pool: &PgPool,
+    query_embedding: &[f32],
+    max_distance: f64,
+    limit: i64,
+) -> Result<Vec<SimilarEntry>, sqlx::Error> {
+    let vec = Vector::from(query_embedding.to_vec());
+    sqlx::query_as::<_, SimilarEntry>(
+        "SELECT id, title, category, (embedding <=> $1)::float8 AS distance
+         FROM knowledge
+         WHERE embedding IS NOT NULL AND (embedding <=> $1) < $2
+         ORDER BY distance
+         LIMIT $3",
+    )
+    .bind(vec)
+    .bind(max_distance)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct SimilarEntry {
+    pub id: Uuid,
+    pub title: String,
+    pub category: Option<String>,
+    pub distance: f64,
+}
+
 pub async fn vector_search_incidents(
     pool: &PgPool,
     query_embedding: &[f32],

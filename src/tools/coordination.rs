@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::validation::deserialize_flexible_i64;
 
 use super::helpers::{error_result, json_result, not_found};
-use super::shared::{embed_and_store, get_query_embedding};
+use super::shared::{embed_and_store, get_query_embedding, resolve_compact};
 use rmcp::model::*;
 
 // ===== SESSION PARAMS =====
@@ -261,7 +261,7 @@ pub(crate) async fn handle_list_handoffs(
     p: ListHandoffsParams,
 ) -> CallToolResult {
     let limit = p.limit.unwrap_or(20);
-    let compact = p.compact.unwrap_or(true);
+    let compact = resolve_compact(&brain.pool, p.compact, true).await;
 
     if let Err(msg) = crate::validation::validate_option(
         p.status.as_deref(),
@@ -363,7 +363,7 @@ pub(crate) async fn handle_get_catchup(
         }
     };
     let limit = p.limit.unwrap_or(20);
-    let compact = p.compact.unwrap_or(true);
+    let compact = resolve_compact(&brain.pool, p.compact, true).await;
 
     let mut results = serde_json::Map::new();
 
@@ -551,6 +551,40 @@ pub(crate) async fn handle_get_catchup(
         }
     }
 
+    // Stale runbooks: not verified in 30+ days (or never verified)
+    match crate::repo::runbook_repo::list_stale_runbooks(&brain.pool, 30, 10).await {
+        Ok(stale) if !stale.is_empty() => {
+            let items: Vec<serde_json::Value> = stale
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "slug": r.slug,
+                        "title": r.title,
+                        "category": r.category,
+                        "last_verified_at": r.last_verified_at,
+                        "updated_at": r.updated_at,
+                    })
+                })
+                .collect();
+            results.insert(
+                "stale_runbooks".to_string(),
+                serde_json::json!({
+                    "count": items.len(),
+                    "threshold_days": 30,
+                    "items": items,
+                    "_tip": "Runbooks not verified in 30+ days. Use log_runbook_execution with result='success' to mark as verified.",
+                }),
+            );
+        }
+        Ok(_) => {} // no stale runbooks — don't clutter the response
+        Err(e) => {
+            results.insert(
+                "stale_runbooks_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+        }
+    }
+
     results.insert("since".to_string(), serde_json::Value::String(p.since));
     if compact {
         results.insert(
@@ -564,4 +598,43 @@ pub(crate) async fn handle_get_catchup(
     }
 
     json_result(&serde_json::Value::Object(results))
+}
+
+// ===== PREFERENCE PARAMS + HANDLER =====
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetPreferenceParams {
+    /// Preference key (e.g. "compact")
+    pub key: String,
+    /// Preference value (e.g. true, false, "hybrid")
+    pub value: serde_json::Value,
+    /// Scope: "global" (default), "machine:<hostname>", or "client:<slug>"
+    pub scope: Option<String>,
+}
+
+pub(crate) async fn handle_set_preference(
+    brain: &super::OpsBrain,
+    p: SetPreferenceParams,
+) -> CallToolResult {
+    let scope = p.scope.as_deref().unwrap_or("global");
+
+    let valid_keys = ["compact"];
+    if !valid_keys.contains(&p.key.as_str()) {
+        return error_result(&format!(
+            "Unknown preference key '{}'. Valid keys: {}",
+            p.key,
+            valid_keys.join(", ")
+        ));
+    }
+
+    match crate::repo::preference_repo::set_preference(&brain.pool, scope, &p.key, &p.value).await {
+        Ok(pref) => json_result(&serde_json::json!({
+            "scope": pref.scope,
+            "key": pref.key,
+            "value": pref.value,
+            "updated_at": pref.updated_at,
+            "_tip": "This preference will be used as the default when the parameter is not explicitly set in tool calls.",
+        })),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
 }
