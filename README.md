@@ -45,13 +45,13 @@ get_situational_awareness(server_slug: "hvfs0")
 | Tool | Description |
 |------|-------------|
 | `add_knowledge` | Store operational facts, gotchas, tips. Supports `cross_client_safe` flag |
-| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid). Multi-table via `tables` param. `compact` mode (default for multi-table) returns title/snippet instead of full bodies. Supports `client_slug` scoping + `acknowledge_cross_client` gate |
+| `search_knowledge` | Search knowledge base (mode: fts/semantic/hybrid, default: hybrid). Multi-table via `tables` param. `compact` mode (default for multi-table) returns title/snippet instead of full bodies. Empty/"*" query = browse mode (returns recent entries). Supports `client_slug` scoping + `acknowledge_cross_client` gate |
 | `list_knowledge` | Filter by category or client. Configurable `limit` |
 
 ### Context (3)
 | Tool | Description |
 |------|-------------|
-| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Client-level queries aggregate services/networks across all servers. Cross-client auto-gated. `compact=true` (~94K→~10K), `sections` filtering. Returns `_warnings` on transient failures |
+| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. Client-level queries aggregate services/networks across all servers. Cross-client auto-gated. `compact=true` (~94K→~10K), `sections` filtering, `machine` param scopes pending handoffs to your CC. Returns `_warnings` on transient failures |
 | `get_client_overview` | Full client briefing with all related data. Returns `_warnings` on transient failures |
 | `get_server_context` | Everything about a specific server. Cross-client auto-gated. `compact=true`, `sections` filtering. Returns `_warnings` on transient failures |
 
@@ -78,7 +78,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `create_handoff` | Create a task for another machine/session to pick up |
 | `accept_handoff` | Accept a pending handoff |
 | `complete_handoff` | Mark a handoff as done |
-| `list_handoffs` | Filter by status, source/target machine |
+| `list_handoffs` | Filter by status, source/target machine. Compact mode (default) truncates bodies to 200 chars |
 | `search_handoffs` | Search handoffs (mode: fts/semantic/hybrid). Configurable `limit` |
 | `get_catchup` | See what changed since a given timestamp — new/updated handoffs, incidents, knowledge, runbooks |
 
@@ -88,7 +88,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `list_monitors` | All Uptime Kuma monitors with live status, filterable by up/down/pending/maintenance |
 | `get_monitor_status` | Detailed live status for a specific monitor with linked server/service info |
 | `get_monitoring_summary` | Quick health check — ALL_CLEAR or DEGRADED with down monitor list |
-| `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service. Supports `severity_override` (low/medium/high/critical) for watchdog incident severity |
+| `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service. Supports `severity_override` (low/medium/high/critical) and `flap_threshold` (chronic flapper suppression) |
 | `unlink_monitor` | Remove a monitor-to-entity mapping |
 | `list_watchdog_incidents` | List incidents auto-created by the proactive monitoring watchdog, filterable by status. Includes `source` and `recurrence_count` fields |
 | `check_health` | Quick server health check — returns HEALTHY/DOWN/UNKNOWN based on linked Uptime Kuma monitors. Helpful guidance for unlinked servers |
@@ -96,7 +96,7 @@ get_situational_awareness(server_slug: "hvfs0")
 ### Zammad Ticketing (8)
 | Tool | Description |
 |------|-------------|
-| `list_tickets` | List Zammad tickets filtered by client, state, priority |
+| `list_tickets` | List Zammad tickets, optionally filtered by client, state, priority. Omit `client_slug` for all clients |
 | `get_ticket` | Get ticket by ID with full article history |
 | `create_ticket` | Create a ticket in Zammad, optionally link to ops-brain incident |
 | `update_ticket` | Update ticket state, priority, or title |
@@ -260,6 +260,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 # OPS_BRAIN_WATCHDOG_INTERVAL=60           (polling interval in seconds)
 # OPS_BRAIN_WATCHDOG_CONFIRM_POLLS=3       (consecutive DOWN polls before incident — flap suppression)
 # OPS_BRAIN_WATCHDOG_COOLDOWN_SECS=1800    (seconds after resolve before new incident — flap suppression)
+# OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD=5      (chronic flapper: auto-downgrade at N recurrences, suppress at 2N)
 # ZAMMAD_URL=http://zammad-railsserver:3000  (optional, for ticketing integration)
 # ZAMMAD_API_TOKEN=<token>                 (Zammad API token)
 
@@ -342,6 +343,8 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 10**: CC-HSR assessment response — merged `semantic_search` into `search_knowledge` (multi-table via `tables` param), new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail), `runbook_executions` migration — 71 tools
 - [x] **Phase 11**: Noise reduction + signal quality — watchdog incident deduplication (reopens recent incidents instead of duplicating, `recurrence_count` tracking), `search_knowledge` compact mode (67KB→~5KB for multi-table), client-level SA aggregation (services/networks/vendors via server traversal), `source` field on incidents (`watchdog`/`manual`/`seed`), historical incident TTR fix, `check_health` UX improvements — 71 tools, 31 migrations
 - [x] **Phase 12**: Watchdog intelligence + vendor UX — `severity_override` on monitors (set via `link_monitor`, watchdog checks before role-based fallback), `upsert_vendor` accepts `client_slug` for auto-linking vendors to clients, SA section filter fix (vendors/knowledge respect `sections` param), seed incident source fix — 71 tools, 32 migrations
+- [x] **Phase 13**: API UX fixes (CC-CPA field feedback) — `search_knowledge` browse mode (empty/"*" query returns recent entries), `list_tickets` `client_slug` optional, `list_handoffs` compact mode (default: truncate body to 200 chars), `get_situational_awareness` `machine` param (scopes pending handoffs to requesting CC), hybrid search default for all queries — 71 tools, 32 migrations
+- [x] **Phase 13.1**: Chronic flapper suppression — automatic severity degradation for monitors that repeatedly flap. `recurrence_count >= threshold` (default 5) → severity "low"; `>= 2x threshold` → auto-resolved. Per-monitor config via `link_monitor` `flap_threshold` param, global default via `OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD` env var. Natural 24h reset — 71 tools, 33 migrations
 
 **Post-phase improvements:**
 
@@ -356,6 +359,20 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] Adaptive CC startup protocol: identity lookup once (then local memory), ops check when idle, compliance/standards on-demand, user tasks take priority over ceremony
 - [x] Watchdog flap suppression: grace period (N consecutive DOWN polls before incident) + cooldown (suppress re-incident after resolve) + deduplication (reopen recent incidents instead of creating duplicates). Eliminates push-monitor heartbeat jitter noise
 - [x] Lighter CC workflow: optional sessions, knowledge boundaries (ops-brain vs local), tool tiers, handoff routing table, quality bar for knowledge entries
+
+### Planned
+
+Prioritized from CC-CPA and CC-HSR field assessments (2026-03-27):
+
+- [ ] **Multi-instance Uptime Kuma**: Connect CPA's local Kuma (LAN-only) and HSR's Kuma to ops-brain's watchdog. Options: push agent on remote servers, Cloudflare Tunnel route, or CC-driven periodic push
+- [ ] **Handoff push notifications**: Email on handoff creation (P1/critical → immediate, normal → daily briefing). Zammad ticket auto-creation for high/critical handoffs
+- [ ] **Web dashboard**: Read-only operational dashboard at `/dashboard` — monitoring health, open incidents, pending handoffs, CC activity, client cards. Server-rendered HTML (Askama/HTMX) or static JSON API + lightweight frontend
+- [ ] **Duplicate knowledge detection**: Cosine similarity check on new entries against existing embeddings
+- [ ] **Runbook staleness tracking**: `last_verified_at` field + catchup warnings for 30+ day old runbooks
+- [ ] **Runbook-incident linkage**: Bi-directional — link executions to incidents, track mean-time-to-resolve by runbook category, auto-suggest relevant runbooks on incident creation
+- [ ] **Briefing automation**: Auto-email daily/weekly briefings via cron on kensai-cloud (currently via Claude Code scheduled triggers)
+- [ ] **Trend analysis**: Daily metric snapshots — backup freshness, disk usage trends, incident frequency over time
+- [ ] **CC coordination**: Incident "claimed" state, incident comment timeline, cross-CC message board
 
 ## License
 
