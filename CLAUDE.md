@@ -166,6 +166,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Title boosting**: Embedding text preparation (`src/embeddings.rs`) repeats the title to give vector search stronger weight on title-matching queries. FTS already weights title as category A (highest) in stored tsvectors.
 - **Tables**: runbooks, knowledge, incidents, handoffs
 - **Auto-embed**: create/update tools generate embeddings best-effort (graceful on failure)
+- **Truncation**: `truncate_for_embedding()` caps text at 6K chars (~5200-6000 tokens). Real markdown/code tokenizes at ~1 char/token for nomic-embed-text — do NOT increase this limit without empirical testing (see knowledge entry "nomic-embed-text Real-World Tokenization Ratio").
 - **Backfill**: `backfill_embeddings` tool for existing data without embeddings. **Must run after title-boost change** to regenerate vectors.
 - **Graceful degradation**: If embedding API unreachable, all FTS works unchanged. `search_knowledge` with hybrid mode falls back to FTS-only (with OR relaxation).
 - **`semantic_search` merged into `search_knowledge`**: Use `tables` param to search across multiple tables. Default is `["knowledge"]`; set `tables=["knowledge","runbooks","incidents","handoffs"]` for cross-table search. Mode defaults to `"hybrid"` for multi-table.
@@ -227,6 +228,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **sqlx-cli requires `DATABASE_URL`** — set it in `.env` or export it before running `sqlx migrate` commands. Same connection string the app uses.
 - **cargo-audit 0.22 has no config file support** — ignores must be passed via `--ignore RUSTSEC-XXXX` CLI flags. The `audit.toml` in the repo root is documentation only. The actual ignore is in `.github/workflows/ci.yml`.
 - **upsert_vendor creates duplicates** — it always INSERTs (no ON CONFLICT). To update an existing vendor, use `upsert_vendor` with `id` parameter, which routes to `update_vendor_by_id` (COALESCE partial update). Without `id`, a new row is created every time.
+- **nomic-embed-text tokenization** — real markdown/code content tokenizes at ~1-1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` in `src/embeddings.rs` is 6,000 (not 24K). Do not increase without empirical testing against production data — code-heavy content fails at ~7,200 chars, plain markdown at ~8,200 chars (8,192-token context window).
 
 ## CI Pipeline
 
