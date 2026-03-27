@@ -899,45 +899,32 @@ impl ServerHandler for OpsBrain {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ops-brain", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Operational intelligence server for IT infrastructure management. \
-                 Use get_situational_awareness for comprehensive context about any \
-                 server, service, or client. Use search_inventory for full-text search \
-                 across all entity types (servers, services, vendors, clients, sites, networks, \
-                 runbooks, knowledge, incidents, handoffs). \
-                 Use search_knowledge with tables=['knowledge','runbooks','incidents','handoffs'] \
-                 for AI-powered conceptual search across multiple tables (finds related content \
-                 even without exact keyword matches). Use get_monitoring_summary for live infrastructure \
-                 health from Uptime Kuma. Use list_tickets, search_tickets, and get_ticket \
-                 for Zammad ticketing integration — create_ticket and add_ticket_note for \
-                 ticket management with time accounting. Use generate_briefing for \
-                 daily/weekly operational summaries aggregating monitoring, incidents, \
-                 handoffs, and tickets. \
+                "Operational intelligence for IT infrastructure. Key tools: \
+                 get_situational_awareness (context), search_knowledge (AI search, \
+                 use tables param for cross-table), search_inventory (full-text across \
+                 all entities), get_monitoring_summary (live health), list_tickets / \
+                 create_ticket (Zammad), generate_briefing (daily/weekly summaries). \
                  \
-                 IMPORTANT: You are part of a multi-CC team. \
-                 IDENTITY: If you don't already know your CC name and role (from local \
-                 memory or prior context), run search_knowledge query 'CC Team Identity \
-                 Naming' and match your hostname. Use your CC Name in all authored content. \
-                 STARTUP: When starting a session without an immediate user task, check \
-                 pending handoffs to your machine (list_handoffs) and open incidents for \
-                 your client scope (list_incidents). Address P1 handoffs before other work. \
-                 If the user leads with a direct task, handle it first — check handoffs \
-                 and incidents when there's a natural pause. \
-                 SESSIONS: start_session/end_session are OPTIONAL. Only use them when \
-                 accepting a handoff, creating a handoff, or doing long work with cross-CC \
-                 value. For quick tasks, the conversation IS the session. \
-                 COMPLIANCE: Before creating or sharing cross-client content, reference \
-                 search_knowledge query 'CC Team Compliance Data Sharing' for rules. \
-                 STANDARDS: When authoring knowledge, runbooks, or incidents, reference \
-                 search_knowledge query 'CC Team Contribution Standards' for formatting \
-                 and knowledge boundaries (what belongs in ops-brain vs. local docs). \
-                 HANDOFF ROUTING: Use hostname (not CC Name) in to_machine field. \
-                 Code changes → stealth, cloud infra → kensai-cloud, HSR servers → HV-FS0, \
-                 CPA servers → SMYT-SERVER. When unsure, route to stealth. \
-                 Full routing table: search_knowledge query 'CC Team Identity Naming'. \
-                 ALWAYS: (1) get_situational_awareness before making infrastructure changes, \
-                 (2) add_knowledge for gotchas and lessons learned, \
-                 (3) create_handoff when another CC should pick up work or your session \
-                 is ending with unfinished work.",
+                 MULTI-CC TEAM: You are one of several Claude Code instances sharing \
+                 this server. \
+                 IDENTITY: search_knowledge 'CC Team Identity Naming' to find your CC \
+                 name by hostname. Use it in all authored content. \
+                 STARTUP: If no immediate user task, check list_handoffs for your machine \
+                 and list_incidents for your client scope. P1 handoffs first. If the user \
+                 leads with a task, handle it first — check handoffs at a natural pause. \
+                 Sessions (start_session/end_session) are optional — only for handoff \
+                 work or long cross-CC sessions. \
+                 COMPLIANCE: search_knowledge 'CC Team Compliance Data Sharing' before \
+                 creating cross-client content. \
+                 STANDARDS: search_knowledge 'CC Team Contribution Standards' before \
+                 authoring knowledge, runbooks, or incidents. \
+                 ROUTING: Code/PRs → stealth. Deploys → kensai-cloud. HSR infra → HV-FS0. \
+                 CPA infra → SMYT-SERVER. Unsure → stealth. Use hostname in to_machine. \
+                 AFTER CODE MERGES: Always create a deploy handoff to kensai-cloud with \
+                 commit hash, deploy steps, and validation checklist. \
+                 ALWAYS: (1) get_situational_awareness before infra changes, \
+                 (2) add_knowledge for lessons learned, (3) create_handoff for unfinished \
+                 or cross-CC work.",
             )
     }
 }
