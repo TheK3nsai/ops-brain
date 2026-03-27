@@ -40,7 +40,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 33 sqlx migration files (auto-run on startup)
+migrations/        # 35 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -131,6 +131,8 @@ sqlx migrate info          # Show migration status
 - **Phase 14** (CC team field validation fixes): COMPLETE — Addresses findings from CC-Cloud, CC-HSR, and CC-CPA validation handoffs. **(1) list_tickets parse bug fix**: Zammad returns different response shapes for filtered (array) vs unfiltered (object envelope with `assets.Ticket` map) queries — `search_tickets` now handles both transparently via `parse_ticket_search_response()`. 4 new unit tests. **(2) Hybrid search relevance improvement**: Widened RRF candidate pool from 20 to 50 per ranking method (FTS + vector) across all 4 hybrid search functions (runbooks, knowledge, incidents, handoffs). Semantic-only matches no longer get excluded when FTS doesn't find them in a tight top-20 window. **(3) Multi-instance Uptime Kuma design documented**: Full architecture design (~20h implementation) stored as knowledge entry for future sessions — covers DB schema, watchdog changes, tool updates, backward compat strategy. **(4) Deploy automation documented**: CC-Cloud session startup check (immediate) + GitHub Actions CD (future) stored as knowledge entry. **(5) MCP server instructions condensed** (PR #14): Reduced from ~2KB to ~1KB to prevent Claude Code client-side truncation — CCs were missing HANDOFF ROUTING and ALWAYS directives. Added explicit "AFTER CODE MERGES" directive for deploy handoffs. Fixed deploy routing (→ kensai-cloud, not stealth). **(6) CC Team knowledge entries updated**: Identity & Naming doc now has Code-to-Production Workflow (6-step cycle) with deploy routing to CC-Cloud and validation fan-out. Contribution Standards now applies "never push to main" universally (including CC-Stealth) with Post-Merge Checklist. 33 migrations, 71 tools.
 
 - **Phase 14.1** (search relevance tuning): COMPLETE — **(1) websearch_to_tsquery**: Replaced `plainto_tsquery` in all 40 FTS call sites across `embedding_repo.rs`, `knowledge_repo.rs`, and `search_repo.rs` — supports quoted phrases, `or` keyword, `-exclusion` while keeping AND default. **(2) OR fallback**: When AND-based FTS returns zero results and query has 2+ words, retries with OR-joined terms via `to_tsquery`. Applied to all FTS-only paths (4 hybrid None branches + standalone search_knowledge + search_runbooks). Helper `build_or_tsquery_text()` in `repo/mod.rs` with 6 unit tests. **(3) Title boosting in embeddings**: Title repeated in all 4 `prepare_*_text()` functions in `embeddings.rs` — vector search gives stronger weight to title-matching queries. Requires `backfill_embeddings` post-deploy. PR #16 (Zammad time_unit fix) and PR #17 (search relevance). 33 migrations, 71 tools.
+
+- **Phase 14.2** (backlog improvements): COMPLETE — Four features across 3 PRs (#18, #19, #20). **(1) Embedding truncation** (PR #18): `truncate_for_embedding()` caps all `prepare_*_text()` at 24K chars (~6K tokens) — fixes 5 handoffs that exceeded nomic-embed-text's 8192-token context window. UTF-8 char-boundary safe. 4 new unit tests. **(2) Runbook staleness tracking** (PR #19): `last_verified_at` column on runbooks, auto-set when `log_runbook_execution` records a success. `get_catchup` surfaces stale runbooks (>30 days unverified or never verified). **(3) Duplicate knowledge detection** (PR #19): `add_knowledge` computes cosine similarity against existing entries before inserting. If similarity >85%, returns warning with matches. `force=true` bypasses. **(4) Global compact preference** (PR #19): `preferences` table (scope+key+JSONB) + `set_preference` tool (72nd). All 6 compact-accepting tools use `resolve_compact()` helper — explicit params override preference. **(5) Runbook-incident bi-directional linkage** (PR #20): Optional `incident_id` param on `log_runbook_execution`. `list_executions_for_incident()` repo function for reverse lookups. 35 migrations, 72 tools.
 
 ## Safety Design Principles (Phase 9 — Implemented)
 
@@ -332,7 +334,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 ### Data Quality
 - **Vendor deduplication**: DONE (2026-03-26) — 19→12 vendors, deduplicated via direct SQL by CC-Cloud.
 - **CPA network missing**: 192.168.0.0/24 not in networks table (HSR and Eduardo home are there).
-- **Embedding backfill**: Knowledge and incidents pushed from local to remote don't have embeddings yet. Run `backfill_embeddings` from a remote CC instance.
+- **Embedding backfill**: Knowledge and incidents pushed from local to remote don't have embeddings yet. Run `backfill_embeddings` from a remote CC instance. Also: 5 handoffs failed due to overlength text (now fixed by truncation in Phase 14.2) — backfill will pick them up.
 - **Historical incidents**: 5 incidents still reference fictional hostnames (HVDC01, HVRDS01, HVFS01) in their text. Low priority — they're marked resolved/historical.
 
 ### Future Improvements (from CC-HSR Phase 10/11 Assessment)
@@ -346,12 +348,12 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 
 #### P3 — Signal Quality (next priority)
 - ~~**Incident severity auto-classification**~~: DONE (Phase 12) — `severity_override` on monitors table, set via `link_monitor`. Watchdog checks override first, then falls back to role-based logic. Future enhancement: auto-classify based on monitor type (HTTP > push), time of day, or service criticality tags.
-- **Duplicate knowledge detection**: Two entries exist about SR-SERVER SPOF with different categories. Use existing embeddings to cosine-similarity check new entries against existing ones. Warn: "Similar entry exists: [title]. Update existing or create new?"
-- **Runbook staleness tracking**: Add `last_verified_at` timestamp to runbooks. `get_catchup` could warn about runbooks not verified in 30+ days. The "Backup Infrastructure" runbook contradicts the completed HSR Backup Audit knowledge entry.
-- **Runbook-incident bi-directional linkage**: When a runbook is executed for an incident, link them both ways. Incident shows "Resolved using runbook: X". Runbook shows "Last used: date for incident Y. Used N times total." Frequently-used runbooks are proven valuable; unused ones might be stale.
+- ~~**Duplicate knowledge detection**~~: DONE (Phase 14.2) — `add_knowledge` cosine-checks against existing entries (>85% similarity warns, `force=true` bypasses).
+- ~~**Runbook staleness tracking**~~: DONE (Phase 14.2) — `last_verified_at` column, auto-set on successful execution, `get_catchup` warns about stale runbooks (>30 days).
+- ~~**Runbook-incident bi-directional linkage**~~: DONE (Phase 14.2) — `incident_id` param on `log_runbook_execution`, `list_executions_for_incident()` for reverse lookups.
 
 #### P4 — Aspirational
-- **Global compact preference**: Session-level or client-level `set_preference compact=true` so all tools default to compact. Avoids per-tool `compact` param repetition.
+- ~~**Global compact preference**~~: DONE (Phase 14.2) — `preferences` table + `set_preference` tool. `resolve_compact()` helper checks preference when explicit param not set.
 - **Watchdog learning / chronic flapper suppression**: After N recurrences within a time window (e.g. 5 reopens in 24h), auto-downgrade severity to "low" and add a note: "chronic flapper — investigate monitor configuration." Design decisions needed: threshold count, time window, degradation curve (sudden vs gradual), reset mechanism when monitor stabilizes. The `recurrence_count` field (Phase 11) and `severity_override` (Phase 12) provide the foundation — this is about making watchdog auto-tune based on observed patterns.
 - **Dashboard UI**: Web dashboard for Eduardo to view ops-brain data without opening a Claude session. Agreed #1 priority across all CCs.
 - **Multi-instance Uptime Kuma**: ops-brain currently only connects to kensai.cloud's Uptime Kuma. HSR runs a separate instance at status.ihmpr.com with ~18 monitors. `check_health` and `get_monitoring_summary` are blind to HSR infrastructure. Options: multi-instance config, federation, or manual monitor linking.
