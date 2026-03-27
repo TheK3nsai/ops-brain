@@ -66,10 +66,34 @@ pub async fn create_incident(
     notes: Option<&str>,
     cross_client_safe: bool,
 ) -> Result<Incident, sqlx::Error> {
+    create_incident_with_source(
+        pool,
+        title,
+        severity,
+        client_id,
+        symptoms,
+        notes,
+        cross_client_safe,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_incident_with_source(
+    pool: &PgPool,
+    title: &str,
+    severity: &str,
+    client_id: Option<Uuid>,
+    symptoms: Option<&str>,
+    notes: Option<&str>,
+    cross_client_safe: bool,
+    source: Option<&str>,
+) -> Result<Incident, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Incident>(
-        "INSERT INTO incidents (id, title, status, severity, client_id, symptoms, notes, cross_client_safe)
-         VALUES ($1, $2, 'open', $3, $4, $5, $6, $7)
+        "INSERT INTO incidents (id, title, status, severity, client_id, symptoms, notes, cross_client_safe, source)
+         VALUES ($1, $2, 'open', $3, $4, $5, $6, $7, $8)
          RETURNING *",
     )
     .bind(id)
@@ -79,6 +103,57 @@ pub async fn create_incident(
     .bind(symptoms)
     .bind(notes)
     .bind(cross_client_safe)
+    .bind(source)
+    .fetch_one(pool)
+    .await
+}
+
+/// Find a recently resolved watchdog incident for the same monitor (within last 24h).
+/// Used for deduplication — reopen instead of creating a new incident.
+pub async fn find_recent_resolved_watchdog_incident(
+    pool: &PgPool,
+    title: &str,
+) -> Result<Option<Incident>, sqlx::Error> {
+    sqlx::query_as::<_, Incident>(
+        "SELECT * FROM incidents
+         WHERE title = $1
+           AND status = 'resolved'
+           AND resolved_at > now() - interval '24 hours'
+         ORDER BY resolved_at DESC
+         LIMIT 1",
+    )
+    .bind(title)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Reopen a resolved incident for recurrence tracking.
+/// Increments recurrence_count, resets status to open, updates symptoms.
+pub async fn reopen_incident(
+    pool: &PgPool,
+    id: Uuid,
+    symptoms: Option<&str>,
+    notes_append: &str,
+) -> Result<Incident, sqlx::Error> {
+    sqlx::query_as::<_, Incident>(
+        "UPDATE incidents SET
+            status = 'open',
+            resolved_at = NULL,
+            time_to_resolve_minutes = NULL,
+            root_cause = NULL,
+            resolution = NULL,
+            symptoms = COALESCE($2, symptoms),
+            notes = CASE
+                WHEN notes IS NOT NULL THEN notes || E'\n' || $3
+                ELSE $3
+            END,
+            recurrence_count = recurrence_count + 1,
+            updated_at = now()
+         WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .bind(symptoms)
+    .bind(notes_append)
     .fetch_one(pool)
     .await
 }

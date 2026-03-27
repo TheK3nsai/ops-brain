@@ -9,6 +9,114 @@ use super::helpers::{
 use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
 
+/// Compact a search result item: keep key metadata fields + a content snippet.
+fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_json::Value {
+    let Some(obj) = item.as_object() else {
+        return item.clone();
+    };
+
+    let keep_fields: &[&str] = match entity_type {
+        "knowledge" => &[
+            "id",
+            "title",
+            "category",
+            "tags",
+            "client_id",
+            "cross_client_safe",
+            "_client_slug",
+            "_client_name",
+            "created_at",
+            "updated_at",
+        ],
+        "runbook" => &[
+            "id",
+            "title",
+            "slug",
+            "category",
+            "tags",
+            "client_id",
+            "cross_client_safe",
+            "_client_slug",
+            "_client_name",
+            "created_at",
+            "updated_at",
+        ],
+        "incident" => &[
+            "id",
+            "title",
+            "severity",
+            "status",
+            "client_id",
+            "reported_at",
+            "resolved_at",
+            "time_to_resolve_minutes",
+            "recurrence_count",
+            "source",
+            "cross_client_safe",
+            "_client_slug",
+            "_client_name",
+        ],
+        "handoff" => &[
+            "id",
+            "title",
+            "status",
+            "priority",
+            "from_machine",
+            "to_machine",
+            "created_at",
+            "updated_at",
+        ],
+        _ => &["id", "title", "slug", "name"],
+    };
+
+    // Content field name varies by entity type
+    let content_field = match entity_type {
+        "knowledge" => "content",
+        "runbook" => "content",
+        "incident" => "symptoms",
+        "handoff" => "body",
+        _ => "content",
+    };
+
+    let mut compacted = serde_json::Map::new();
+    for (k, v) in obj {
+        if keep_fields.contains(&k.as_str()) {
+            compacted.insert(k.clone(), v.clone());
+        }
+    }
+
+    // Add a snippet from the content field (first 200 chars)
+    if let Some(content) = obj.get(content_field).and_then(|v| v.as_str()) {
+        let snippet = if content.len() > 200 {
+            format!(
+                "{}...",
+                &content[..content
+                    .char_indices()
+                    .take_while(|(i, _)| *i < 200)
+                    .last()
+                    .map(|(i, c)| i + c.len_utf8())
+                    .unwrap_or(200)]
+            )
+        } else {
+            content.to_string()
+        };
+        compacted.insert("_snippet".to_string(), serde_json::Value::String(snippet));
+    }
+
+    serde_json::Value::Object(compacted)
+}
+
+/// Apply compact mode to a Vec of search result items.
+fn compact_search_results(
+    items: &[serde_json::Value],
+    entity_type: &str,
+) -> Vec<serde_json::Value> {
+    items
+        .iter()
+        .map(|v| compact_search_item(v, entity_type))
+        .collect()
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddKnowledgeParams {
     pub title: String,
@@ -36,6 +144,11 @@ pub struct SearchKnowledgeParams {
     /// Max results per table (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
+    /// Compact mode: return title, category, tags, score, and a snippet (first 200 chars)
+    /// instead of full content bodies. Drastically reduces response size for multi-table
+    /// searches (67KB → ~5KB). Default: true for multi-table, false for single-table.
+    /// Use drill-down tools (get_runbook, get_incident, etc.) for full details.
+    pub compact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -211,6 +324,9 @@ pub(crate) async fn handle_search_knowledge(
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
     let limit = p.limit.unwrap_or(20);
 
+    // Compact mode: default true for multi-table, false for single-table
+    let compact = p.compact.unwrap_or(multi_table);
+
     // Single-table knowledge search (original behavior)
     if !multi_table {
         return search_knowledge_single(
@@ -220,6 +336,7 @@ pub(crate) async fn handle_search_knowledge(
             requesting_client_id,
             acknowledge,
             limit,
+            compact,
         )
         .await;
     }
@@ -276,9 +393,14 @@ pub(crate) async fn handle_search_knowledge(
                             acknowledge,
                             &client_lookup,
                         );
+                        let final_items = if compact {
+                            compact_search_results(&filtered.allowed, "knowledge")
+                        } else {
+                            filtered.allowed
+                        };
                         results.insert(
                             "knowledge".to_string(),
-                            serde_json::to_value(&filtered.allowed).unwrap_or_default(),
+                            serde_json::to_value(&final_items).unwrap_or_default(),
                         );
                         all_withheld.extend(filtered.withheld_notices);
                         log_audit_entries(
@@ -335,9 +457,14 @@ pub(crate) async fn handle_search_knowledge(
                             acknowledge,
                             &client_lookup,
                         );
+                        let final_items = if compact {
+                            compact_search_results(&filtered.allowed, "runbook")
+                        } else {
+                            filtered.allowed
+                        };
                         results.insert(
                             "runbooks".to_string(),
-                            serde_json::to_value(&filtered.allowed).unwrap_or_default(),
+                            serde_json::to_value(&final_items).unwrap_or_default(),
                         );
                         all_withheld.extend(filtered.withheld_notices);
                         log_audit_entries(
@@ -394,9 +521,14 @@ pub(crate) async fn handle_search_knowledge(
                             acknowledge,
                             &client_lookup,
                         );
+                        let final_items = if compact {
+                            compact_search_results(&filtered.allowed, "incident")
+                        } else {
+                            filtered.allowed
+                        };
                         results.insert(
                             "incidents".to_string(),
-                            serde_json::to_value(&filtered.allowed).unwrap_or_default(),
+                            serde_json::to_value(&final_items).unwrap_or_default(),
                         );
                         all_withheld.extend(filtered.withheld_notices);
                         log_audit_entries(
@@ -443,9 +575,18 @@ pub(crate) async fn handle_search_knowledge(
                 };
                 match search_result {
                     Ok(items) => {
+                        let json_items: Vec<serde_json::Value> = items
+                            .iter()
+                            .filter_map(|h| serde_json::to_value(h).ok())
+                            .collect();
+                        let final_items = if compact {
+                            compact_search_results(&json_items, "handoff")
+                        } else {
+                            json_items
+                        };
                         results.insert(
                             "handoffs".to_string(),
-                            serde_json::to_value(&items).unwrap_or_default(),
+                            serde_json::to_value(&final_items).unwrap_or_default(),
                         );
                     }
                     Err(e) => {
@@ -495,6 +636,7 @@ async fn search_knowledge_single(
     requesting_client_id: Option<uuid::Uuid>,
     acknowledge: bool,
     limit: i64,
+    compact: bool,
 ) -> CallToolResult {
     let result = match mode {
         "semantic" => {
@@ -541,7 +683,12 @@ async fn search_knowledge_single(
             )
             .await;
 
-            let mut response = serde_json::json!({ "knowledge": filtered.allowed });
+            let final_items = if compact {
+                compact_search_results(&filtered.allowed, "knowledge")
+            } else {
+                filtered.allowed
+            };
+            let mut response = serde_json::json!({ "knowledge": final_items });
             if !filtered.withheld_notices.is_empty() {
                 response["cross_client_withheld"] = serde_json::json!(filtered.withheld_notices);
             }

@@ -4,9 +4,9 @@
 //! (UP→DOWN / DOWN→UP), and automatically creates/resolves incidents with linked
 //! servers and services.
 //!
-//! ## Flap Suppression
+//! ## Noise Reduction
 //!
-//! Two mechanisms prevent noisy monitors from flooding the incident list:
+//! Three mechanisms prevent noisy monitors from flooding the incident list:
 //!
 //! 1. **Grace period** (`confirm_polls`): A monitor must report DOWN for N consecutive
 //!    polls before an incident is created. With the default interval of 60s and
@@ -16,6 +16,12 @@
 //! 2. **Cooldown** (`cooldown_secs`): After auto-resolving an incident, the watchdog
 //!    will not create a new incident for the same monitor for N seconds (default 1800 =
 //!    30 minutes). This handles monitors that flap DOWN→UP→DOWN repeatedly.
+//!
+//! 3. **Deduplication**: Before creating a new incident, the watchdog checks for a
+//!    recently resolved incident (within 24h) with the same title. If found, it reopens
+//!    the existing incident and increments `recurrence_count` instead of creating a new
+//!    one. This prevents recurring heartbeat misses (e.g. push monitors) from creating
+//!    10+ identical incidents per day.
 
 use std::collections::HashMap;
 
@@ -411,32 +417,74 @@ async fn handle_down_transition(
 
     let title = watchdog_incident_title(monitor_name, "DOWN");
 
-    // Create the incident
-    let incident = crate::repo::incident_repo::create_incident(
-        pool,
-        &title,
-        &severity,
-        client_id,
-        Some(&symptoms),
-        Some("Auto-created by ops-brain watchdog on monitor DOWN transition"),
-        false, // cross_client_safe: watchdog incidents are client-scoped by default
+    // Deduplication: check for a recently resolved incident for the same monitor.
+    // If found, reopen it instead of creating a new one (reduces noise from recurring heartbeat misses).
+    let incident = match crate::repo::incident_repo::find_recent_resolved_watchdog_incident(
+        pool, &title,
     )
-    .await;
+    .await
+    {
+        Ok(Some(existing)) => {
+            let recurrence = existing.recurrence_count + 1;
+            let reopen_note = format!(
+                "Recurrence #{recurrence}: monitor went DOWN again at {}. Reopened by watchdog.",
+                chrono::Utc::now().format("%Y-%m-%d %H:%M UTC")
+            );
+            match crate::repo::incident_repo::reopen_incident(
+                pool,
+                existing.id,
+                Some(&symptoms),
+                &reopen_note,
+            )
+            .await
+            {
+                Ok(reopened) => {
+                    tracing::warn!(
+                        monitor = %monitor_name,
+                        incident_id = %reopened.id,
+                        recurrence_count = reopened.recurrence_count,
+                        "Reopened existing incident (recurrence #{}) instead of creating new",
+                        reopened.recurrence_count,
+                    );
+                    reopened
+                }
+                Err(e) => {
+                    tracing::error!(monitor = %monitor_name, "Failed to reopen incident: {e}");
+                    return None;
+                }
+            }
+        }
+        _ => {
+            // No recent incident found — create a new one
+            let incident = crate::repo::incident_repo::create_incident_with_source(
+                pool,
+                &title,
+                &severity,
+                client_id,
+                Some(&symptoms),
+                Some("Auto-created by ops-brain watchdog on monitor DOWN transition"),
+                false, // cross_client_safe: watchdog incidents are client-scoped by default
+                Some("watchdog"),
+            )
+            .await;
 
-    let incident = match incident {
-        Ok(inc) => inc,
-        Err(e) => {
-            tracing::error!(monitor = %monitor_name, "Failed to create watchdog incident: {e}");
-            return None;
+            match incident {
+                Ok(inc) => {
+                    tracing::warn!(
+                        monitor = %monitor_name,
+                        incident_id = %inc.id,
+                        severity = %severity,
+                        "Created incident for DOWN monitor"
+                    );
+                    inc
+                }
+                Err(e) => {
+                    tracing::error!(monitor = %monitor_name, "Failed to create watchdog incident: {e}");
+                    return None;
+                }
+            }
         }
     };
-
-    tracing::warn!(
-        monitor = %monitor_name,
-        incident_id = %incident.id,
-        severity = %severity,
-        "Created incident for DOWN monitor"
-    );
 
     // Link server and service
     if let Some(sid) = server_id {

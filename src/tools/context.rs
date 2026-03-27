@@ -263,6 +263,63 @@ pub(crate) async fn handle_get_situational_awareness(
         {
             client_id = Some(client.id);
             awareness.client = serde_json::to_value(&client).ok();
+
+            // Client-only query: aggregate servers → services/networks from all sites
+            if p.server_slug.is_none() && p.service_slug.is_none() {
+                // Get all servers for this client
+                if section_included(&sections, "services") || section_included(&sections, "server")
+                {
+                    if let Ok(servers) = crate::repo::server_repo::list_servers(
+                        &brain.pool,
+                        Some(client.id),
+                        None,
+                        None,
+                        None,
+                        200,
+                    )
+                    .await
+                    {
+                        // Collect services from all servers (deduplicated)
+                        let mut seen_service_ids = std::collections::HashSet::new();
+                        for srv in &servers {
+                            if let Ok(svcs) = crate::repo::service_repo::get_services_for_server(
+                                &brain.pool,
+                                srv.id,
+                            )
+                            .await
+                            {
+                                for svc in svcs {
+                                    if seen_service_ids.insert(svc.id) {
+                                        if let Ok(val) = serde_json::to_value(&svc) {
+                                            awareness.services.push(val);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Get networks from all sites
+                if section_included(&sections, "networks") {
+                    if let Ok(sites) =
+                        crate::repo::site_repo::list_sites(&brain.pool, Some(client.id)).await
+                    {
+                        for site in &sites {
+                            if let Ok(nets) =
+                                crate::repo::network_repo::list_networks(&brain.pool, Some(site.id))
+                                    .await
+                            {
+                                for net in nets {
+                                    if let Ok(val) = serde_json::to_value(&net) {
+                                        awareness.networks.push(val);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             return not_found_with_suggestions(&brain.pool, "Client", slug).await;
         }

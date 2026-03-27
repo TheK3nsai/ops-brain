@@ -248,6 +248,8 @@ pub(crate) fn compact_keep_fields(entity_type: &str) -> &'static [&'static str] 
             "resolved_at",
             "updated_at",
             "time_to_resolve_minutes",
+            "source",
+            "recurrence_count",
             "cross_client_safe",
             "_client_slug",
             "_client_name",

@@ -203,6 +203,8 @@ mod tests {
             time_to_resolve_minutes: Some(45),
             notes: None,
             cross_client_safe: false,
+            source: None,
+            recurrence_count: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -232,6 +234,8 @@ mod tests {
             time_to_resolve_minutes: None,
             notes: None,
             cross_client_safe: false,
+            source: None,
+            recurrence_count: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

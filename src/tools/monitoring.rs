@@ -329,10 +329,34 @@ pub(crate) async fn handle_check_health(
     };
 
     if linked_monitors.is_empty() {
+        // Try to provide helpful context about where monitoring might exist
+        let mut reason =
+            String::from("No monitors linked to this server in ops-brain's Uptime Kuma instance.");
+
+        // Check if the server's client has an external monitoring URL in notes/knowledge
+        let site = crate::repo::site_repo::get_site(&brain.pool, server.site_id)
+            .await
+            .ok()
+            .flatten();
+        if let Some(ref site) = site {
+            if let Ok(Some(client)) =
+                crate::repo::client_repo::get_client(&brain.pool, site.client_id).await
+            {
+                reason.push_str(&format!(
+                    " This server belongs to client '{}'. If this client has a separate Uptime Kuma \
+                     or monitoring instance, check there directly.",
+                    client.name
+                ));
+            }
+        }
+
+        reason.push_str(" Use link_monitor to map Uptime Kuma monitors to this server.");
+
         return json_result(&serde_json::json!({
             "server": p.slug,
+            "hostname": server.hostname,
             "status": "UNKNOWN",
-            "reason": "No monitors linked to this server. Use link_monitor to map Uptime Kuma monitors.",
+            "reason": reason,
         }));
     }
 

@@ -18,6 +18,10 @@ pub struct Incident {
     pub time_to_resolve_minutes: Option<i32>,
     pub notes: Option<String>,
     pub cross_client_safe: bool,
+    /// Who created this incident: 'watchdog', 'manual', 'seed'
+    pub source: Option<String>,
+    /// How many times a watchdog incident has been reopened for the same monitor
+    pub recurrence_count: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -40,7 +40,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 27 sqlx migration files (auto-run on startup)
+migrations/        # 31 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data with real infrastructure
 ```
 
@@ -123,6 +123,7 @@ sqlx migrate info          # Show migration status
 - **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge/incidents, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping, `compact` mode + `sections` filtering for context tools. 68 tools (59 base + update_knowledge + delete_knowledge + delete_server + delete_service + delete_vendor + list_vendors + list_clients + list_sites + list_networks).
 - **Phase 10** (CC-HSR assessment response): COMPLETE — Merged `semantic_search` into `search_knowledge` (add `tables` param for multi-table search). 4 new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail). New migration: `runbook_executions` table. 71 tools total.
 - **Phase 10.1** (CC-HSR assessment fixes): COMPLETE — `get_catchup` compact mode (default true, ~3KB vs 61-97KB), excludes completed handoffs. `client_slug` on `runbook_executions` for HIPAA audit trails. Fixed 4 stale runbook slugs (veeam-backup-failure→backup-infrastructure, etc.). 30 migrations, 71 tools.
+- **Phase 11** (noise reduction + signal quality): COMPLETE — Addresses CC-HSR Phase 10.1 assessment. **P1 Incident dedup**: watchdog checks for recently resolved incidents (24h) before creating new ones — reopens with `recurrence_count` instead of duplicating (93% noise ratio → near zero). **P1 search_knowledge compact**: `compact` param (default true for multi-table) returns title/category/tags/snippet instead of full bodies (67KB → ~5KB). **P2 Client-level SA aggregation**: `get_situational_awareness` with `client_slug` now traverses client → sites → servers → services/networks (was returning empty). **P2 Historical incident TTR**: seed incidents get realistic TTR values + `source` field ('watchdog'/'manual'/'seed') for analytics filtering. **P2 check_health UX**: unlinked servers get helpful message with client name and guidance. New migration adds `source` + `recurrence_count` to incidents table. 31 migrations, 71 tools.
 
 ## Safety Design Principles (Phase 9 — Implemented)
 
@@ -242,10 +243,11 @@ Config for all machines (in `~/.claude.json`):
   - Detects DOWN→UP: auto-resolves the incident with TTR
   - On startup, recovers state from open `[AUTO]` incidents (survives restarts)
   - Graceful: if Kuma unreachable or embedding API down, logs error and continues
-- **Flap suppression** (two mechanisms):
+- **Noise reduction** (three mechanisms):
   - **Grace period** (`CONFIRM_POLLS`, default 3): Monitor must be DOWN for N consecutive polls before an incident is created. With 60s interval, that's ~3 minutes. Handles push-monitor heartbeat jitter and transient blips.
   - **Cooldown** (`COOLDOWN_SECS`, default 1800): After auto-resolving an incident, no new incident for the same monitor for 30 minutes. Handles DOWN→UP→DOWN flapping.
-  - Set `CONFIRM_POLLS=1` and `COOLDOWN_SECS=0` to disable flap suppression (original behavior).
+  - **Deduplication** (Phase 11): Before creating a new incident, checks for a recently resolved incident (24h) with the same title. If found, reopens it and increments `recurrence_count` instead of creating a duplicate. Eliminates recurring heartbeat noise (e.g. push monitors cycling every 5-6h).
+  - Set `CONFIRM_POLLS=1` and `COOLDOWN_SECS=0` to disable flap suppression (original behavior). Deduplication is always active.
 - **Severity logic**: domain-controller/dns/dhcp roles → critical; file-server/rds/database/backup → high; everything else → medium
 - **Tool**: `list_watchdog_incidents` — query auto-created incidents by status
 
@@ -324,10 +326,26 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Embedding backfill**: Knowledge and incidents pushed from local to remote don't have embeddings yet. Run `backfill_embeddings` from a remote CC instance.
 - **Historical incidents**: 5 incidents still reference fictional hostnames (HVDC01, HVRDS01, HVFS01) in their text. Low priority — they're marked resolved/historical.
 
-### Future Improvements (from CC-HSR Phase 10 Assessment)
+### Future Improvements (from CC-HSR Phase 10/11 Assessment)
+
+#### Completed in Phase 11
+- ~~**`search_knowledge` compact mode**~~: DONE — `compact` param (default true for multi-table) returns title/category/tags/snippet.
+- ~~**Incident noise/deduplication**~~: DONE — watchdog reopens recent incidents instead of duplicating. `source` + `recurrence_count` fields.
+- ~~**Client-level SA aggregation**~~: DONE — `get_situational_awareness` with `client_slug` now traverses servers → services/networks.
+- ~~**Historical incident TTR**~~: DONE — seed incidents get realistic TTR + `source` field for analytics.
+- ~~**check_health UX**~~: DONE — helpful message for unlinked servers.
+
+#### P3 — Signal Quality (next priority)
+- **Incident severity auto-classification**: All watchdog incidents are currently `medium` (unless server role overrides). Should classify based on: monitor group (EHR = critical, security audits = low), monitor type (HTTP check > push heartbeat), time of day (business hours bump), affected service criticality.
+- **Duplicate knowledge detection**: Two entries exist about SR-SERVER SPOF with different categories. Use existing embeddings to cosine-similarity check new entries against existing ones. Warn: "Similar entry exists: [title]. Update existing or create new?"
+- **Runbook staleness tracking**: Add `last_verified_at` timestamp to runbooks. `get_catchup` could warn about runbooks not verified in 30+ days. The "Backup Infrastructure" runbook contradicts the completed HSR Backup Audit knowledge entry.
+- **Runbook-incident bi-directional linkage**: When a runbook is executed for an incident, link them both ways. Incident shows "Resolved using runbook: X". Runbook shows "Last used: date for incident Y. Used N times total." Frequently-used runbooks are proven valuable; unused ones might be stale.
+
+#### P4 — Aspirational
+- **Global compact preference**: Session-level or client-level `set_preference compact=true` so all tools default to compact. Avoids per-tool `compact` param repetition.
+- **Watchdog learning / auto-suppress**: After N identical auto-resolve cycles, auto-suppress further incident creation for that monitor. Create a meta-knowledge entry: "Monitor X has recurring heartbeat miss — likely config issue." Optionally auto-assign to owning CC.
 - **Dashboard UI**: Web dashboard for Eduardo to view ops-brain data without opening a Claude session. Agreed #1 priority across all CCs.
 - **Multi-instance Uptime Kuma**: ops-brain currently only connects to kensai.cloud's Uptime Kuma. HSR runs a separate instance at status.ihmpr.com with ~18 monitors. `check_health` and `get_monitoring_summary` are blind to HSR infrastructure. Options: multi-instance config, federation, or manual monitor linking.
-- **`search_knowledge` compact mode**: Multi-table semantic search can return 77KB+. Consider a `compact` flag that returns title + snippet + score instead of full content bodies.
 - **Handoff count in MCP preamble**: Show pending handoff count in the server instructions so CCs notice them without calling `list_handoffs`.
 - **Tool groups / admin tier**: Separate tools into admin vs. daily-use tiers to reduce cognitive load.
 - **Auto-deploy on merge**: GitHub Actions workflow to auto-deploy to kensai.cloud when main is updated.
