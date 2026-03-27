@@ -26,7 +26,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `list_sites` / `list_networks` | List sites (filter by client) and networks (filter by site) |
 | `search_inventory` | Full-text search across all 10 entity types. Configurable `limit` per type (default 10) |
 | `upsert_client` / `upsert_site` / `upsert_server` | Create or update records |
-| `upsert_service` / `upsert_vendor` | Create or update records |
+| `upsert_service` / `upsert_vendor` | Create or update records. `upsert_vendor` accepts `client_slug` to auto-link vendor to client |
 | `link_server_service` | Associate a service with a server |
 | `delete_server` | Soft-delete server by slug with preview + confirm safety gate |
 | `delete_service` | Soft-delete service by slug with preview + confirm safety gate |
@@ -88,7 +88,7 @@ get_situational_awareness(server_slug: "hvfs0")
 | `list_monitors` | All Uptime Kuma monitors with live status, filterable by up/down/pending/maintenance |
 | `get_monitor_status` | Detailed live status for a specific monitor with linked server/service info |
 | `get_monitoring_summary` | Quick health check — ALL_CLEAR or DEGRADED with down monitor list |
-| `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service |
+| `link_monitor` | Map an Uptime Kuma monitor name to an ops-brain server and/or service. Supports `severity_override` (low/medium/high/critical) for watchdog incident severity |
 | `unlink_monitor` | Remove a monitor-to-entity mapping |
 | `list_watchdog_incidents` | List incidents auto-created by the proactive monitoring watchdog, filterable by status. Includes `source` and `recurrence_count` fields |
 | `check_health` | Quick server health check — returns HEALTHY/DOWN/UNKNOWN based on linked Uptime Kuma monitors. Helpful guidance for unlinked servers |
@@ -341,6 +341,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge/incidents), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions, `compact` mode + `sections` filtering for context tools — 68 tools (incl. list_vendors, list_clients, list_sites, list_networks)
 - [x] **Phase 10**: CC-HSR assessment response — merged `semantic_search` into `search_knowledge` (multi-table via `tables` param), new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail), `runbook_executions` migration — 71 tools
 - [x] **Phase 11**: Noise reduction + signal quality — watchdog incident deduplication (reopens recent incidents instead of duplicating, `recurrence_count` tracking), `search_knowledge` compact mode (67KB→~5KB for multi-table), client-level SA aggregation (services/networks/vendors via server traversal), `source` field on incidents (`watchdog`/`manual`/`seed`), historical incident TTR fix, `check_health` UX improvements — 71 tools, 31 migrations
+- [x] **Phase 12**: Watchdog intelligence + vendor UX — `severity_override` on monitors (set via `link_monitor`, watchdog checks before role-based fallback), `upsert_vendor` accepts `client_slug` for auto-linking vendors to clients, SA section filter fix (vendors/knowledge respect `sections` param), seed incident source fix — 71 tools, 32 migrations
 
 **Post-phase improvements:**
 
