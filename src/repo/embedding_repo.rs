@@ -83,14 +83,14 @@ pub async fn hybrid_search_runbooks(
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC) AS rank
                     FROM runbooks
                     WHERE search_vector @@ plainto_tsquery('english', $1)
-                    LIMIT 20
+                    LIMIT 50
                 ),
                 vec AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $2) AS rank
                     FROM runbooks
                     WHERE embedding IS NOT NULL
                     ORDER BY embedding <=> $2
-                    LIMIT 20
+                    LIMIT 50
                 ),
                 rrf AS (
                     SELECT COALESCE(f.id, v.id) AS id,
@@ -136,14 +136,14 @@ pub async fn hybrid_search_knowledge(
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC) AS rank
                     FROM knowledge
                     WHERE search_vector @@ plainto_tsquery('english', $1)
-                    LIMIT 20
+                    LIMIT 50
                 ),
                 vec AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $2) AS rank
                     FROM knowledge
                     WHERE embedding IS NOT NULL
                     ORDER BY embedding <=> $2
-                    LIMIT 20
+                    LIMIT 50
                 ),
                 rrf AS (
                     SELECT COALESCE(f.id, v.id) AS id,
@@ -189,14 +189,14 @@ pub async fn hybrid_search_incidents(
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC) AS rank
                     FROM incidents
                     WHERE search_vector @@ plainto_tsquery('english', $1)
-                    LIMIT 20
+                    LIMIT 50
                 ),
                 vec AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $2) AS rank
                     FROM incidents
                     WHERE embedding IS NOT NULL
                     ORDER BY embedding <=> $2
-                    LIMIT 20
+                    LIMIT 50
                 ),
                 rrf AS (
                     SELECT COALESCE(f.id, v.id) AS id,
@@ -242,14 +242,14 @@ pub async fn hybrid_search_handoffs(
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC) AS rank
                     FROM handoffs
                     WHERE search_vector @@ plainto_tsquery('english', $1)
-                    LIMIT 20
+                    LIMIT 50
                 ),
                 vec AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $2) AS rank
                     FROM handoffs
                     WHERE embedding IS NOT NULL
                     ORDER BY embedding <=> $2
-                    LIMIT 20
+                    LIMIT 50
                 ),
                 rrf AS (
                     SELECT COALESCE(f.id, v.id) AS id,

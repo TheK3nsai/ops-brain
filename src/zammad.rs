@@ -176,6 +176,12 @@ fn api_url(config: &ZammadConfig, path: &str) -> String {
 }
 
 /// Search Zammad tickets. Uses Elasticsearch query syntax.
+///
+/// Zammad returns different response shapes depending on the query:
+/// - Filtered queries (e.g. `organization.id:2`): direct JSON array of tickets
+/// - Unfiltered/wildcard queries (e.g. `*`): JSON object with `assets.Ticket` map
+///
+/// This function handles both cases transparently.
 pub async fn search_tickets(
     config: &ZammadConfig,
     query: &str,
@@ -202,10 +208,52 @@ pub async fn search_tickets(
         return Err(format!("Zammad search returned HTTP {status}: {body}"));
     }
 
-    response
-        .json::<Vec<ZammadTicket>>()
+    let body: serde_json::Value = response
+        .json()
         .await
-        .map_err(|e| format!("Failed to parse Zammad search response: {e}"))
+        .map_err(|e| format!("Failed to parse Zammad search response: {e}"))?;
+
+    parse_ticket_search_response(body)
+}
+
+/// Parse Zammad ticket search response, handling both array and object envelope formats.
+fn parse_ticket_search_response(body: serde_json::Value) -> Result<Vec<ZammadTicket>, String> {
+    // Case 1: Direct array of expanded tickets
+    if body.is_array() {
+        return serde_json::from_value::<Vec<ZammadTicket>>(body)
+            .map_err(|e| format!("Failed to parse Zammad ticket array: {e}"));
+    }
+
+    // Case 2: Object envelope — extract from assets.Ticket map
+    if let Some(assets) = body.get("assets").and_then(|a| a.get("Ticket")) {
+        if let Some(map) = assets.as_object() {
+            let mut tickets: Vec<ZammadTicket> = Vec::with_capacity(map.len());
+            for (_id, val) in map {
+                match serde_json::from_value::<ZammadTicket>(val.clone()) {
+                    Ok(t) => tickets.push(t),
+                    Err(e) => {
+                        tracing::warn!("Skipping unparseable ticket in assets: {e}");
+                    }
+                }
+            }
+            // Sort by ID descending (newest first) since HashMap has no order
+            tickets.sort_by(|a, b| b.id.cmp(&a.id));
+            return Ok(tickets);
+        }
+    }
+
+    // Case 3: Object with no assets.Ticket — might be empty result or unknown shape
+    // Check if it has a "tickets" array (some Zammad versions)
+    if let Some(arr) = body.get("tickets") {
+        if arr.is_array() {
+            // This contains ticket IDs, not full objects — return empty with a note
+            // (the expand=true param should prevent this, but handle gracefully)
+            return Ok(Vec::new());
+        }
+    }
+
+    // Fallback: empty result
+    Ok(Vec::new())
 }
 
 /// Get a single ticket by ID
@@ -534,5 +582,73 @@ mod tests {
         assert_eq!(json["article"]["internal"], true);
         // time_unit should be skipped
         assert!(json["article"].get("time_unit").is_none());
+    }
+
+    // parse_ticket_search_response
+
+    #[test]
+    fn parse_response_array_format() {
+        let body = serde_json::json!([
+            {
+                "id": 1, "number": "00001", "title": "Ticket A",
+                "state": "open", "created_at": "2026-03-20T10:00:00Z",
+                "updated_at": "2026-03-20T10:00:00Z"
+            },
+            {
+                "id": 2, "number": "00002", "title": "Ticket B",
+                "state": "closed", "created_at": "2026-03-20T11:00:00Z",
+                "updated_at": "2026-03-20T11:00:00Z"
+            }
+        ]);
+        let tickets = parse_ticket_search_response(body).unwrap();
+        assert_eq!(tickets.len(), 2);
+        assert_eq!(tickets[0].title, "Ticket A");
+        assert_eq!(tickets[1].title, "Ticket B");
+    }
+
+    #[test]
+    fn parse_response_assets_envelope() {
+        // Zammad returns this shape for unfiltered/wildcard queries
+        let body = serde_json::json!({
+            "tickets": [2, 1],
+            "tickets_count": 2,
+            "assets": {
+                "Ticket": {
+                    "1": {
+                        "id": 1, "number": "00001", "title": "Ticket A",
+                        "created_at": "2026-03-20T10:00:00Z",
+                        "updated_at": "2026-03-20T10:00:00Z"
+                    },
+                    "2": {
+                        "id": 2, "number": "00002", "title": "Ticket B",
+                        "created_at": "2026-03-20T11:00:00Z",
+                        "updated_at": "2026-03-20T11:00:00Z"
+                    }
+                }
+            }
+        });
+        let tickets = parse_ticket_search_response(body).unwrap();
+        assert_eq!(tickets.len(), 2);
+        // Sorted by ID descending (newest first)
+        assert_eq!(tickets[0].id, 2);
+        assert_eq!(tickets[1].id, 1);
+    }
+
+    #[test]
+    fn parse_response_empty_object() {
+        let body = serde_json::json!({});
+        let tickets = parse_ticket_search_response(body).unwrap();
+        assert!(tickets.is_empty());
+    }
+
+    #[test]
+    fn parse_response_tickets_ids_only() {
+        // Edge case: object with tickets array but no assets
+        let body = serde_json::json!({
+            "tickets": [1, 2],
+            "tickets_count": 2
+        });
+        let tickets = parse_ticket_search_response(body).unwrap();
+        assert!(tickets.is_empty()); // graceful fallback
     }
 }
