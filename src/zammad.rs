@@ -1,4 +1,33 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Deserialize a value that may be a number or a string representation of a number.
+/// Zammad inconsistently returns `time_unit` as either `1.5` (number) or `"1.5"` (string).
+fn deserialize_string_or_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrNumber {
+        Number(f64),
+        String(String),
+        Null,
+    }
+
+    match Option::<StringOrNumber>::deserialize(deserializer)? {
+        Some(StringOrNumber::Number(n)) => Ok(Some(n)),
+        Some(StringOrNumber::String(s)) => {
+            if s.is_empty() {
+                Ok(None)
+            } else {
+                s.parse::<f64>().map(Some).map_err(de::Error::custom)
+            }
+        }
+        Some(StringOrNumber::Null) | None => Ok(None),
+    }
+}
 
 /// Configuration for connecting to Zammad REST API
 #[derive(Debug, Clone)]
@@ -62,7 +91,7 @@ pub struct ZammadTicket {
     pub organization_id: Option<i64>,
     #[serde(default)]
     pub tags: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_f64")]
     pub time_unit: Option<f64>,
     #[serde(default)]
     pub article_count: Option<i64>,
@@ -90,7 +119,7 @@ pub struct ZammadArticle {
     pub article_type: Option<String>,
     #[serde(default)]
     pub internal: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_f64")]
     pub time_unit: Option<f64>,
     pub created_at: String,
     pub updated_at: String,
@@ -585,6 +614,57 @@ mod tests {
     }
 
     // parse_ticket_search_response
+
+    #[test]
+    fn deserialize_time_unit_as_string() {
+        let json = r#"{
+            "id": 10, "number": "10010", "title": "Time unit string",
+            "time_unit": "1.5",
+            "created_at": "2026-03-27T10:00:00Z",
+            "updated_at": "2026-03-27T10:00:00Z"
+        }"#;
+        let ticket: ZammadTicket = serde_json::from_str(json).unwrap();
+        assert_eq!(ticket.time_unit, Some(1.5));
+    }
+
+    #[test]
+    fn deserialize_time_unit_as_number() {
+        let json = r#"{
+            "id": 11, "number": "10011", "title": "Time unit number",
+            "time_unit": 2.0,
+            "created_at": "2026-03-27T10:00:00Z",
+            "updated_at": "2026-03-27T10:00:00Z"
+        }"#;
+        let ticket: ZammadTicket = serde_json::from_str(json).unwrap();
+        assert_eq!(ticket.time_unit, Some(2.0));
+    }
+
+    #[test]
+    fn deserialize_time_unit_null() {
+        let json = r#"{
+            "id": 12, "number": "10012", "title": "Time unit null",
+            "time_unit": null,
+            "created_at": "2026-03-27T10:00:00Z",
+            "updated_at": "2026-03-27T10:00:00Z"
+        }"#;
+        let ticket: ZammadTicket = serde_json::from_str(json).unwrap();
+        assert_eq!(ticket.time_unit, None);
+    }
+
+    #[test]
+    fn parse_response_array_with_string_time_unit() {
+        let body = serde_json::json!([
+            {
+                "id": 1, "number": "00001", "title": "Ticket A",
+                "state": "open", "time_unit": "1.5",
+                "created_at": "2026-03-20T10:00:00Z",
+                "updated_at": "2026-03-20T10:00:00Z"
+            }
+        ]);
+        let tickets = parse_ticket_search_response(body).unwrap();
+        assert_eq!(tickets.len(), 1);
+        assert_eq!(tickets[0].time_unit, Some(1.5));
+    }
 
     #[test]
     fn parse_response_array_format() {
