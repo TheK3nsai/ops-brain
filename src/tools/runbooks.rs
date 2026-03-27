@@ -390,6 +390,18 @@ pub(crate) async fn handle_log_runbook_execution(
     .await
     {
         Ok(execution) => {
+            // Update last_verified_at on successful execution
+            if result_str == "success" {
+                if let Err(e) =
+                    crate::repo::runbook_repo::update_last_verified_at(&brain.pool, runbook.id)
+                        .await
+                {
+                    tracing::warn!(
+                        "Failed to update last_verified_at for runbook {}: {e}",
+                        runbook.id
+                    );
+                }
+            }
             let mut response = serde_json::to_value(&execution).unwrap_or_default();
             response["runbook_title"] = serde_json::Value::String(runbook.title);
             response["runbook_slug"] = serde_json::Value::String(runbook.slug);

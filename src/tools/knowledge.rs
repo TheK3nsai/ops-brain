@@ -6,7 +6,9 @@ use crate::validation::deserialize_flexible_i64;
 use super::helpers::{
     error_result, filter_cross_client, json_result, not_found, not_found_with_suggestions,
 };
-use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
+use super::shared::{
+    build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries, resolve_compact,
+};
 use rmcp::model::*;
 
 /// Compact a search result item: keep key metadata fields + a content snippet.
@@ -126,6 +128,8 @@ pub struct AddKnowledgeParams {
     pub client_slug: Option<String>,
     /// Allow this entry to surface in other clients' contexts (default: false)
     pub cross_client_safe: Option<bool>,
+    /// Skip duplicate detection check. Set to true if you've already seen the warning and want to create anyway.
+    pub force: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -188,6 +192,7 @@ pub(crate) async fn handle_add_knowledge(
 ) -> CallToolResult {
     let tags = p.tags.unwrap_or_default();
     let cross_client_safe = p.cross_client_safe.unwrap_or(false);
+    let force = p.force.unwrap_or(false);
 
     // Resolve optional client_slug
     let client_id = match &p.client_slug {
@@ -198,6 +203,43 @@ pub(crate) async fn handle_add_knowledge(
         },
         None => None,
     };
+
+    // Duplicate detection: compute embedding and check for similar entries
+    if !force {
+        if let Some(ref client) = brain.embedding_client {
+            let candidate_text = format!("{}\n{}\n\n{}", p.title, p.title, p.content);
+            if let Ok(embedding) = client.embed_text(&candidate_text).await {
+                // Cosine distance < 0.15 means similarity > 0.85
+                if let Ok(similar) = crate::repo::embedding_repo::find_similar_knowledge(
+                    &brain.pool,
+                    &embedding,
+                    0.15,
+                    3,
+                )
+                .await
+                {
+                    if !similar.is_empty() {
+                        let matches: Vec<serde_json::Value> = similar
+                            .iter()
+                            .map(|s| {
+                                serde_json::json!({
+                                    "id": s.id.to_string(),
+                                    "title": s.title,
+                                    "category": s.category,
+                                    "similarity": format!("{:.1}%", (1.0 - s.distance) * 100.0),
+                                })
+                            })
+                            .collect();
+                        return json_result(&serde_json::json!({
+                            "_warning": "Similar knowledge entries already exist. Set force=true to create anyway, or update the existing entry instead.",
+                            "similar_entries": matches,
+                            "your_title": p.title,
+                        }));
+                    }
+                }
+            }
+        }
+    }
 
     match crate::repo::knowledge_repo::add_knowledge(
         &brain.pool,
@@ -298,6 +340,7 @@ pub(crate) async fn handle_search_knowledge(
     let browse_mode = query_trimmed.is_empty() || query_trimmed == "*";
 
     if browse_mode {
+        let compact = resolve_compact(&brain.pool, p.compact, true).await;
         return browse_recent_entries(
             brain,
             &tables,
@@ -305,7 +348,7 @@ pub(crate) async fn handle_search_knowledge(
             p.client_slug.as_deref(),
             p.acknowledge_cross_client.unwrap_or(false),
             p.limit.unwrap_or(20),
-            p.compact.unwrap_or(true),
+            compact,
         )
         .await;
     }
@@ -342,7 +385,7 @@ pub(crate) async fn handle_search_knowledge(
     let limit = p.limit.unwrap_or(20);
 
     // Compact mode: default true for multi-table, false for single-table
-    let compact = p.compact.unwrap_or(multi_table);
+    let compact = resolve_compact(&brain.pool, p.compact, multi_table).await;
 
     // Single-table knowledge search (original behavior)
     if !multi_table {

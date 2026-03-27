@@ -5,7 +5,7 @@ use super::helpers::{
     compact_value, compact_vec, error_result, filter_cross_client, json_result,
     not_found_with_suggestions, section_included,
 };
-use super::shared::{build_client_lookup, get_query_embedding, log_audit_entries};
+use super::shared::{build_client_lookup, get_query_embedding, log_audit_entries, resolve_compact};
 use crate::models::handoff::Handoff;
 use crate::models::incident::Incident;
 use rmcp::model::*;
@@ -99,7 +99,7 @@ pub(crate) async fn handle_get_situational_awareness(
         return error_result("Provide at least one of: server_slug, service_slug, or client_slug");
     }
 
-    let compact = p.compact.unwrap_or(false);
+    let compact = resolve_compact(&brain.pool, p.compact, false).await;
     let sections = p.sections;
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
 
@@ -825,7 +825,7 @@ pub(crate) async fn handle_get_server_context(
     p: GetServerContextParams,
 ) -> CallToolResult {
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
-    let compact = p.compact.unwrap_or(false);
+    let compact = resolve_compact(&brain.pool, p.compact, false).await;
     let sections = p.sections;
     let mut warnings: Vec<String> = Vec::new();
 

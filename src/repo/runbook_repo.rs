@@ -163,6 +163,34 @@ pub async fn update_runbook(
     .await
 }
 
+/// Update last_verified_at timestamp when a runbook is successfully executed.
+pub async fn update_last_verified_at(pool: &PgPool, runbook_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE runbooks SET last_verified_at = now() WHERE id = $1")
+        .bind(runbook_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List runbooks that have never been verified or were last verified before the given threshold.
+pub async fn list_stale_runbooks(
+    pool: &PgPool,
+    stale_days: i32,
+    limit: i64,
+) -> Result<Vec<Runbook>, sqlx::Error> {
+    sqlx::query_as::<_, Runbook>(
+        "SELECT * FROM runbooks
+         WHERE last_verified_at IS NULL
+            OR last_verified_at < now() - ($1 || ' days')::interval
+         ORDER BY last_verified_at ASC NULLS FIRST
+         LIMIT $2",
+    )
+    .bind(stale_days)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn link_runbook_service(
     pool: &PgPool,
     runbook_id: Uuid,

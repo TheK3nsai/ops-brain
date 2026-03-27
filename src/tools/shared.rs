@@ -58,6 +58,17 @@ pub(crate) async fn get_query_embedding(
     }
 }
 
+/// Resolve compact preference: explicit param > global preference > default.
+pub(crate) async fn resolve_compact(pool: &PgPool, explicit: Option<bool>, default: bool) -> bool {
+    if let Some(v) = explicit {
+        return v;
+    }
+    match crate::repo::preference_repo::get_preference(pool, "global", "compact").await {
+        Ok(Some(pref)) => pref.value.as_bool().unwrap_or(default),
+        _ => default,
+    }
+}
+
 /// Build a client_id -> (slug, name) lookup from the database.
 pub(crate) async fn build_client_lookup(pool: &PgPool) -> HashMap<uuid::Uuid, (String, String)> {
     match crate::repo::client_repo::list_clients(pool).await {

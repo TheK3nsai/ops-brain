@@ -891,6 +891,21 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         Ok(inventory::handle_delete_vendor(self, params.0).await)
     }
+
+    // ===== PREFERENCE TOOLS =====
+
+    #[tool(
+        name = "set_preference",
+        description = "Set a global preference that affects tool defaults. Currently supported keys: \
+        'compact' (bool) — when true, tools that accept a compact parameter will default to compact mode. \
+        Scope: 'global' (default). Explicit tool parameters always override preferences."
+    )]
+    async fn set_preference(
+        &self,
+        params: Parameters<coordination::SetPreferenceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(coordination::handle_set_preference(self, params.0).await)
+    }
 }
 
 #[tool_handler]

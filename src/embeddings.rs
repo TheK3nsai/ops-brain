@@ -137,6 +137,7 @@ mod tests {
             notes: Some("Use RSAT tools on RDS server".to_string()),
             client_id: None,
             cross_client_safe: false,
+            last_verified_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -162,6 +163,7 @@ mod tests {
             notes: None,
             client_id: None,
             cross_client_safe: false,
+            last_verified_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
