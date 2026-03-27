@@ -34,8 +34,8 @@ pub async fn search_inventory(
     let (servers, services, runbooks, knowledge, incidents, handoffs) = tokio::try_join!(
         sqlx::query_as::<_, Server>(
             "SELECT * FROM servers
-             WHERE status != 'deleted' AND search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE status != 'deleted' AND search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -43,8 +43,8 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Service>(
             "SELECT * FROM services
-             WHERE status != 'deleted' AND search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE status != 'deleted' AND search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -52,8 +52,8 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Runbook>(
             "SELECT * FROM runbooks
-             WHERE search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -61,8 +61,8 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Knowledge>(
             "SELECT * FROM knowledge
-             WHERE search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -70,8 +70,8 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Incident>(
             "SELECT * FROM incidents
-             WHERE search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -79,8 +79,8 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Handoff>(
             "SELECT * FROM handoffs
-             WHERE search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -91,8 +91,8 @@ pub async fn search_inventory(
     let (vendors, clients, sites, networks) = tokio::try_join!(
         sqlx::query_as::<_, Vendor>(
             "SELECT * FROM vendors
-             WHERE status != 'deleted' AND search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE status != 'deleted' AND search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -100,8 +100,8 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Client>(
             "SELECT * FROM clients
-             WHERE search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -109,8 +109,8 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Site>(
             "SELECT * FROM sites
-             WHERE search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -118,8 +118,8 @@ pub async fn search_inventory(
         .fetch_all(pool),
         sqlx::query_as::<_, Network>(
             "SELECT * FROM networks
-             WHERE search_vector @@ plainto_tsquery('english', $1)
-             ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+             WHERE search_vector @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
              LIMIT $2"
         )
         .bind(query)
@@ -146,14 +146,31 @@ pub async fn search_runbooks(
     query: &str,
     limit: i64,
 ) -> Result<Vec<Runbook>, sqlx::Error> {
-    sqlx::query_as::<_, Runbook>(
+    let results = sqlx::query_as::<_, Runbook>(
         "SELECT * FROM runbooks
-         WHERE search_vector @@ plainto_tsquery('english', $1)
-         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+         WHERE search_vector @@ websearch_to_tsquery('english', $1)
+         ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
          LIMIT $2",
     )
     .bind(query)
     .bind(limit)
     .fetch_all(pool)
-    .await
+    .await?;
+
+    if results.is_empty() {
+        if let Some(or_text) = super::build_or_tsquery_text(query) {
+            return sqlx::query_as::<_, Runbook>(
+                "SELECT * FROM runbooks
+                 WHERE search_vector @@ to_tsquery('english', $1)
+                 ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
+                 LIMIT $2",
+            )
+            .bind(&or_text)
+            .bind(limit)
+            .fetch_all(pool)
+            .await;
+        }
+    }
+
+    Ok(results)
 }

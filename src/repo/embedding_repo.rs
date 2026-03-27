@@ -66,8 +66,8 @@ pub async fn store_handoff_embedding(
 }
 
 // ===== HYBRID RRF SEARCH =====
-// Combines FTS (plainto_tsquery) with vector cosine similarity via Reciprocal Rank Fusion.
-// Falls back to FTS-only when query_embedding is None.
+// Combines FTS (websearch_to_tsquery) with vector cosine similarity via Reciprocal Rank Fusion.
+// Falls back to FTS-only (with OR relaxation) when query_embedding is None.
 
 pub async fn hybrid_search_runbooks(
     pool: &PgPool,
@@ -80,9 +80,9 @@ pub async fn hybrid_search_runbooks(
             let vec = Vector::from(emb.to_vec());
             sqlx::query_as::<_, Runbook>(
                 "WITH fts AS (
-                    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC) AS rank
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM runbooks
-                    WHERE search_vector @@ plainto_tsquery('english', $1)
+                    WHERE search_vector @@ websearch_to_tsquery('english', $1)
                     LIMIT 50
                 ),
                 vec AS (
@@ -108,16 +108,33 @@ pub async fn hybrid_search_runbooks(
             .await
         }
         None => {
-            sqlx::query_as::<_, Runbook>(
+            let results = sqlx::query_as::<_, Runbook>(
                 "SELECT * FROM runbooks
-                 WHERE search_vector @@ plainto_tsquery('english', $1)
-                 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                 ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
                  LIMIT $2",
             )
             .bind(query_text)
             .bind(limit)
             .fetch_all(pool)
-            .await
+            .await?;
+
+            if results.is_empty() {
+                if let Some(or_text) = super::build_or_tsquery_text(query_text) {
+                    return sqlx::query_as::<_, Runbook>(
+                        "SELECT * FROM runbooks
+                         WHERE search_vector @@ to_tsquery('english', $1)
+                         ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
+                         LIMIT $2",
+                    )
+                    .bind(&or_text)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await;
+                }
+            }
+
+            Ok(results)
         }
     }
 }
@@ -133,9 +150,9 @@ pub async fn hybrid_search_knowledge(
             let vec = Vector::from(emb.to_vec());
             sqlx::query_as::<_, Knowledge>(
                 "WITH fts AS (
-                    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC) AS rank
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM knowledge
-                    WHERE search_vector @@ plainto_tsquery('english', $1)
+                    WHERE search_vector @@ websearch_to_tsquery('english', $1)
                     LIMIT 50
                 ),
                 vec AS (
@@ -161,16 +178,33 @@ pub async fn hybrid_search_knowledge(
             .await
         }
         None => {
-            sqlx::query_as::<_, Knowledge>(
+            let results = sqlx::query_as::<_, Knowledge>(
                 "SELECT * FROM knowledge
-                 WHERE search_vector @@ plainto_tsquery('english', $1)
-                 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                 ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
                  LIMIT $2",
             )
             .bind(query_text)
             .bind(limit)
             .fetch_all(pool)
-            .await
+            .await?;
+
+            if results.is_empty() {
+                if let Some(or_text) = super::build_or_tsquery_text(query_text) {
+                    return sqlx::query_as::<_, Knowledge>(
+                        "SELECT * FROM knowledge
+                         WHERE search_vector @@ to_tsquery('english', $1)
+                         ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
+                         LIMIT $2",
+                    )
+                    .bind(&or_text)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await;
+                }
+            }
+
+            Ok(results)
         }
     }
 }
@@ -186,9 +220,9 @@ pub async fn hybrid_search_incidents(
             let vec = Vector::from(emb.to_vec());
             sqlx::query_as::<_, Incident>(
                 "WITH fts AS (
-                    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC) AS rank
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM incidents
-                    WHERE search_vector @@ plainto_tsquery('english', $1)
+                    WHERE search_vector @@ websearch_to_tsquery('english', $1)
                     LIMIT 50
                 ),
                 vec AS (
@@ -214,16 +248,33 @@ pub async fn hybrid_search_incidents(
             .await
         }
         None => {
-            sqlx::query_as::<_, Incident>(
+            let results = sqlx::query_as::<_, Incident>(
                 "SELECT * FROM incidents
-                 WHERE search_vector @@ plainto_tsquery('english', $1)
-                 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                 ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
                  LIMIT $2",
             )
             .bind(query_text)
             .bind(limit)
             .fetch_all(pool)
-            .await
+            .await?;
+
+            if results.is_empty() {
+                if let Some(or_text) = super::build_or_tsquery_text(query_text) {
+                    return sqlx::query_as::<_, Incident>(
+                        "SELECT * FROM incidents
+                         WHERE search_vector @@ to_tsquery('english', $1)
+                         ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
+                         LIMIT $2",
+                    )
+                    .bind(&or_text)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await;
+                }
+            }
+
+            Ok(results)
         }
     }
 }
@@ -239,9 +290,9 @@ pub async fn hybrid_search_handoffs(
             let vec = Vector::from(emb.to_vec());
             sqlx::query_as::<_, Handoff>(
                 "WITH fts AS (
-                    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC) AS rank
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM handoffs
-                    WHERE search_vector @@ plainto_tsquery('english', $1)
+                    WHERE search_vector @@ websearch_to_tsquery('english', $1)
                     LIMIT 50
                 ),
                 vec AS (
@@ -267,16 +318,33 @@ pub async fn hybrid_search_handoffs(
             .await
         }
         None => {
-            sqlx::query_as::<_, Handoff>(
+            let results = sqlx::query_as::<_, Handoff>(
                 "SELECT * FROM handoffs
-                 WHERE search_vector @@ plainto_tsquery('english', $1)
-                 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                 ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
                  LIMIT $2",
             )
             .bind(query_text)
             .bind(limit)
             .fetch_all(pool)
-            .await
+            .await?;
+
+            if results.is_empty() {
+                if let Some(or_text) = super::build_or_tsquery_text(query_text) {
+                    return sqlx::query_as::<_, Handoff>(
+                        "SELECT * FROM handoffs
+                         WHERE search_vector @@ to_tsquery('english', $1)
+                         ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
+                         LIMIT $2",
+                    )
+                    .bind(&or_text)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await;
+                }
+            }
+
+            Ok(results)
         }
     }
 }

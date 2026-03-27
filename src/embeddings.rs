@@ -75,9 +75,11 @@ impl EmbeddingClient {
 
 // ===== TEXT PREPARATION =====
 // Each function produces the text that gets embedded for a given record.
+// Title is repeated to boost its weight in the embedding vector — semantic
+// search will more strongly match queries that align with the title.
 
 pub fn prepare_runbook_text(r: &Runbook) -> String {
-    let mut text = format!("{}\n\n{}", r.title, r.content);
+    let mut text = format!("{}\n{}\n\n{}", r.title, r.title, r.content);
     if let Some(notes) = &r.notes {
         text.push_str("\n\n");
         text.push_str(notes);
@@ -86,11 +88,11 @@ pub fn prepare_runbook_text(r: &Runbook) -> String {
 }
 
 pub fn prepare_knowledge_text(k: &Knowledge) -> String {
-    format!("{}\n\n{}", k.title, k.content)
+    format!("{}\n{}\n\n{}", k.title, k.title, k.content)
 }
 
 pub fn prepare_incident_text(i: &Incident) -> String {
-    let mut text = i.title.clone();
+    let mut text = format!("{}\n{}", i.title, i.title);
     if let Some(symptoms) = &i.symptoms {
         text.push_str("\n\nSymptoms: ");
         text.push_str(symptoms);
@@ -111,7 +113,7 @@ pub fn prepare_incident_text(i: &Incident) -> String {
 }
 
 pub fn prepare_handoff_text(h: &Handoff) -> String {
-    format!("{}\n\n{}", h.title, h.body)
+    format!("{}\n{}\n\n{}", h.title, h.title, h.body)
 }
 
 #[cfg(test)]
@@ -165,7 +167,7 @@ mod tests {
         };
 
         let text = prepare_runbook_text(&runbook);
-        assert_eq!(text, "Title\n\nContent");
+        assert_eq!(text, "Title\nTitle\n\nContent");
     }
 
     #[test]
@@ -183,7 +185,10 @@ mod tests {
         };
 
         let text = prepare_knowledge_text(&knowledge);
-        assert_eq!(text, "VPN Setup Guide\n\nConfigure WireGuard tunnel");
+        assert_eq!(
+            text,
+            "VPN Setup Guide\nVPN Setup Guide\n\nConfigure WireGuard tunnel"
+        );
     }
 
     #[test]
@@ -241,7 +246,7 @@ mod tests {
         };
 
         let text = prepare_incident_text(&incident);
-        assert_eq!(text, "Minor Issue");
+        assert_eq!(text, "Minor Issue\nMinor Issue");
     }
 
     #[test]
@@ -263,7 +268,7 @@ mod tests {
         let text = prepare_handoff_text(&handoff);
         assert_eq!(
             text,
-            "Continue DNS migration\n\nNeed to update remaining A records"
+            "Continue DNS migration\nContinue DNS migration\n\nNeed to update remaining A records"
         );
     }
 }
