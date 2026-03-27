@@ -152,7 +152,7 @@ curl -s -X POST https://ops.kensai.cloud/api/briefing \
 | SQL | sqlx (async, runtime queries) |
 | Async | tokio |
 | IDs | UUID v7 (time-ordered) |
-| Search | PostgreSQL tsvector + GIN indexes (FTS), pgvector HNSW (semantic), pg_trgm (fuzzy slug matching) |
+| Search | PostgreSQL tsvector + GIN indexes (FTS, `websearch_to_tsquery` with OR fallback), pgvector HNSW (semantic), pg_trgm (fuzzy slug matching) |
 | Embeddings | ollama nomic-embed-text (768 dims) via OpenAI-compatible API |
 | Monitoring | Uptime Kuma /metrics (Prometheus format, on-demand scraping) |
 | Ticketing | Zammad REST API (Token auth, live queries) |
@@ -345,6 +345,8 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 12**: Watchdog intelligence + vendor UX — `severity_override` on monitors (set via `link_monitor`, watchdog checks before role-based fallback), `upsert_vendor` accepts `client_slug` for auto-linking vendors to clients, SA section filter fix (vendors/knowledge respect `sections` param), seed incident source fix — 71 tools, 32 migrations
 - [x] **Phase 13**: API UX fixes (CC-CPA field feedback) — `search_knowledge` browse mode (empty/"*" query returns recent entries), `list_tickets` `client_slug` optional, `list_handoffs` compact mode (default: truncate body to 200 chars), `get_situational_awareness` `machine` param (scopes pending handoffs to requesting CC), hybrid search default for all queries — 71 tools, 32 migrations
 - [x] **Phase 13.1**: Chronic flapper suppression — automatic severity degradation for monitors that repeatedly flap. `recurrence_count >= threshold` (default 5) → severity "low"; `>= 2x threshold` → auto-resolved. Per-monitor config via `link_monitor` `flap_threshold` param, global default via `OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD` env var. Natural 24h reset — 71 tools, 33 migrations
+- [x] **Phase 14**: CC team field validation fixes — Zammad `time_unit` string/number deserialization fix (PR #16), RRF candidate pool widened 20→50, multi-instance Uptime Kuma design documented, MCP server instructions condensed, CC team knowledge restructured — 71 tools, 33 migrations
+- [x] **Phase 14.1**: Search relevance tuning — `websearch_to_tsquery` replaces `plainto_tsquery` in all 40 FTS call sites (quoted phrases, `or`, `-exclusion`), OR fallback when AND returns zero results (2+ word queries retry with OR-joined terms), title boosting in embedding text preparation (requires `backfill_embeddings`) — 71 tools, 33 migrations
 
 **Post-phase improvements:**
 
@@ -359,6 +361,7 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] Adaptive CC startup protocol: identity lookup once (then local memory), ops check when idle, compliance/standards on-demand, user tasks take priority over ceremony
 - [x] Watchdog flap suppression: grace period (N consecutive DOWN polls before incident) + cooldown (suppress re-incident after resolve) + deduplication (reopen recent incidents instead of creating duplicates). Eliminates push-monitor heartbeat jitter noise
 - [x] Lighter CC workflow: optional sessions, knowledge boundaries (ops-brain vs local), tool tiers, handoff routing table, quality bar for knowledge entries
+- [x] Search relevance tuning: `websearch_to_tsquery` (quoted phrases, OR, exclusion), OR fallback when AND returns zero results, title boosting in embedding text preparation
 
 ### Planned
 
