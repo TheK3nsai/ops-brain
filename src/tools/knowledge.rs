@@ -130,9 +130,11 @@ pub struct AddKnowledgeParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchKnowledgeParams {
-    pub query: String,
+    /// Search query. Use empty string or "*" to browse recent entries across tables.
+    pub query: Option<String>,
     /// Search mode: "fts" (default for single-table), "semantic" (AI vector similarity),
     /// or "hybrid" (combined FTS + vector via RRF ranking, default for multi-table).
+    /// Ignored when browsing (empty/"*" query) — returns most recent entries.
     pub mode: Option<String>,
     /// Tables to search. Default: ["knowledge"]. Options: knowledge, runbooks, incidents, handoffs.
     /// Use multiple tables to search across your operational data with a single query.
@@ -290,11 +292,22 @@ pub(crate) async fn handle_search_knowledge(
     let tables = p.tables.unwrap_or_else(|| vec!["knowledge".to_string()]);
     let multi_table = tables.len() > 1 || tables.iter().any(|t| t != "knowledge");
 
-    // Default mode: "fts" for single-table knowledge, "hybrid" for multi-table
+    // Detect browse mode: empty or "*" query means "show me recent entries"
+    let raw_query = p.query.unwrap_or_default();
+    let query_trimmed = raw_query.trim();
+    let browse_mode = query_trimmed.is_empty() || query_trimmed == "*";
+
+    if browse_mode {
+        return browse_recent_entries(brain, &tables, multi_table, p.client_slug.as_deref(),
+            p.acknowledge_cross_client.unwrap_or(false),
+            p.limit.unwrap_or(20), p.compact.unwrap_or(true)).await;
+    }
+
+    // Default mode: "hybrid" for all searches (single or multi-table)
     let mode = p
         .mode
         .as_deref()
-        .unwrap_or(if multi_table { "hybrid" } else { "fts" });
+        .unwrap_or("hybrid");
     if let Err(msg) =
         crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
     {
@@ -331,7 +344,7 @@ pub(crate) async fn handle_search_knowledge(
     if !multi_table {
         return search_knowledge_single(
             brain,
-            &p.query,
+            &raw_query,
             mode,
             requesting_client_id,
             acknowledge,
@@ -342,7 +355,7 @@ pub(crate) async fn handle_search_knowledge(
     }
 
     // Multi-table search
-    let query_embedding = get_query_embedding(&brain.embedding_client, &p.query).await;
+    let query_embedding = get_query_embedding(&brain.embedding_client, &raw_query).await;
     if mode == "semantic" && query_embedding.is_none() {
         return error_result(
             "Semantic search unavailable (embedding API not configured or failed)",
@@ -369,14 +382,14 @@ pub(crate) async fn handle_search_knowledge(
                     "hybrid" => {
                         crate::repo::embedding_repo::hybrid_search_knowledge(
                             &brain.pool,
-                            &p.query,
+                            &raw_query,
                             emb_ref,
                             limit,
                         )
                         .await
                     }
                     _ => {
-                        crate::repo::knowledge_repo::search_knowledge(&brain.pool, &p.query, limit)
+                        crate::repo::knowledge_repo::search_knowledge(&brain.pool, &raw_query, limit)
                             .await
                     }
                 };
@@ -433,14 +446,14 @@ pub(crate) async fn handle_search_knowledge(
                     "hybrid" => {
                         crate::repo::embedding_repo::hybrid_search_runbooks(
                             &brain.pool,
-                            &p.query,
+                            &raw_query,
                             emb_ref,
                             limit,
                         )
                         .await
                     }
                     _ => {
-                        crate::repo::search_repo::search_runbooks(&brain.pool, &p.query, limit)
+                        crate::repo::search_repo::search_runbooks(&brain.pool, &raw_query, limit)
                             .await
                     }
                 };
@@ -497,14 +510,14 @@ pub(crate) async fn handle_search_knowledge(
                     "hybrid" => {
                         crate::repo::embedding_repo::hybrid_search_incidents(
                             &brain.pool,
-                            &p.query,
+                            &raw_query,
                             emb_ref,
                             limit,
                         )
                         .await
                     }
                     _ => {
-                        crate::repo::incident_repo::search_incidents(&brain.pool, &p.query, limit)
+                        crate::repo::incident_repo::search_incidents(&brain.pool, &raw_query, limit)
                             .await
                     }
                 };
@@ -562,14 +575,14 @@ pub(crate) async fn handle_search_knowledge(
                     "hybrid" => {
                         crate::repo::embedding_repo::hybrid_search_handoffs(
                             &brain.pool,
-                            &p.query,
+                            &raw_query,
                             emb_ref,
                             limit,
                         )
                         .await
                     }
                     _ => {
-                        crate::repo::handoff_repo::search_handoffs(&brain.pool, &p.query, limit)
+                        crate::repo::handoff_repo::search_handoffs(&brain.pool, &raw_query, limit)
                             .await
                     }
                 };
@@ -624,6 +637,91 @@ pub(crate) async fn handle_search_knowledge(
             ),
         );
     }
+
+    json_result(&serde_json::Value::Object(results))
+}
+
+/// Browse mode: return recent entries across requested tables (no search filter).
+/// Triggered when query is empty or "*".
+async fn browse_recent_entries(
+    brain: &super::OpsBrain,
+    tables: &[String],
+    _multi_table: bool,
+    client_slug: Option<&str>,
+    acknowledge: bool,
+    limit: i64,
+    compact: bool,
+) -> CallToolResult {
+    let requesting_client_id = match client_slug {
+        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+            Ok(Some(c)) => Some(c.id),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+    let client_lookup = build_client_lookup(&brain.pool).await;
+    let mut results = serde_json::Map::new();
+    let mut all_withheld: Vec<serde_json::Value> = Vec::new();
+
+    for table in tables {
+        match table.as_str() {
+            "knowledge" => {
+                match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None, limit).await {
+                    Ok(items) => {
+                        let json_items: Vec<serde_json::Value> = items.iter().filter_map(|k| serde_json::to_value(k).ok()).collect();
+                        let filtered = filter_cross_client(json_items, "knowledge", requesting_client_id, acknowledge, &client_lookup);
+                        let final_items = if compact { compact_search_results(&filtered.allowed, "knowledge") } else { filtered.allowed };
+                        results.insert("knowledge".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
+                        all_withheld.extend(filtered.withheld_notices);
+                    }
+                    Err(e) => { results.insert("knowledge_error".to_string(), serde_json::Value::String(e.to_string())); }
+                }
+            }
+            "runbooks" => {
+                match crate::repo::runbook_repo::list_runbooks(&brain.pool, None, None, None, None, None, limit).await {
+                    Ok(items) => {
+                        let json_items: Vec<serde_json::Value> = items.iter().filter_map(|r| serde_json::to_value(r).ok()).collect();
+                        let filtered = filter_cross_client(json_items, "runbooks", requesting_client_id, acknowledge, &client_lookup);
+                        let final_items = if compact { compact_search_results(&filtered.allowed, "runbooks") } else { filtered.allowed };
+                        results.insert("runbooks".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
+                        all_withheld.extend(filtered.withheld_notices);
+                    }
+                    Err(e) => { results.insert("runbooks_error".to_string(), serde_json::Value::String(e.to_string())); }
+                }
+            }
+            "incidents" => {
+                match sqlx::query_as::<_, crate::models::incident::Incident>(
+                    "SELECT * FROM incidents WHERE status != 'deleted' ORDER BY created_at DESC LIMIT $1"
+                ).bind(limit).fetch_all(&brain.pool).await {
+                    Ok(items) => {
+                        let json_items: Vec<serde_json::Value> = items.iter().filter_map(|i| serde_json::to_value(i).ok()).collect();
+                        let filtered = filter_cross_client(json_items, "incidents", requesting_client_id, acknowledge, &client_lookup);
+                        let final_items = if compact { compact_search_results(&filtered.allowed, "incidents") } else { filtered.allowed };
+                        results.insert("incidents".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
+                        all_withheld.extend(filtered.withheld_notices);
+                    }
+                    Err(e) => { results.insert("incidents_error".to_string(), serde_json::Value::String(e.to_string())); }
+                }
+            }
+            "handoffs" => {
+                match crate::repo::handoff_repo::list_handoffs(&brain.pool, None, None, None, limit).await {
+                    Ok(items) => {
+                        let json_items: Vec<serde_json::Value> = items.iter().filter_map(|h| serde_json::to_value(h).ok()).collect();
+                        let final_items = if compact { compact_search_results(&json_items, "handoffs") } else { json_items };
+                        results.insert("handoffs".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
+                    }
+                    Err(e) => { results.insert("handoffs_error".to_string(), serde_json::Value::String(e.to_string())); }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !all_withheld.is_empty() {
+        results.insert("_cross_client_withheld".to_string(), serde_json::to_value(&all_withheld).unwrap_or_default());
+    }
+    results.insert("_browse_mode".to_string(), serde_json::Value::String("Showing recent entries (no search query). Use a specific query for ranked results.".to_string()));
 
     json_result(&serde_json::Value::Object(results))
 }
