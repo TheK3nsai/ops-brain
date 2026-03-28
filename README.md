@@ -385,4 +385,4 @@ Prioritized from CC-CPA and CC-HSR field assessments (2026-03-27):
 
 ## License
 
-Private. Open-source release planned when polished.
+Private. Open-source release in progress — see RELEASE.md for checklist.

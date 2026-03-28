@@ -18,17 +18,13 @@ pub struct GetSituationalAwarenessParams {
     pub service_slug: Option<String>,
     /// Client slug to get context for
     pub client_slug: Option<String>,
-    /// Your machine hostname — filters pending handoffs to show only those addressed to you
+    /// Machine hostname — filters handoffs to those addressed to you
     pub machine: Option<String>,
-    /// Set to true to release cross-client runbooks/knowledge that were withheld due to scope mismatch
+    /// Release cross-client results withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
-    /// Compact mode: strip heavy fields (content, body, notes) from results, keeping only
-    /// identifiers and key metadata. Reduces response from ~94K to ~10K chars. Use drill-down
-    /// tools (get_runbook, get_incident, etc.) for full details. Default: false
+    /// Strip content/body/notes fields (~94K→~10K). Default: false
     pub compact: Option<bool>,
-    /// Limit response to specific sections. Valid values: server, site, client, services,
-    /// networks, vendors, incidents, runbooks, handoffs, knowledge, monitoring, tickets.
-    /// If omitted, all sections are included.
+    /// Filter: server, site, client, services, networks, vendors, incidents, runbooks, handoffs, knowledge, monitoring, tickets
     pub sections: Option<Vec<String>>,
 }
 
@@ -40,13 +36,11 @@ pub struct GetClientOverviewParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetServerContextParams {
     pub server_slug: String,
-    /// Set to true to release cross-client runbooks/knowledge that were withheld due to scope mismatch
+    /// Release cross-client results withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
-    /// Compact mode: strip heavy fields (content, body, notes) from results. Default: false
+    /// Strip content/body/notes fields. Default: false
     pub compact: Option<bool>,
-    /// Limit response to specific sections. Valid values: server, site, client, services,
-    /// networks, vendors, incidents, runbooks, knowledge, monitoring, tickets.
-    /// If omitted, all sections are included.
+    /// Filter: server, site, client, services, networks, vendors, incidents, runbooks, knowledge, monitoring, tickets
     pub sections: Option<Vec<String>>,
 }
 

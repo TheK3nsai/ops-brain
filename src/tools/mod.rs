@@ -126,7 +126,7 @@ impl OpsBrain {
 
     #[tool(
         name = "get_vendor",
-        description = "Get vendor information by name (case-insensitive) or ID. Use ID to disambiguate when multiple vendors share a name."
+        description = "Get vendor by name (case-insensitive) or ID."
     )]
     async fn get_vendor(
         &self,
@@ -178,7 +178,7 @@ impl OpsBrain {
 
     #[tool(
         name = "search_inventory",
-        description = "Full-text search across servers, services, runbooks, knowledge, incidents, handoffs, vendors, clients, sites, and networks"
+        description = "Full-text search across all entity types (servers, services, runbooks, knowledge, etc.)"
     )]
     async fn search_inventory(
         &self,
@@ -235,8 +235,7 @@ impl OpsBrain {
 
     #[tool(
         name = "upsert_vendor",
-        description = "Create or update a vendor contact record. Provide id to update a specific vendor by UUID. \
-        Provide client_slug to auto-link the vendor to a client (vendor_clients association)."
+        description = "Create or update a vendor. Provide id to update by UUID. client_slug auto-links to client."
     )]
     async fn upsert_vendor(
         &self,
@@ -282,8 +281,7 @@ impl OpsBrain {
 
     #[tool(
         name = "search_runbooks",
-        description = "Search across runbook titles and content. Supports mode: 'fts' (default, keyword match), \
-        'semantic' (AI vector similarity), or 'hybrid' (combined FTS + vector via RRF ranking)"
+        description = "Search runbook titles and content. Modes: fts (default), semantic, or hybrid (RRF)."
     )]
     async fn search_runbooks(
         &self,
@@ -316,11 +314,9 @@ impl OpsBrain {
 
     #[tool(
         name = "log_runbook_execution",
-        description = "Record that a runbook was executed. Creates an audit trail entry with who ran it, \
-        the result (success/failure/partial/skipped), duration, notes, and optional client_slug for \
-        HIPAA audit trails. Optionally link to an incident via incident_id for bi-directional tracking \
-        (incident shows which runbooks resolved it, runbook shows which incidents it was used for). \
-        Successful executions update the runbook's last_verified_at timestamp."
+        description = "Record a runbook execution for audit trail. Tracks executor, result, duration. \
+        Optional client_slug for HIPAA compliance. incident_id for bi-directional linking. \
+        Successful runs update last_verified_at."
     )]
     async fn log_runbook_execution(
         &self,
@@ -331,8 +327,7 @@ impl OpsBrain {
 
     #[tool(
         name = "list_runbook_executions",
-        description = "List runbook execution history. Optionally filter by runbook slug, \
-        or list recent executions across all runbooks."
+        description = "List runbook execution history. Optionally filter by runbook slug."
     )]
     async fn list_runbook_executions(
         &self,
@@ -378,12 +373,9 @@ impl OpsBrain {
 
     #[tool(
         name = "search_knowledge",
-        description = "Search across knowledge, runbooks, incidents, and handoffs. \
-        Default searches knowledge only; set tables=['knowledge','runbooks','incidents','handoffs'] for multi-table search. \
-        Modes: 'fts' (keyword match), 'semantic' (AI vector similarity), \
-        or 'hybrid' (combined FTS + vector via RRF ranking, default for all searches). \
-        Use empty query or '*' to browse recent entries across tables (great for 'show me everything'). \
-        Replaces the old semantic_search tool — use tables param for cross-table search."
+        description = "Search knowledge, runbooks, incidents, and/or handoffs. \
+        Set tables param for multi-table. Modes: fts/semantic/hybrid (default). \
+        Empty query or '*' browses recent entries."
     )]
     async fn search_knowledge(
         &self,
@@ -407,12 +399,9 @@ impl OpsBrain {
 
     #[tool(
         name = "get_situational_awareness",
-        description = "THE KEY TOOL: Get comprehensive situational awareness for a server, service, or client. \
-        Gathers all related data: entity details, related entities, recent incidents, pending handoffs, \
-        relevant runbooks, vendor contacts, and knowledge entries. Provide at least one of server_slug, \
-        service_slug, or client_slug. Use compact=true to reduce response size (~94K→~10K) by stripping \
-        content/body fields — use drill-down tools for full details. Use sections to limit which parts \
-        are returned (e.g. [\"server\",\"services\",\"monitoring\"])."
+        description = "KEY TOOL: Comprehensive context for a server, service, or client. \
+        Gathers entities, incidents, handoffs, runbooks, vendors, knowledge, monitoring. \
+        compact=true reduces ~94K→~10K. sections param filters response."
     )]
     async fn get_situational_awareness(
         &self,
@@ -423,7 +412,7 @@ impl OpsBrain {
 
     #[tool(
         name = "get_client_overview",
-        description = "Get a full client briefing: all sites, servers, services, networks, vendors, recent incidents, and pending handoffs"
+        description = "Full client briefing: sites, servers, services, networks, vendors, incidents, handoffs."
     )]
     async fn get_client_overview(
         &self,
@@ -434,9 +423,8 @@ impl OpsBrain {
 
     #[tool(
         name = "get_server_context",
-        description = "Get everything about a specific server: details, services, site, networks, \
-        recent incidents for this server, related runbooks, and vendor contacts. \
-        Use compact=true to reduce response size. Use sections to limit which parts are returned."
+        description = "Full server context: details, services, site, networks, incidents, runbooks, vendors. \
+        Supports compact and sections params."
     )]
     async fn get_server_context(
         &self,
@@ -460,8 +448,7 @@ impl OpsBrain {
 
     #[tool(
         name = "update_incident",
-        description = "Update an incident. Set status to 'resolved' to auto-calculate resolved_at and TTR. \
-        Use for post-mortems: root_cause, resolution, prevention fields."
+        description = "Update an incident. 'resolved' status auto-calculates TTR. Supports post-mortem fields."
     )]
     async fn update_incident(
         &self,
@@ -494,9 +481,7 @@ impl OpsBrain {
 
     #[tool(
         name = "search_incidents",
-        description = "Search across incident titles, symptoms, root causes, resolutions, and notes. \
-        Supports mode: 'fts' (default, keyword match), 'semantic' (AI vector similarity), \
-        or 'hybrid' (combined FTS + vector via RRF ranking)"
+        description = "Search incident titles, symptoms, root causes, resolutions. Modes: fts (default), semantic, or hybrid (RRF)."
     )]
     async fn search_incidents(
         &self,
@@ -507,8 +492,7 @@ impl OpsBrain {
 
     #[tool(
         name = "link_incident",
-        description = "Link an incident to servers, services, runbooks, and/or vendors. \
-        Runbook links include usage tracking: 'followed', 'not-applicable', or 'not-followed'."
+        description = "Link an incident to servers, services, runbooks, and/or vendors."
     )]
     async fn link_incident(
         &self,
@@ -556,8 +540,7 @@ impl OpsBrain {
 
     #[tool(
         name = "create_handoff",
-        description = "Create a handoff task for another machine/session to pick up. \
-        Use for cross-machine coordination: tasks that need to continue on a different machine."
+        description = "Create a handoff task for another machine/session to continue."
     )]
     async fn create_handoff(
         &self,
@@ -598,8 +581,7 @@ impl OpsBrain {
 
     #[tool(
         name = "search_handoffs",
-        description = "Search across handoff titles and bodies. Supports mode: 'fts' (default, keyword match), \
-        'semantic' (AI vector similarity), or 'hybrid' (combined FTS + vector via RRF ranking)"
+        description = "Search handoff titles and bodies. Modes: fts (default), semantic, or hybrid (RRF)."
     )]
     async fn search_handoffs(
         &self,
@@ -610,9 +592,8 @@ impl OpsBrain {
 
     #[tool(
         name = "get_catchup",
-        description = "See what changed since you were last here. Returns new/updated handoffs, incidents, \
-        knowledge, and runbooks since a given timestamp. Compact mode (default) returns summary fields only \
-        and excludes completed handoffs — set compact=false for full bodies."
+        description = "Changes since a timestamp: new/updated handoffs, incidents, knowledge, runbooks. \
+        Compact mode (default) returns summaries only."
     )]
     async fn get_catchup(
         &self,
@@ -625,9 +606,7 @@ impl OpsBrain {
 
     #[tool(
         name = "backfill_embeddings",
-        description = "Generate embeddings for records that don't have them yet. \
-        Use after initial setup or if records were created without an API key. \
-        Processes in batches to avoid API rate limits."
+        description = "Generate missing embeddings for records. Use after setup or when API key was unavailable."
     )]
     async fn backfill_embeddings(
         &self,
@@ -640,8 +619,7 @@ impl OpsBrain {
 
     #[tool(
         name = "list_monitors",
-        description = "List all Uptime Kuma monitors with live status. Fetches real-time data from the /metrics endpoint. \
-        Optionally filter by status: up, down, pending, maintenance. Shows linked server/service mappings."
+        description = "List Uptime Kuma monitors with live status. Filter by: up/down/pending/maintenance. Shows linked mappings."
     )]
     async fn list_monitors(
         &self,
@@ -652,8 +630,7 @@ impl OpsBrain {
 
     #[tool(
         name = "get_monitor_status",
-        description = "Get detailed live status for a specific Uptime Kuma monitor by name. \
-        Shows status, response time, SSL cert info, and any linked server/service."
+        description = "Live status for a specific Uptime Kuma monitor: status, response time, SSL, linked entities."
     )]
     async fn get_monitor_status(
         &self,
@@ -664,8 +641,7 @@ impl OpsBrain {
 
     #[tool(
         name = "get_monitoring_summary",
-        description = "Get a high-level monitoring overview: total monitors, how many are up/down/pending/maintenance, \
-        and a list of any monitors currently DOWN. Quick health check for all infrastructure."
+        description = "Monitoring overview: total up/down/pending/maintenance counts and list of DOWN monitors."
     )]
     async fn get_monitoring_summary(
         &self,
@@ -676,11 +652,8 @@ impl OpsBrain {
 
     #[tool(
         name = "link_monitor",
-        description = "Link an Uptime Kuma monitor to an ops-brain server and/or service. \
-        This mapping enriches get_situational_awareness with live monitoring data. \
-        The monitor_name must match exactly as shown in list_monitors. \
-        Use severity_override to set watchdog incident severity (low/medium/high/critical) \
-        instead of the default role-based logic."
+        description = "Link an Uptime Kuma monitor to a server/service. Enriches SA with live data. \
+        monitor_name must match exactly. severity_override sets custom watchdog severity."
     )]
     async fn link_monitor(
         &self,
@@ -691,8 +664,7 @@ impl OpsBrain {
 
     #[tool(
         name = "unlink_monitor",
-        description = "Remove the mapping between an Uptime Kuma monitor and ops-brain entities. \
-        The monitor will still appear in list_monitors but won't be linked to any server/service."
+        description = "Unlink an Uptime Kuma monitor from its server/service mapping."
     )]
     async fn unlink_monitor(
         &self,
@@ -703,9 +675,7 @@ impl OpsBrain {
 
     #[tool(
         name = "list_watchdog_incidents",
-        description = "List incidents auto-created by the proactive monitoring watchdog. \
-        These are incidents created when Uptime Kuma monitors transition to DOWN, \
-        and auto-resolved when they recover. Useful for reviewing outage history and patterns."
+        description = "List auto-created watchdog incidents from monitor DOWN transitions. For outage history review."
     )]
     async fn list_watchdog_incidents(
         &self,
@@ -716,8 +686,7 @@ impl OpsBrain {
 
     #[tool(
         name = "check_health",
-        description = "Quick health check for a server. Returns HEALTHY/DOWN/UNKNOWN based on linked \
-        Uptime Kuma monitors. Much lighter than get_situational_awareness for 'is this server up?' checks."
+        description = "Quick server health check via linked Uptime Kuma monitors. Returns HEALTHY/DOWN/UNKNOWN."
     )]
     async fn check_health(
         &self,
@@ -730,7 +699,7 @@ impl OpsBrain {
 
     #[tool(
         name = "list_tickets",
-        description = "List Zammad tickets, optionally filtered by client, state, and priority. Omit client_slug to see tickets across all clients."
+        description = "List Zammad tickets. Filter by client, state, priority. Omit client_slug for all clients."
     )]
     async fn list_tickets(
         &self,
@@ -752,7 +721,7 @@ impl OpsBrain {
 
     #[tool(
         name = "create_ticket",
-        description = "Create a new ticket in Zammad. Resolves client_slug to Zammad group/org/customer. Optionally links to an ops-brain incident."
+        description = "Create a Zammad ticket. Resolves client_slug to group/org/customer. Optional incident link."
     )]
     async fn create_ticket(
         &self,
@@ -785,7 +754,7 @@ impl OpsBrain {
 
     #[tool(
         name = "search_tickets",
-        description = "Search Zammad tickets using full-text search (Elasticsearch syntax). Examples: 'soporte-usuario', 'backup failed', 'title:servidor'."
+        description = "Search Zammad tickets via Elasticsearch syntax."
     )]
     async fn search_tickets(
         &self,
@@ -820,10 +789,8 @@ impl OpsBrain {
 
     #[tool(
         name = "generate_briefing",
-        description = "Generate an operational briefing (daily or weekly). Aggregates monitoring health, \
-        open incidents, watchdog alerts, pending handoffs, and Zammad ticket activity into a \
-        structured summary. Optionally scoped to a specific client. The briefing is stored for \
-        historical reference and returned as both structured data and markdown."
+        description = "Generate a daily/weekly operational briefing. Aggregates monitoring, incidents, \
+        handoffs, and tickets. Optionally client-scoped. Stored for history."
     )]
     async fn generate_briefing(
         &self,
@@ -834,8 +801,7 @@ impl OpsBrain {
 
     #[tool(
         name = "list_briefings",
-        description = "List previously generated briefings. Filter by type (daily/weekly) and/or client slug. \
-        Returns metadata and content of each briefing, ordered by most recent first."
+        description = "List previous briefings. Filter by type (daily/weekly) and/or client slug."
     )]
     async fn list_briefings(
         &self,
@@ -859,9 +825,7 @@ impl OpsBrain {
 
     #[tool(
         name = "delete_server",
-        description = "Delete a server by slug. Without confirm=true, returns a preview of linked entities that would be affected. \
-        Junction table links (incidents, runbooks, services, monitors, tickets) are cascade-deleted or set null. \
-        Child VMs referencing this server as hypervisor will have hypervisor_id set to null."
+        description = "Delete a server by slug. Omit confirm for impact preview. Links cascade-deleted or nulled."
     )]
     async fn delete_server(
         &self,
@@ -872,8 +836,7 @@ impl OpsBrain {
 
     #[tool(
         name = "delete_service",
-        description = "Delete a service by slug. Without confirm=true, returns a preview of linked entities that would be affected. \
-        Junction table links (servers, incidents, runbooks, monitors, tickets) are cascade-deleted or set null."
+        description = "Delete a service by slug. Omit confirm for impact preview. Links cascade-deleted or nulled."
     )]
     async fn delete_service(
         &self,
@@ -884,8 +847,7 @@ impl OpsBrain {
 
     #[tool(
         name = "delete_vendor",
-        description = "Delete a vendor by name or ID. Use ID to target a specific vendor when duplicates exist. \
-        Without confirm=true, returns a preview of linked entities. Client and incident links are cascade-deleted."
+        description = "Delete a vendor by name or ID. Omit confirm for impact preview. Links cascade-deleted."
     )]
     async fn delete_vendor(
         &self,
@@ -898,9 +860,7 @@ impl OpsBrain {
 
     #[tool(
         name = "set_preference",
-        description = "Set a global preference that affects tool defaults. Currently supported keys: \
-        'compact' (bool) — when true, tools that accept a compact parameter will default to compact mode. \
-        Scope: 'global' (default). Explicit tool parameters always override preferences."
+        description = "Set a global tool default. Keys: 'compact' (bool). Explicit params always override."
     )]
     async fn set_preference(
         &self,

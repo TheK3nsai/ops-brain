@@ -32,13 +32,9 @@ pub struct LinkMonitorParams {
     pub service_slug: Option<String>,
     /// Notes about what this monitor watches (optional)
     pub notes: Option<String>,
-    /// Override watchdog incident severity for this monitor. Values: low, medium, high, critical.
-    /// When set, watchdog uses this instead of role-based severity from server roles.
-    /// Useful for critical services (e.g. EHR) that may run on non-critical-role servers.
+    /// Watchdog severity override: low/medium/high/critical. Overrides role-based default.
     pub severity_override: Option<String>,
-    /// Chronic flapper threshold. When an incident's recurrence_count reaches this value,
-    /// severity auto-downgrades to "low". At 2x threshold, incidents are auto-resolved immediately.
-    /// Omit or set null to use the global default (OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD, default 5).
+    /// Flapper threshold: at N recurrences → severity=low, at 2N → auto-resolve. Default from env.
     #[serde(default, deserialize_with = "deserialize_flexible_i32")]
     pub flap_threshold: Option<i32>,
 }

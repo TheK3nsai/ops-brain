@@ -157,7 +157,7 @@ pub struct UpsertVendorParams {
 pub struct DeleteServerParams {
     /// Server slug to delete
     pub slug: String,
-    /// Must be true to confirm deletion. If false/omitted, returns a preview of what would be affected.
+    /// True to confirm. Omit for impact preview.
     pub confirm: Option<bool>,
 }
 
@@ -165,7 +165,7 @@ pub struct DeleteServerParams {
 pub struct DeleteServiceParams {
     /// Service slug to delete
     pub slug: String,
-    /// Must be true to confirm deletion. If false/omitted, returns a preview of what would be affected.
+    /// True to confirm. Omit for impact preview.
     pub confirm: Option<bool>,
 }
 
@@ -175,7 +175,7 @@ pub struct DeleteVendorParams {
     pub name: Option<String>,
     /// Vendor ID (UUID). Takes precedence over name for disambiguation.
     pub id: Option<String>,
-    /// Must be true to confirm deletion. If false/omitted, returns a preview of what would be affected.
+    /// True to confirm. Omit for impact preview.
     pub confirm: Option<bool>,
 }
 

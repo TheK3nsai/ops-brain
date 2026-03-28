@@ -73,7 +73,7 @@ pub struct ListHandoffsParams {
     /// Max results (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
-    /// Compact mode: truncate body to first 200 chars (default: true). Set to false for full bodies.
+    /// Truncate body to 200 chars (default: true). Set false for full bodies.
     pub compact: Option<bool>,
 }
 
@@ -99,8 +99,7 @@ pub struct GetCatchupParams {
     /// Max results per category (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
-    /// Compact mode (default true): returns summary fields only (title, status, priority).
-    /// Set to false for full content bodies. Compact also excludes completed handoffs.
+    /// Summary fields only, excludes completed handoffs (default: true). Set false for full bodies.
     pub compact: Option<bool>,
 }
 

@@ -136,24 +136,18 @@ pub struct AddKnowledgeParams {
 pub struct SearchKnowledgeParams {
     /// Search query. Use empty string or "*" to browse recent entries across tables.
     pub query: Option<String>,
-    /// Search mode: "fts" (default for single-table), "semantic" (AI vector similarity),
-    /// or "hybrid" (combined FTS + vector via RRF ranking, default for multi-table).
-    /// Ignored when browsing (empty/"*" query) — returns most recent entries.
+    /// fts (default single-table), semantic, or hybrid (default multi-table). Ignored for browse.
     pub mode: Option<String>,
-    /// Tables to search. Default: ["knowledge"]. Options: knowledge, runbooks, incidents, handoffs.
-    /// Use multiple tables to search across your operational data with a single query.
+    /// Tables to search: knowledge (default), runbooks, incidents, handoffs
     pub tables: Option<Vec<String>>,
-    /// Scope results to a client. Cross-client results are withheld unless acknowledged.
+    /// Scope to client. Cross-client results withheld unless acknowledged.
     pub client_slug: Option<String>,
-    /// Set to true to release cross-client results that were withheld due to scope mismatch
+    /// Release cross-client results withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
     /// Max results per table (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
-    /// Compact mode: return title, category, tags, score, and a snippet (first 200 chars)
-    /// instead of full content bodies. Drastically reduces response size for multi-table
-    /// searches (67KB → ~5KB). Default: true for multi-table, false for single-table.
-    /// Use drill-down tools (get_runbook, get_incident, etc.) for full details.
+    /// Snippets instead of full bodies (67KB→~5KB). Default: true multi-table, false single-table.
     pub compact: Option<bool>,
 }
 

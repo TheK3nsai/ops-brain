@@ -354,13 +354,28 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 
 #### P4 — Aspirational
 - ~~**Global compact preference**~~: DONE (Phase 14.2) — `preferences` table + `set_preference` tool. `resolve_compact()` helper checks preference when explicit param not set.
-- **Watchdog learning / chronic flapper suppression**: After N recurrences within a time window (e.g. 5 reopens in 24h), auto-downgrade severity to "low" and add a note: "chronic flapper — investigate monitor configuration." Design decisions needed: threshold count, time window, degradation curve (sudden vs gradual), reset mechanism when monitor stabilizes. The `recurrence_count` field (Phase 11) and `severity_override` (Phase 12) provide the foundation — this is about making watchdog auto-tune based on observed patterns.
+- ~~**Watchdog chronic flapper suppression**~~: DONE (Phase 13.1) — severity degradation at threshold, auto-resolve at 2x.
 - **Dashboard UI**: Web dashboard for Eduardo to view ops-brain data without opening a Claude session. Agreed #1 priority across all CCs.
 - **Multi-instance Uptime Kuma**: ops-brain currently only connects to kensai.cloud's Uptime Kuma. HSR runs a separate instance at status.ihmpr.com with ~18 monitors. `check_health` and `get_monitoring_summary` are blind to HSR infrastructure. Options: multi-instance config, federation, or manual monitor linking.
 - **Handoff count in MCP preamble**: Show pending handoff count in the server instructions so CCs notice them without calling `list_handoffs`.
-- **Tool groups / admin tier**: Separate tools into admin vs. daily-use tiers to reduce cognitive load.
+- **Tool groups / dynamic loading**: Profile-based tool registration to reduce context window overhead (~12.4K tokens currently). rmcp architectural change.
 - **Auto-deploy on merge**: GitHub Actions workflow to auto-deploy to kensai.cloud when main is updated.
 - **Branch protection**: Require PR + CI pass before merging to main.
+
+### Open-Source Release (v1.0)
+See **RELEASE.md** for the full checklist. Key blockers:
+- **Client data scrub**: seed.sql rewrite, CLAUDE.md split, source code scrub (~8 locations), README scrub
+- **Git history clean squash**: old seed data in history has real infrastructure details
+- **SECURITY.md + LICENSE**: required for public release
+- **Docker-compose for new users**: must work out of the box
+
+### Post-v1.0 Backlog
+- **Client-scope gate tests**: integration tests for all 5 gate conditions
+- **Watchdog logic tests**: flap suppression, severity degradation, dedup/reopen
+- **ARCHITECTURE.md**: domain model, data flow, safety gate rationale
+- **Self-ops runbook**: backup, restore, migration rollback for ops-brain itself
+- **Backup/DR automation**: automated PostgreSQL backups with tested restores
+- **Claude.ai read-only integration**: strategic analysis layer with scoped read access
 
 ### Infrastructure Audits (On-Site / SSH)
 - **Backup audit**: Verify what backup solution is actually running at HSR (Veeam? WSB? Synology Active Backup?) and CPA. The "Backup Infrastructure" runbook has action items.

@@ -36,7 +36,7 @@ pub struct SearchRunbooksParams {
     pub mode: Option<String>,
     /// Scope results to a client. Cross-client results are withheld unless acknowledged.
     pub client_slug: Option<String>,
-    /// Set to true to release cross-client results that were withheld due to scope mismatch
+    /// Release cross-client results withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
     /// Max results (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
@@ -87,11 +87,9 @@ pub struct LogRunbookExecutionParams {
     pub duration_minutes: Option<i32>,
     /// When the runbook was executed (ISO 8601). Defaults to now.
     pub executed_at: Option<String>,
-    /// Client context for this execution (e.g. "hsr", "cpa"). For HIPAA audit trails
-    /// when a cross-client runbook is executed for a specific client.
+    /// Client context for HIPAA audit trails
     pub client_slug: Option<String>,
-    /// Link this execution to an incident (UUID). Creates a bi-directional link:
-    /// the incident shows which runbooks were used, the runbook shows which incidents it resolved.
+    /// Link to incident UUID for bi-directional tracking
     pub incident_id: Option<String>,
 }
 
