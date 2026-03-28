@@ -245,6 +245,17 @@ impl OpsBrain {
     }
 
     #[tool(
+        name = "upsert_network",
+        description = "Create or update a network. Resolves site_slug to find the parent site. Matches on (site_id, cidr) — same CIDR at the same site updates the existing record."
+    )]
+    async fn upsert_network(
+        &self,
+        params: Parameters<inventory::UpsertNetworkParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(inventory::handle_upsert_network(self, params.0).await)
+    }
+
+    #[tool(
         name = "link_server_service",
         description = "Link a server to a service it runs, with optional port and config notes"
     )]

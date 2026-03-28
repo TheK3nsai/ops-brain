@@ -158,6 +158,28 @@ pub struct UpsertVendorParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpsertNetworkParams {
+    /// Site slug to link this network to
+    pub site_slug: String,
+    /// Network name
+    pub name: String,
+    /// Network CIDR (e.g. "192.168.0.0/24") — unique per site
+    pub cidr: String,
+    /// Optional VLAN ID
+    pub vlan_id: Option<i32>,
+    /// Optional gateway IP
+    pub gateway: Option<String>,
+    /// DNS servers (array of IPs)
+    pub dns_servers: Option<Vec<String>>,
+    /// Optional DHCP server IP
+    pub dhcp_server: Option<String>,
+    /// Network purpose (e.g. "Office LAN", "DMZ", "Management")
+    pub purpose: Option<String>,
+    /// Optional notes
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DeleteServerParams {
     /// Server slug to delete
     pub slug: String,
@@ -777,6 +799,37 @@ pub(crate) async fn handle_upsert_vendor(
             }
             json_result(&vendor)
         }
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_upsert_network(
+    brain: &super::OpsBrain,
+    p: UpsertNetworkParams,
+) -> CallToolResult {
+    let site = match crate::repo::site_repo::get_site_by_slug(&brain.pool, &p.site_slug).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_with_suggestions(&brain.pool, "Site", &p.site_slug).await,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+
+    let dns_servers = p.dns_servers.unwrap_or_default();
+
+    match crate::repo::network_repo::upsert_network(
+        &brain.pool,
+        site.id,
+        &p.name,
+        &p.cidr,
+        p.vlan_id,
+        p.gateway.as_deref(),
+        &dns_servers,
+        p.dhcp_server.as_deref(),
+        p.purpose.as_deref(),
+        p.notes.as_deref(),
+    )
+    .await
+    {
+        Ok(network) => json_result(&network),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
