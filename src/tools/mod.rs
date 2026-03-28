@@ -178,7 +178,7 @@ impl OpsBrain {
 
     #[tool(
         name = "search_inventory",
-        description = "Full-text search across all entity types (servers, services, runbooks, knowledge, etc.)"
+        description = "Full-text search across all entity types (servers, services, runbooks, knowledge, etc.). When client_slug is set, runbooks/knowledge/incidents from other clients are withheld unless acknowledge_cross_client is true."
     )]
     async fn search_inventory(
         &self,
@@ -213,7 +213,7 @@ impl OpsBrain {
 
     #[tool(
         name = "upsert_server",
-        description = "Create or update a server. Resolves site_slug and optional hypervisor_slug to IDs."
+        description = "Create or update a server. On update, only provided fields are changed (COALESCE — omitted fields are preserved). On create, NOT NULL fields default to empty/false/active."
     )]
     async fn upsert_server(
         &self,

@@ -187,3 +187,66 @@ pub async fn upsert_server(
     .fetch_one(pool)
     .await
 }
+
+/// Partial update: only updates fields that are explicitly provided (Some).
+/// NOT NULL columns (ip_addresses, roles, is_virtual, status) are preserved
+/// when the caller passes None — unlike upsert_server which replaces all fields.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_server_partial(
+    pool: &PgPool,
+    slug: &str,
+    site_id: Option<Uuid>,
+    hostname: Option<&str>,
+    os: Option<&str>,
+    ip_addresses: Option<&[String]>,
+    ssh_alias: Option<&str>,
+    roles: Option<&[String]>,
+    hardware: Option<&str>,
+    cpu: Option<&str>,
+    ram_gb: Option<i32>,
+    storage_summary: Option<&str>,
+    is_virtual: Option<bool>,
+    hypervisor_id: Option<Option<Uuid>>,
+    status: Option<&str>,
+    notes: Option<&str>,
+) -> Result<Server, sqlx::Error> {
+    sqlx::query_as::<_, Server>(
+        "UPDATE servers SET
+            site_id = COALESCE($2, site_id),
+            hostname = COALESCE($3, hostname),
+            os = COALESCE($4, os),
+            ip_addresses = COALESCE($5, ip_addresses),
+            ssh_alias = COALESCE($6, ssh_alias),
+            roles = COALESCE($7, roles),
+            hardware = COALESCE($8, hardware),
+            cpu = COALESCE($9, cpu),
+            ram_gb = COALESCE($10, ram_gb),
+            storage_summary = COALESCE($11, storage_summary),
+            is_virtual = COALESCE($12, is_virtual),
+            hypervisor_id = CASE WHEN $13 THEN $14 ELSE hypervisor_id END,
+            status = COALESCE($15, status),
+            notes = COALESCE($16, notes),
+            updated_at = NOW()
+         WHERE slug = $1 AND status != 'deleted'
+         RETURNING *",
+    )
+    .bind(slug)
+    .bind(site_id)
+    .bind(hostname)
+    .bind(os)
+    .bind(ip_addresses.map(|a| a.to_vec()))
+    .bind(ssh_alias)
+    .bind(roles.map(|r| r.to_vec()))
+    .bind(hardware)
+    .bind(cpu)
+    .bind(ram_gb)
+    .bind(storage_summary)
+    .bind(is_virtual)
+    // $13 = whether hypervisor_id was explicitly provided, $14 = the value (may be NULL)
+    .bind(hypervisor_id.is_some())
+    .bind(hypervisor_id.flatten())
+    .bind(status)
+    .bind(notes)
+    .fetch_one(pool)
+    .await
+}

@@ -1,8 +1,8 @@
 //! Integration tests for ops-brain.
 //!
 //! Requires a running PostgreSQL instance. Uses DATABASE_URL from environment
-//! or defaults to the test database. Each test runs in a transaction that gets
-//! rolled back for isolation.
+//! or defaults to the test database. Tests use UUID-based unique slugs for
+//! isolation and clean up their own data on success. See common.rs for details.
 //!
 //! Run: DATABASE_URL=postgres://ops_brain:ops_brain@localhost:5432/ops_brain cargo test
 
@@ -1258,5 +1258,361 @@ mod runbook_execution_tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+}
+
+// ===== Vendor Dedup Tests =====
+
+mod vendor_dedup_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn upsert_vendor_same_name_updates_instead_of_duplicating() {
+        let pool = pool().await;
+        let name = format!("TestVendor-{}", Uuid::now_v7());
+
+        // First insert
+        let v1 = ops_brain::repo::vendor_repo::upsert_vendor(
+            &pool,
+            &name,
+            Some("isp"),
+            Some("ACCT-001"),
+            Some("555-0001"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(v1.name, name);
+        assert_eq!(v1.category.as_deref(), Some("isp"));
+        assert_eq!(v1.account_number.as_deref(), Some("ACCT-001"));
+
+        // Second upsert with same name — should update, not duplicate
+        let v2 = ops_brain::repo::vendor_repo::upsert_vendor(
+            &pool,
+            &name,
+            Some("hardware"),
+            None, // account_number not provided — should preserve ACCT-001
+            Some("555-0002"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Same row (same ID)
+        assert_eq!(v2.id, v1.id);
+        // Category updated
+        assert_eq!(v2.category.as_deref(), Some("hardware"));
+        // account_number preserved (COALESCE)
+        assert_eq!(v2.account_number.as_deref(), Some("ACCT-001"));
+        // support_phone updated
+        assert_eq!(v2.support_phone.as_deref(), Some("555-0002"));
+
+        // Verify only one row exists
+        let found = ops_brain::repo::vendor_repo::get_vendor_by_name(&pool, &name)
+            .await
+            .unwrap();
+        assert!(found.is_some());
+
+        // Cleanup
+        sqlx::query("DELETE FROM vendors WHERE id = $1")
+            .bind(v1.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_vendor_case_insensitive_dedup() {
+        let pool = pool().await;
+        let base = format!("CaseVendor-{}", Uuid::now_v7());
+        let upper = base.to_uppercase();
+
+        let v1 = ops_brain::repo::vendor_repo::upsert_vendor(
+            &pool,
+            &base,
+            Some("software"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Upsert with different casing — should hit ON CONFLICT
+        let v2 = ops_brain::repo::vendor_repo::upsert_vendor(
+            &pool,
+            &upper,
+            Some("cloud"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(v2.id, v1.id);
+        assert_eq!(v2.category.as_deref(), Some("cloud"));
+
+        // Cleanup
+        sqlx::query("DELETE FROM vendors WHERE id = $1")
+            .bind(v1.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+// ===== Server Partial Update Tests =====
+
+mod server_partial_update_tests {
+    use super::*;
+
+    async fn create_test_server(
+        pool: &sqlx::PgPool,
+    ) -> (uuid::Uuid, uuid::Uuid, String, String, String) {
+        let client_slug = format!("test-pu-client-{}", Uuid::now_v7());
+        let site_slug = format!("test-pu-site-{}", Uuid::now_v7());
+        let server_slug = format!("test-pu-srv-{}", Uuid::now_v7());
+
+        let client = ops_brain::repo::client_repo::upsert_client(
+            pool,
+            "PU Test Client",
+            &client_slug,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let site = ops_brain::repo::site_repo::upsert_site(
+            pool,
+            client.id,
+            "PU Test Site",
+            &site_slug,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let _server = ops_brain::repo::server_repo::upsert_server(
+            pool,
+            site.id,
+            "PU-TEST-SRV",
+            &server_slug,
+            Some("Windows Server 2022"),
+            &["10.0.0.50".to_string()],
+            Some("pu-test"),
+            &["file-server".to_string(), "dns".to_string()],
+            Some("Dell R740"),
+            Some("Xeon E-2288G"),
+            Some(64),
+            Some("2x 1TB SSD RAID1"),
+            false,
+            None,
+            "active",
+            Some("Original notes"),
+        )
+        .await
+        .unwrap();
+
+        (client.id, site.id, client_slug, site_slug, server_slug)
+    }
+
+    async fn cleanup(
+        pool: &sqlx::PgPool,
+        server_slug: &str,
+        site_id: uuid::Uuid,
+        client_id: uuid::Uuid,
+    ) {
+        sqlx::query("DELETE FROM servers WHERE slug = $1")
+            .bind(server_slug)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM sites WHERE id = $1")
+            .bind(site_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM clients WHERE id = $1")
+            .bind(client_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn partial_update_preserves_unprovided_fields() {
+        let pool = pool().await;
+        let (client_id, site_id, _client_slug, _site_slug, server_slug) =
+            create_test_server(&pool).await;
+
+        // Partial update: only change OS, leave everything else
+        let updated = ops_brain::repo::server_repo::update_server_partial(
+            &pool,
+            &server_slug,
+            None,                        // site_id: preserve
+            None,                        // hostname: preserve
+            Some("Windows Server 2025"), // os: update
+            None,                        // ip_addresses: preserve
+            None,                        // ssh_alias: preserve
+            None,                        // roles: preserve
+            None,                        // hardware: preserve
+            None,                        // cpu: preserve
+            None,                        // ram_gb: preserve
+            None,                        // storage_summary: preserve
+            None,                        // is_virtual: preserve
+            None,                        // hypervisor_id: preserve
+            None,                        // status: preserve
+            None,                        // notes: preserve
+        )
+        .await
+        .unwrap();
+
+        // OS should be updated
+        assert_eq!(updated.os.as_deref(), Some("Windows Server 2025"));
+        // Everything else should be preserved
+        assert_eq!(updated.hostname, "PU-TEST-SRV");
+        assert_eq!(updated.ip_addresses, vec!["10.0.0.50"]);
+        assert_eq!(updated.roles, vec!["file-server", "dns"]);
+        assert_eq!(updated.hardware.as_deref(), Some("Dell R740"));
+        assert_eq!(updated.cpu.as_deref(), Some("Xeon E-2288G"));
+        assert_eq!(updated.ram_gb, Some(64));
+        assert_eq!(updated.storage_summary.as_deref(), Some("2x 1TB SSD RAID1"));
+        assert!(!updated.is_virtual);
+        assert_eq!(updated.status, "active");
+        assert_eq!(updated.notes.as_deref(), Some("Original notes"));
+        assert_eq!(updated.ssh_alias.as_deref(), Some("pu-test"));
+
+        cleanup(&pool, &server_slug, site_id, client_id).await;
+    }
+
+    #[tokio::test]
+    async fn partial_update_can_change_multiple_fields() {
+        let pool = pool().await;
+        let (client_id, site_id, _client_slug, _site_slug, server_slug) =
+            create_test_server(&pool).await;
+
+        let updated = ops_brain::repo::server_repo::update_server_partial(
+            &pool,
+            &server_slug,
+            None,
+            Some("RENAMED-SRV"),
+            None,
+            Some(&["10.0.0.51".to_string(), "10.0.0.52".to_string()]),
+            None,
+            Some(&["dc".to_string()]),
+            None,
+            None,
+            Some(128),
+            None,
+            Some(true),
+            None,
+            None,
+            Some("Updated notes"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updated.hostname, "RENAMED-SRV");
+        assert_eq!(updated.ip_addresses, vec!["10.0.0.51", "10.0.0.52"]);
+        assert_eq!(updated.roles, vec!["dc"]);
+        assert_eq!(updated.ram_gb, Some(128));
+        assert!(updated.is_virtual);
+        assert_eq!(updated.notes.as_deref(), Some("Updated notes"));
+        // Unchanged fields preserved
+        assert_eq!(updated.os.as_deref(), Some("Windows Server 2022"));
+        assert_eq!(updated.hardware.as_deref(), Some("Dell R740"));
+        assert_eq!(updated.cpu.as_deref(), Some("Xeon E-2288G"));
+
+        cleanup(&pool, &server_slug, site_id, client_id).await;
+    }
+
+    #[tokio::test]
+    async fn partial_update_hypervisor_explicit_set() {
+        let pool = pool().await;
+        let (client_id, site_id, _client_slug, _site_slug, server_slug) =
+            create_test_server(&pool).await;
+
+        // Create a hypervisor
+        let hyp_slug = format!("test-hyp-{}", Uuid::now_v7());
+        let hypervisor = ops_brain::repo::server_repo::upsert_server(
+            &pool,
+            site_id,
+            "HYP-SRV",
+            &hyp_slug,
+            None,
+            &[],
+            None,
+            &["hypervisor".to_string()],
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            "active",
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Set hypervisor_id via partial update
+        let updated = ops_brain::repo::server_repo::update_server_partial(
+            &pool,
+            &server_slug,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(true),                // is_virtual
+            Some(Some(hypervisor.id)), // hypervisor_id: explicitly set
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(updated.is_virtual);
+        assert_eq!(updated.hypervisor_id, Some(hypervisor.id));
+        // Everything else preserved
+        assert_eq!(updated.os.as_deref(), Some("Windows Server 2022"));
+        assert_eq!(updated.roles, vec!["file-server", "dns"]);
+
+        // Cleanup
+        sqlx::query("DELETE FROM servers WHERE slug = $1")
+            .bind(&hyp_slug)
+            .execute(&pool)
+            .await
+            .unwrap();
+        cleanup(&pool, &server_slug, site_id, client_id).await;
     }
 }

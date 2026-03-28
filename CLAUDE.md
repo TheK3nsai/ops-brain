@@ -140,6 +140,7 @@ Since there is no second pair of eyes, the system itself acts as the safety gate
 
 - `get_situational_awareness` — gates runbooks, knowledge, and incidents via resolved client_id
 - `get_server_context` — gates runbooks, knowledge, and incidents via resolved client_id
+- `search_inventory` — optional `client_slug` + `acknowledge_cross_client` params; gates runbooks, knowledge, and incidents (servers, services, vendors, sites, networks, handoffs ungated)
 - `search_runbooks` — optional `client_slug` + `acknowledge_cross_client` params
 - `search_knowledge` — optional `client_slug` + `acknowledge_cross_client` params
 - `search_knowledge` (multi-table mode) — gates runbook, knowledge, and incident results (handoffs not gated — no client_id)
@@ -222,12 +223,12 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Never apply schema changes outside of migration files** — if you do, sqlx will try to re-run the migration and fail (e.g. "column already exists"). Fix: insert the migration record manually with the correct SHA-384 checksum: `INSERT INTO _sqlx_migrations (version, description, installed_on, success, checksum, execution_time) VALUES (<version>, '<desc>', now(), true, decode('<sha384>', 'hex'), 0);`
 - **"connection closed: initialize request"** on manual `./target/release/ops-brain` run is normal — means no MCP client is connected via stdio, not an actual error
 - **Migration count**: update the comment in this file's Project Layout section when adding new migrations
-- **upsert_server replaces ALL fields** — it's not a partial update. Must pass every field or they get nulled. Always read the current server data before upserting.
+- **upsert_server is partial on update** — when the server already exists (by slug), only provided fields are changed (COALESCE). Omitted fields are preserved. On create (new slug), NOT NULL fields default to empty/false/active.
 - **seed.sql is foundational only** — clients, sites, networks. All other data comes from MCP tool sessions. Never add fictional/placeholder data to seed.sql.
 - **mold linker is local only** — `.cargo/config.toml` uses mold for fast local builds. The Docker build uses its own linker (musl/gcc inside the container). Cargo falls back to the default linker if mold isn't installed.
 - **sqlx-cli requires `DATABASE_URL`** — set it in `.env` or export it before running `sqlx migrate` commands. Same connection string the app uses.
 - **cargo-audit 0.22 has no config file support** — ignores must be passed via `--ignore RUSTSEC-XXXX` CLI flags. The `audit.toml` in the repo root is documentation only. The actual ignore is in `.github/workflows/ci.yml`.
-- **upsert_vendor creates duplicates** — it always INSERTs (no ON CONFLICT). To update an existing vendor, use `upsert_vendor` with `id` parameter, which routes to `update_vendor_by_id` (COALESCE partial update). Without `id`, a new row is created every time.
+- **upsert_vendor matches by name (case-insensitive)** — ON CONFLICT on `LOWER(name)` for active vendors. Calling `upsert_vendor` with an existing vendor name updates it (COALESCE). Use `id` parameter to update a specific vendor by UUID.
 - **nomic-embed-text tokenization** — real markdown/code content tokenizes at ~1-1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` in `src/embeddings.rs` is 6,000 (not 24K). Do not increase without empirical testing against production data — code-heavy content fails at ~7,200 chars, plain markdown at ~8,200 chars (8,192-token context window).
 
 ## CI Pipeline

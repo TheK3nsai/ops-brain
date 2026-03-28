@@ -109,6 +109,16 @@ pub async fn upsert_vendor(
         "INSERT INTO vendors (id, name, category, account_number, support_phone, support_email,
             support_portal, sla_summary, contract_end, notes)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT ((LOWER(name))) WHERE status != 'deleted' DO UPDATE SET
+             category = COALESCE($3, vendors.category),
+             account_number = COALESCE($4, vendors.account_number),
+             support_phone = COALESCE($5, vendors.support_phone),
+             support_email = COALESCE($6, vendors.support_email),
+             support_portal = COALESCE($7, vendors.support_portal),
+             sla_summary = COALESCE($8, vendors.sla_summary),
+             contract_end = COALESCE($9, vendors.contract_end),
+             notes = COALESCE($10, vendors.notes),
+             updated_at = NOW()
          RETURNING *",
     )
     .bind(id)

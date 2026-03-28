@@ -80,6 +80,10 @@ pub struct SearchInventoryParams {
     /// Max results per entity type (default 10)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
+    /// Client slug — when set, runbooks/knowledge/incidents from other clients are gated
+    pub client_slug: Option<String>,
+    /// Release cross-client results withheld due to scope mismatch
+    pub acknowledge_cross_client: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -426,8 +430,115 @@ pub(crate) async fn handle_search_inventory(
     p: SearchInventoryParams,
 ) -> CallToolResult {
     let limit = p.limit.unwrap_or(10);
+    let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
+
+    // Resolve client scope
+    let client_id = match &p.client_slug {
+        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
+            Ok(Some(c)) => Some(c.id),
+            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        },
+        None => None,
+    };
+
     match crate::repo::search_repo::search_inventory(&brain.pool, &p.query, limit).await {
-        Ok(results) => json_result(&results),
+        Ok(results) => {
+            let mut output = serde_json::json!({});
+
+            // Ungated entity types — pass through directly
+            output["servers"] = serde_json::to_value(&results.servers).unwrap_or_default();
+            output["services"] = serde_json::to_value(&results.services).unwrap_or_default();
+            output["vendors"] = serde_json::to_value(&results.vendors).unwrap_or_default();
+            output["clients"] = serde_json::to_value(&results.clients).unwrap_or_default();
+            output["sites"] = serde_json::to_value(&results.sites).unwrap_or_default();
+            output["networks"] = serde_json::to_value(&results.networks).unwrap_or_default();
+            output["handoffs"] = serde_json::to_value(&results.handoffs).unwrap_or_default();
+
+            // Gated entity types — apply cross-client filter
+            use super::helpers::filter_cross_client;
+            use super::shared::{build_client_lookup, log_audit_entries};
+
+            let client_lookup = build_client_lookup(&brain.pool).await;
+
+            let runbook_values: Vec<serde_json::Value> = results
+                .runbooks
+                .iter()
+                .filter_map(|r| serde_json::to_value(r).ok())
+                .collect();
+            let rb_filtered = filter_cross_client(
+                runbook_values,
+                "runbook",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            log_audit_entries(
+                &brain.pool,
+                "search_inventory",
+                client_id,
+                "runbook",
+                &rb_filtered.audit_entries,
+            )
+            .await;
+
+            let knowledge_values: Vec<serde_json::Value> = results
+                .knowledge
+                .iter()
+                .filter_map(|k| serde_json::to_value(k).ok())
+                .collect();
+            let kn_filtered = filter_cross_client(
+                knowledge_values,
+                "knowledge",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            log_audit_entries(
+                &brain.pool,
+                "search_inventory",
+                client_id,
+                "knowledge",
+                &kn_filtered.audit_entries,
+            )
+            .await;
+
+            let incident_values: Vec<serde_json::Value> = results
+                .incidents
+                .iter()
+                .filter_map(|i| serde_json::to_value(i).ok())
+                .collect();
+            let inc_filtered = filter_cross_client(
+                incident_values,
+                "incident",
+                client_id,
+                acknowledge,
+                &client_lookup,
+            );
+            log_audit_entries(
+                &brain.pool,
+                "search_inventory",
+                client_id,
+                "incident",
+                &inc_filtered.audit_entries,
+            )
+            .await;
+
+            output["runbooks"] = serde_json::to_value(&rb_filtered.allowed).unwrap_or_default();
+            output["knowledge"] = serde_json::to_value(&kn_filtered.allowed).unwrap_or_default();
+            output["incidents"] = serde_json::to_value(&inc_filtered.allowed).unwrap_or_default();
+
+            // Collect withheld notices
+            let mut withheld: Vec<serde_json::Value> = Vec::new();
+            withheld.extend(rb_filtered.withheld_notices);
+            withheld.extend(kn_filtered.withheld_notices);
+            withheld.extend(inc_filtered.withheld_notices);
+            if !withheld.is_empty() {
+                output["cross_client_withheld"] = serde_json::json!(withheld);
+            }
+
+            super::helpers::json_result(&output)
+        }
         Err(e) => error_result(&format!("Search error: {e}")),
     }
 }
@@ -491,39 +602,74 @@ pub(crate) async fn handle_upsert_server(
     };
     let hypervisor_id = match &p.hypervisor_slug {
         Some(slug) => match crate::repo::server_repo::get_server_by_slug(&brain.pool, slug).await {
-            Ok(Some(h)) => Some(h.id),
+            Ok(Some(h)) => Some(Some(h.id)),
             Ok(None) => {
                 return not_found_with_suggestions(&brain.pool, "Hypervisor server", slug).await
             }
             Err(e) => return error_result(&format!("Database error: {e}")),
         },
-        None => None,
+        None => None, // Not provided — don't touch hypervisor_id on update
     };
-    let ip_addresses = p.ip_addresses.unwrap_or_default();
-    let roles = p.roles.unwrap_or_default();
-    let is_virtual = p.is_virtual.unwrap_or(false);
-    let status = p.status.as_deref().unwrap_or("active");
-    match crate::repo::server_repo::upsert_server(
-        &brain.pool,
-        site.id,
-        &p.hostname,
-        &p.slug,
-        p.os.as_deref(),
-        &ip_addresses,
-        p.ssh_alias.as_deref(),
-        &roles,
-        p.hardware.as_deref(),
-        p.cpu.as_deref(),
-        p.ram_gb,
-        p.storage_summary.as_deref(),
-        is_virtual,
-        hypervisor_id,
-        status,
-        p.notes.as_deref(),
-    )
-    .await
-    {
-        Ok(server) => json_result(&server),
+
+    // Check if server already exists — route to partial update to avoid nuking fields
+    let existing = crate::repo::server_repo::get_server_by_slug(&brain.pool, &p.slug).await;
+    match existing {
+        Ok(Some(_)) => {
+            // Partial update: only provided fields are changed
+            match crate::repo::server_repo::update_server_partial(
+                &brain.pool,
+                &p.slug,
+                Some(site.id),
+                Some(&p.hostname),
+                p.os.as_deref(),
+                p.ip_addresses.as_deref(),
+                p.ssh_alias.as_deref(),
+                p.roles.as_deref(),
+                p.hardware.as_deref(),
+                p.cpu.as_deref(),
+                p.ram_gb,
+                p.storage_summary.as_deref(),
+                p.is_virtual,
+                hypervisor_id,
+                p.status.as_deref(),
+                p.notes.as_deref(),
+            )
+            .await
+            {
+                Ok(server) => json_result(&server),
+                Err(e) => error_result(&format!("Database error: {e}")),
+            }
+        }
+        Ok(None) => {
+            // New server: apply defaults for NOT NULL fields
+            let ip_addresses = p.ip_addresses.unwrap_or_default();
+            let roles = p.roles.unwrap_or_default();
+            let is_virtual = p.is_virtual.unwrap_or(false);
+            let status = p.status.as_deref().unwrap_or("active");
+            match crate::repo::server_repo::upsert_server(
+                &brain.pool,
+                site.id,
+                &p.hostname,
+                &p.slug,
+                p.os.as_deref(),
+                &ip_addresses,
+                p.ssh_alias.as_deref(),
+                &roles,
+                p.hardware.as_deref(),
+                p.cpu.as_deref(),
+                p.ram_gb,
+                p.storage_summary.as_deref(),
+                is_virtual,
+                hypervisor_id.flatten(),
+                status,
+                p.notes.as_deref(),
+            )
+            .await
+            {
+                Ok(server) => json_result(&server),
+                Err(e) => error_result(&format!("Database error: {e}")),
+            }
+        }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
