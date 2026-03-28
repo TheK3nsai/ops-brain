@@ -11,7 +11,7 @@ use super::helpers::{
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetServerParams {
-    /// Server slug (e.g., "hvfs0", "stealth")
+    /// Server slug (e.g., "web-server-01", "db-primary")
     pub slug: String,
 }
 

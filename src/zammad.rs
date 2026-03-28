@@ -34,6 +34,7 @@ where
 pub struct ZammadConfig {
     pub base_url: String,
     pub api_token: String,
+    pub default_owner_id: Option<i64>,
 }
 
 // ===== State/Priority name↔ID mappings =====
@@ -502,6 +503,7 @@ mod tests {
         let config = ZammadConfig {
             base_url: "http://localhost:3000".to_string(),
             api_token: "abc123".to_string(),
+            default_owner_id: None,
         };
         assert_eq!(auth_header(&config), "Token token=abc123");
     }
@@ -513,6 +515,7 @@ mod tests {
         let config = ZammadConfig {
             base_url: "http://localhost:3000".to_string(),
             api_token: "test".to_string(),
+            default_owner_id: None,
         };
         assert_eq!(
             api_url(&config, "/tickets"),
@@ -529,6 +532,7 @@ mod tests {
         let config = ZammadConfig {
             base_url: "http://localhost:3000/".to_string(),
             api_token: "test".to_string(),
+            default_owner_id: None,
         };
         assert_eq!(
             api_url(&config, "/tickets"),
@@ -548,7 +552,7 @@ mod tests {
             "state_id": 2,
             "priority": "normal",
             "priority_id": 2,
-            "group": "HSR",
+            "group": "Support",
             "group_id": 2,
             "created_at": "2026-03-20T10:00:00Z",
             "updated_at": "2026-03-20T11:00:00Z"

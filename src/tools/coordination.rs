@@ -11,7 +11,7 @@ use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StartSessionParams {
-    /// Machine identifier (e.g. "stealth", "kensai-cloud")
+    /// Machine identifier (e.g. "dev-laptop", "prod-server")
     pub machine_id: String,
     /// Machine hostname
     pub machine_hostname: String,

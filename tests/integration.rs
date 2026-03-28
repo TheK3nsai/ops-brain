@@ -542,19 +542,19 @@ mod coordination_tests {
         let handoff = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
             None,
-            "stealth",
-            Some("cloudlab"),
+            "dev-laptop",
+            Some("prod-server"),
             "high",
             "Continue DNS migration",
-            "Need to update remaining A records for HSR",
+            "Need to update remaining A records",
             None,
         )
         .await
         .unwrap();
 
         assert_eq!(handoff.status, "pending");
-        assert_eq!(handoff.from_machine, "stealth");
-        assert_eq!(handoff.to_machine.as_deref(), Some("cloudlab"));
+        assert_eq!(handoff.from_machine, "dev-laptop");
+        assert_eq!(handoff.to_machine.as_deref(), Some("prod-server"));
 
         // Accept
         let accepted =
@@ -1193,32 +1193,32 @@ mod runbook_execution_tests {
         let exec = ops_brain::repo::runbook_execution_repo::log_execution(
             &pool,
             runbook.id,
-            "CC-Stealth",
+            "CC-DevLaptop",
             "success",
             Some("DR test completed, all systems restored"),
             Some(45),
             None,
-            Some("hsr"),
+            Some("alpha"),
             None,
         )
         .await
         .unwrap();
 
         assert_eq!(exec.runbook_id, runbook.id);
-        assert_eq!(exec.executor, "CC-Stealth");
+        assert_eq!(exec.executor, "CC-DevLaptop");
         assert_eq!(exec.result, "success");
         assert_eq!(
             exec.notes.as_deref(),
             Some("DR test completed, all systems restored")
         );
         assert_eq!(exec.duration_minutes, Some(45));
-        assert_eq!(exec.client_slug.as_deref(), Some("hsr"));
+        assert_eq!(exec.client_slug.as_deref(), Some("alpha"));
 
         // Log another execution
         let exec2 = ops_brain::repo::runbook_execution_repo::log_execution(
             &pool,
             runbook.id,
-            "CC-HSR",
+            "CC-Remote",
             "failure",
             Some("Network issue during step 3"),
             Some(15),

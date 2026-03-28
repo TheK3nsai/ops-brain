@@ -895,10 +895,10 @@ impl ServerHandler for OpsBrain {
                  creating cross-client content. \
                  STANDARDS: search_knowledge 'CC Team Contribution Standards' before \
                  authoring knowledge, runbooks, or incidents. \
-                 ROUTING: Code/PRs → stealth. Deploys → kensai-cloud. HSR infra → HV-FS0. \
-                 CPA infra → SMYT-SERVER. Unsure → stealth. Use hostname in to_machine. \
-                 AFTER CODE MERGES: Always create a deploy handoff to kensai-cloud with \
-                 commit hash, deploy steps, and validation checklist. \
+                 ROUTING: Use hostname in to_machine when creating handoffs. Route to the \
+                 machine closest to the target infrastructure. \
+                 AFTER CODE MERGES: Always create a deploy handoff to the production server \
+                 with commit hash, deploy steps, and validation checklist. \
                  ALWAYS: (1) get_situational_awareness before infra changes, \
                  (2) add_knowledge for lessons learned, (3) create_handoff for unfinished \
                  or cross-CC work.",
@@ -925,21 +925,21 @@ mod tests {
     }
 
     fn make_lookup() -> (Uuid, Uuid, HashMap<Uuid, (String, String)>) {
-        let hsr_id = Uuid::now_v7();
-        let cpa_id = Uuid::now_v7();
+        let alpha_id = Uuid::now_v7();
+        let beta_id = Uuid::now_v7();
         let mut lookup = HashMap::new();
-        lookup.insert(hsr_id, ("hsr".to_string(), "Hospice".to_string()));
-        lookup.insert(cpa_id, ("cpa".to_string(), "CPA Firm".to_string()));
-        (hsr_id, cpa_id, lookup)
+        lookup.insert(alpha_id, ("alpha".to_string(), "Alpha Corp".to_string()));
+        lookup.insert(beta_id, ("beta".to_string(), "Beta Inc".to_string()));
+        (alpha_id, beta_id, lookup)
     }
 
     // ===== filter_cross_client tests =====
 
     #[test]
     fn filter_no_requesting_client_allows_all() {
-        let (hsr_id, _, lookup) = make_lookup();
+        let (alpha_id, _, lookup) = make_lookup();
         let items = vec![
-            make_item(Uuid::now_v7(), Some(hsr_id), false),
+            make_item(Uuid::now_v7(), Some(alpha_id), false),
             make_item(Uuid::now_v7(), None, false),
         ];
 
@@ -952,11 +952,11 @@ mod tests {
 
     #[test]
     fn filter_global_content_always_allowed() {
-        let (hsr_id, _, lookup) = make_lookup();
+        let (alpha_id, _, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, None, false)];
 
-        let result = filter_cross_client(items, "runbook", Some(hsr_id), false, &lookup);
+        let result = filter_cross_client(items, "runbook", Some(alpha_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -967,42 +967,42 @@ mod tests {
 
     #[test]
     fn filter_same_client_allowed() {
-        let (hsr_id, _, lookup) = make_lookup();
+        let (alpha_id, _, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
-        let items = vec![make_item(item_id, Some(hsr_id), false)];
+        let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "runbook", Some(hsr_id), false, &lookup);
+        let result = filter_cross_client(items, "runbook", Some(alpha_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
         assert!(result.audit_entries.is_empty());
-        assert_eq!(result.allowed[0]["_client_slug"], "hsr");
-        assert_eq!(result.allowed[0]["_client_name"], "Hospice");
+        assert_eq!(result.allowed[0]["_client_slug"], "alpha");
+        assert_eq!(result.allowed[0]["_client_name"], "Alpha Corp");
     }
 
     #[test]
     fn filter_cross_client_safe_allowed() {
-        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let (alpha_id, beta_id, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
-        let items = vec![make_item(item_id, Some(hsr_id), true)];
+        let items = vec![make_item(item_id, Some(alpha_id), true)];
 
-        let result = filter_cross_client(items, "runbook", Some(cpa_id), false, &lookup);
+        let result = filter_cross_client(items, "runbook", Some(beta_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
         assert_eq!(result.audit_entries.len(), 1);
         assert_eq!(result.audit_entries[0].0, item_id);
-        assert_eq!(result.audit_entries[0].1, Some(hsr_id));
+        assert_eq!(result.audit_entries[0].1, Some(alpha_id));
         assert_eq!(result.audit_entries[0].2, "released_safe");
     }
 
     #[test]
     fn filter_cross_client_acknowledged_released() {
-        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let (alpha_id, beta_id, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
-        let items = vec![make_item(item_id, Some(hsr_id), false)];
+        let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "runbook", Some(cpa_id), true, &lookup);
+        let result = filter_cross_client(items, "runbook", Some(beta_id), true, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -1012,16 +1012,16 @@ mod tests {
 
     #[test]
     fn filter_cross_client_withheld() {
-        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let (alpha_id, beta_id, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
-        let items = vec![make_item(item_id, Some(hsr_id), false)];
+        let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "runbook", Some(cpa_id), false, &lookup);
+        let result = filter_cross_client(items, "runbook", Some(beta_id), false, &lookup);
 
         assert!(result.allowed.is_empty());
         assert_eq!(result.withheld_notices.len(), 1);
         assert_eq!(result.withheld_notices[0]["count"], 1);
-        assert_eq!(result.withheld_notices[0]["owning_client_slug"], "hsr");
+        assert_eq!(result.withheld_notices[0]["owning_client_slug"], "alpha");
         assert_eq!(result.withheld_notices[0]["entity_type"], "runbook");
         assert_eq!(result.audit_entries.len(), 1);
         assert_eq!(result.audit_entries[0].2, "withheld");
@@ -1029,13 +1029,13 @@ mod tests {
 
     #[test]
     fn filter_multiple_withheld_grouped_by_client() {
-        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let (alpha_id, beta_id, lookup) = make_lookup();
         let items = vec![
-            make_item(Uuid::now_v7(), Some(hsr_id), false),
-            make_item(Uuid::now_v7(), Some(hsr_id), false),
+            make_item(Uuid::now_v7(), Some(alpha_id), false),
+            make_item(Uuid::now_v7(), Some(alpha_id), false),
         ];
 
-        let result = filter_cross_client(items, "knowledge", Some(cpa_id), false, &lookup);
+        let result = filter_cross_client(items, "knowledge", Some(beta_id), false, &lookup);
 
         assert!(result.allowed.is_empty());
         assert_eq!(result.withheld_notices.len(), 1);
@@ -1045,15 +1045,15 @@ mod tests {
 
     #[test]
     fn filter_mixed_items() {
-        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let (alpha_id, beta_id, lookup) = make_lookup();
         let items = vec![
             make_item(Uuid::now_v7(), None, false), // global → allowed
-            make_item(Uuid::now_v7(), Some(cpa_id), false), // same client → allowed
-            make_item(Uuid::now_v7(), Some(hsr_id), true), // diff client, safe → allowed
-            make_item(Uuid::now_v7(), Some(hsr_id), false), // diff client, not safe → withheld
+            make_item(Uuid::now_v7(), Some(beta_id), false), // same client → allowed
+            make_item(Uuid::now_v7(), Some(alpha_id), true), // diff client, safe → allowed
+            make_item(Uuid::now_v7(), Some(alpha_id), false), // diff client, not safe → withheld
         ];
 
-        let result = filter_cross_client(items, "runbook", Some(cpa_id), false, &lookup);
+        let result = filter_cross_client(items, "runbook", Some(beta_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 3);
         assert_eq!(result.withheld_notices.len(), 1);
@@ -1065,27 +1065,27 @@ mod tests {
 
     #[test]
     fn filter_incident_cross_client_withheld() {
-        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let (alpha_id, beta_id, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
-        let items = vec![make_item(item_id, Some(hsr_id), false)];
+        let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "incident", Some(cpa_id), false, &lookup);
+        let result = filter_cross_client(items, "incident", Some(beta_id), false, &lookup);
 
         assert!(result.allowed.is_empty());
         assert_eq!(result.withheld_notices.len(), 1);
         assert_eq!(result.withheld_notices[0]["entity_type"], "incident");
-        assert_eq!(result.withheld_notices[0]["owning_client_slug"], "hsr");
+        assert_eq!(result.withheld_notices[0]["owning_client_slug"], "alpha");
         assert_eq!(result.audit_entries.len(), 1);
         assert_eq!(result.audit_entries[0].2, "withheld");
     }
 
     #[test]
     fn filter_incident_cross_client_safe_allowed() {
-        let (hsr_id, cpa_id, lookup) = make_lookup();
+        let (alpha_id, beta_id, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
-        let items = vec![make_item(item_id, Some(hsr_id), true)];
+        let items = vec![make_item(item_id, Some(alpha_id), true)];
 
-        let result = filter_cross_client(items, "incident", Some(cpa_id), false, &lookup);
+        let result = filter_cross_client(items, "incident", Some(beta_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -1095,11 +1095,11 @@ mod tests {
 
     #[test]
     fn filter_incident_same_client_allowed() {
-        let (hsr_id, _, lookup) = make_lookup();
+        let (alpha_id, _, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
-        let items = vec![make_item(item_id, Some(hsr_id), false)];
+        let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "incident", Some(hsr_id), false, &lookup);
+        let result = filter_cross_client(items, "incident", Some(alpha_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -1110,16 +1110,16 @@ mod tests {
 
     #[test]
     fn provenance_with_client() {
-        let (hsr_id, _, lookup) = make_lookup();
+        let (alpha_id, _, lookup) = make_lookup();
         let mut item = serde_json::json!({
             "id": Uuid::now_v7().to_string(),
-            "client_id": hsr_id.to_string(),
+            "client_id": alpha_id.to_string(),
         });
 
         inject_provenance(&mut item, &lookup);
 
-        assert_eq!(item["_client_slug"], "hsr");
-        assert_eq!(item["_client_name"], "Hospice");
+        assert_eq!(item["_client_slug"], "alpha");
+        assert_eq!(item["_client_name"], "Alpha Corp");
     }
 
     #[test]

@@ -18,7 +18,7 @@ SET source = 'seed',
     time_to_resolve_minutes = CASE
         WHEN title ILIKE '%mass account lockout%' THEN 90
         WHEN title ILIKE '%rdp session exhaustion%' THEN 30
-        WHEN title ILIKE '%hvdc01%' OR title ILIKE '%dc outage%' THEN 45
+        WHEN title ILIKE '%dc outage%' THEN 45
         WHEN title ILIKE '%backup%repository%full%' OR title ILIKE '%backup%full%' THEN 120
         ELSE time_to_resolve_minutes
     END,
@@ -27,7 +27,7 @@ SET source = 'seed',
             THEN reported_at + (CASE
                 WHEN title ILIKE '%mass account lockout%' THEN interval '90 minutes'
                 WHEN title ILIKE '%rdp session exhaustion%' THEN interval '30 minutes'
-                WHEN title ILIKE '%hvdc01%' OR title ILIKE '%dc outage%' THEN interval '45 minutes'
+                WHEN title ILIKE '%dc outage%' THEN interval '45 minutes'
                 WHEN title ILIKE '%backup%repository%full%' OR title ILIKE '%backup%full%' THEN interval '120 minutes'
                 ELSE interval '0 minutes'
             END)

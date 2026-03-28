@@ -233,19 +233,19 @@ mod tests {
     fn test_parse_prometheus_metrics() {
         let input = r#"# HELP monitor_status Monitor Status (1 = UP, 0= DOWN, 2= PENDING, 3= MAINTENANCE)
 # TYPE monitor_status gauge
-monitor_status{monitor_name="Nextcloud",monitor_type="http",monitor_url="https://cloud.kensai.cloud",monitor_hostname="",monitor_port=""} 1
-monitor_status{monitor_name="SSH",monitor_type="port",monitor_url="",monitor_hostname="ssh.kensai.cloud",monitor_port="22022"} 1
+monitor_status{monitor_name="Nextcloud",monitor_type="http",monitor_url="https://cloud.example.com",monitor_hostname="",monitor_port=""} 1
+monitor_status{monitor_name="SSH",monitor_type="port",monitor_url="",monitor_hostname="ssh.example.com",monitor_port="22022"} 1
 monitor_status{monitor_name="Caddy",monitor_type="docker",monitor_url="",monitor_hostname="caddy",monitor_port=""} 0
 # HELP monitor_response_time Monitor Response Time (ms)
 # TYPE monitor_response_time gauge
-monitor_response_time{monitor_name="Nextcloud",monitor_type="http",monitor_url="https://cloud.kensai.cloud",monitor_hostname="",monitor_port=""} 145
-monitor_response_time{monitor_name="SSH",monitor_type="port",monitor_url="",monitor_hostname="ssh.kensai.cloud",monitor_port="22022"} 23
+monitor_response_time{monitor_name="Nextcloud",monitor_type="http",monitor_url="https://cloud.example.com",monitor_hostname="",monitor_port=""} 145
+monitor_response_time{monitor_name="SSH",monitor_type="port",monitor_url="",monitor_hostname="ssh.example.com",monitor_port="22022"} 23
 # HELP monitor_cert_days_remaining len(TLS certificate  validity)
 # TYPE monitor_cert_days_remaining gauge
-monitor_cert_days_remaining{monitor_name="Nextcloud",monitor_type="http",monitor_url="https://cloud.kensai.cloud",monitor_hostname="",monitor_port=""} 89
+monitor_cert_days_remaining{monitor_name="Nextcloud",monitor_type="http",monitor_url="https://cloud.example.com",monitor_hostname="",monitor_port=""} 89
 # HELP monitor_cert_is_valid len(TLS certificate valid)
 # TYPE monitor_cert_is_valid gauge
-monitor_cert_is_valid{monitor_name="Nextcloud",monitor_type="http",monitor_url="https://cloud.kensai.cloud",monitor_hostname="",monitor_port=""} 1
+monitor_cert_is_valid{monitor_name="Nextcloud",monitor_type="http",monitor_url="https://cloud.example.com",monitor_hostname="",monitor_port=""} 1
 "#;
 
         let result = parse_prometheus_metrics(input).unwrap();

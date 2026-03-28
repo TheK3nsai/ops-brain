@@ -23,7 +23,7 @@ src/
   models/          # Domain structs (sqlx::FromRow + serde derives)
   repo/            # Database query layer (all runtime query_as, not macros)
   tools/
-    mod.rs           # OpsBrain struct + 71 #[tool] stubs (delegate to category modules)
+    mod.rs           # OpsBrain struct + #[tool] stubs (delegate to category modules)
     helpers.rs       # Shared helpers: json_result, error_result, not_found_with_suggestions, filter_cross_client, compact_*, etc.
     shared.rs        # Shared async functions: embed_and_store, get_query_embedding, build_client_lookup, log_audit_entries
     inventory.rs     # Parameter structs + handler implementations for inventory tools (22 tools)
@@ -41,7 +41,7 @@ src/
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
 migrations/        # 35 sqlx migration files (auto-run on startup)
-seed/seed.sql      # Idempotent seed data with real infrastructure
+seed/seed.sql      # Idempotent seed data (clients, sites, networks)
 ```
 
 ## Architecture Constraints
@@ -107,38 +107,16 @@ sqlx migrate info          # Show migration status
 | `OPS_BRAIN_WATCHDOG_CONFIRM_POLLS` | `3` | Consecutive DOWN polls before creating incident (flap suppression) |
 | `OPS_BRAIN_WATCHDOG_COOLDOWN_SECS` | `1800` | Seconds after resolving before creating new incident for same monitor |
 | `OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD` | `5` | Global chronic flapper threshold (per-monitor overrides via `link_monitor`) |
-| `ZAMMAD_URL` | (none) | Zammad API base URL (e.g. `http://zammad-railsserver:3000`) |
+| `ZAMMAD_URL` | (none) | Zammad API base URL |
 | `ZAMMAD_API_TOKEN` | (none) | Zammad API token for authentication |
+| `ZAMMAD_DEFAULT_OWNER_ID` | (none) | Default Zammad user ID for ticket assignment (omit to leave unassigned) |
 | `RUST_LOG` | `ops_brain=info` | Tracing filter |
 
-## Phase Status
+## Safety Design Principles
 
-- **Phase 1** (local dev): COMPLETE — 26 tools, stdio transport, verified working
-- **Phase 2** (remote deploy): COMPLETE — HTTP transport + auth, deployed to kensai.cloud
-- **Phase 3** (incidents + coordination): COMPLETE — 14 new tools (6 incident, 3 session, 5 handoff), 40 total
-- **Phase 4** (monitoring integration): COMPLETE & DEPLOYED — 5 new tools (list_monitors, get_monitor_status, get_monitoring_summary, link_monitor, unlink_monitor), 45 total. On-demand /metrics scraping from Uptime Kuma. Monitor-to-server/service mapping. Context tools enriched with live monitoring data. All 32 monitors linked. Uptime Kuma admin creds configured in production .env.
-- **Phase 5** (semantic search): COMPLETE & DEPLOYED — pgvector + ollama nomic-embed-text (768 dims). Hybrid RRF search (FTS + vector). Existing search tools enhanced with `mode` param (fts/semantic/hybrid). Context tools enriched with semantically related runbooks/knowledge. Auto-embed on create/update, backfill tool for existing data. All seed data backfilled (local + remote). Note: `semantic_search` was merged into `search_knowledge` in Phase 10.
-- **Phase 6** (proactive monitoring): COMPLETE & DEPLOYED — Background watchdog task polls Uptime Kuma on configurable interval, detects UP→DOWN/DOWN→UP transitions, auto-creates incidents with linked servers/services/runbooks, auto-resolves on recovery with TTR. Severity auto-determined from server roles. State recovery on restart (finds open watchdog incidents). New tool: `list_watchdog_incidents`. Env: `OPS_BRAIN_WATCHDOG_ENABLED=true`, `OPS_BRAIN_WATCHDOG_INTERVAL=60`.
-- **Phase 7** (Zammad integration): COMPLETE — 8 new tools (list_tickets, get_ticket, create_ticket, update_ticket, add_ticket_note, search_tickets, link_ticket, unlink_ticket), 56 total. Live Zammad REST API queries via Token auth. Client mapping (zammad_org_id/group_id/customer_id on clients table). ticket_links table for linking tickets to incidents/servers/services. Context tools enriched with ticket data (get_client_overview shows recent tickets, get_situational_awareness and get_server_context show linked tickets). Env: `ZAMMAD_URL`, `ZAMMAD_API_TOKEN`.
-- **Phase 8** (scheduled briefings): COMPLETE & DEPLOYED — 3 new tools (generate_briefing, list_briefings, get_briefing), 59 total. REST API at `POST /api/briefing` (shared logic in `src/api.rs`). Aggregates monitoring health, open incidents (by severity), watchdog alerts, pending handoffs, and Zammad ticket activity into structured markdown summaries. Daily and weekly types. Weekly includes resolved incident stats (count, avg TTR) and watchdog auto-resolved count. Briefings stored in `briefings` table for historical review. Scheduled triggers deliver via Gmail: daily at 6 AM PR, weekly Monday 6 AM PR.
-- **Phase 9** (client-scope safety): COMPLETE — `cross_client_safe` + `client_id` on runbooks/knowledge/incidents, `acknowledge_cross_client` gate on search/context tools, `audit_log` table, provenance injection, watchdog client-scoping, `compact` mode + `sections` filtering for context tools. 68 tools (59 base + update_knowledge + delete_knowledge + delete_server + delete_service + delete_vendor + list_vendors + list_clients + list_sites + list_networks).
-- **Phase 10** (CC-HSR assessment response): COMPLETE — Merged `semantic_search` into `search_knowledge` (add `tables` param for multi-table search). 4 new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail). New migration: `runbook_executions` table. 71 tools total.
-- **Phase 10.1** (CC-HSR assessment fixes): COMPLETE — `get_catchup` compact mode (default true, ~3KB vs 61-97KB), excludes completed handoffs. `client_slug` on `runbook_executions` for HIPAA audit trails. Fixed 4 stale runbook slugs (veeam-backup-failure→backup-infrastructure, etc.). 30 migrations, 71 tools.
-- **Phase 11** (noise reduction + signal quality): COMPLETE — Addresses CC-HSR Phase 10.1 assessment. **P1 Incident dedup**: watchdog checks for recently resolved incidents (24h) before creating new ones — reopens with `recurrence_count` instead of duplicating (93% noise ratio → near zero). **P1 search_knowledge compact**: `compact` param (default true for multi-table) returns title/category/tags/snippet instead of full bodies (67KB → ~5KB). **P2 Client-level SA aggregation**: `get_situational_awareness` with `client_slug` now traverses client → sites → servers → services/networks (was returning empty). **P2 Historical incident TTR**: seed incidents get realistic TTR values + `source` field ('watchdog'/'manual'/'seed') for analytics filtering. **P2 check_health UX**: unlinked servers get helpful message with client name and guidance. New migration adds `source` + `recurrence_count` to incidents table. 31 migrations, 71 tools.
-- **Phase 12** (watchdog intelligence + vendor UX): COMPLETE — **Severity override**: `severity_override` column on monitors table — when set via `link_monitor`, watchdog uses it instead of role-based logic (e.g. EHR monitor → critical regardless of server role). **Vendor-client linkage**: `upsert_vendor` now accepts `client_slug` param to auto-link vendors to clients via `vendor_clients` junction table. **SA section filter fix**: vendors and knowledge now respect `sections` parameter in `get_situational_awareness`. **SMB source fix**: migration patches `source=NULL` on remaining seed incident. 32 migrations, 71 tools.
-- **Phase 13** (API UX fixes — CC-CPA field feedback): COMPLETE — Addresses 5 friction points from CC-CPA's first field assessment. **(1) search_knowledge browse mode**: empty/"*" query returns recent entries across requested tables (no search filter needed). **(2) list_tickets client_slug optional**: omit to list tickets across all clients. **(3) list_handoffs compact mode**: body truncated to 200 chars by default (was returning 97KB+). **(4) SA machine-scoped handoffs**: new `machine` param on `get_situational_awareness` filters pending handoffs to requesting machine. **(5) hybrid search default**: all `search_knowledge` queries now default to hybrid mode (was FTS-only for single-table). 32 migrations, 71 tools.
-- **Phase 13.1** (chronic flapper suppression): COMPLETE — Automatic severity degradation for monitors that repeatedly flap. **Degradation curve**: when an incident's `recurrence_count` reaches the flap threshold (default 5), severity auto-downgrades to "low"; at 2x threshold (10), the incident is auto-resolved immediately with a suppression note. **Per-monitor config**: `link_monitor` accepts `flap_threshold` param to override the global default. **Global config**: `OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD` env var (default 5). **Reset**: natural — if monitor stays UP for 24h+, the dedup window expires and the next DOWN creates a fresh incident at normal severity. New migration: `flap_threshold` column on monitors table. 33 migrations, 71 tools.
-- **Phase 14** (CC team field validation fixes): COMPLETE — Addresses findings from CC-Cloud, CC-HSR, and CC-CPA validation handoffs. **(1) list_tickets parse bug fix**: Zammad returns different response shapes for filtered (array) vs unfiltered (object envelope with `assets.Ticket` map) queries — `search_tickets` now handles both transparently via `parse_ticket_search_response()`. 4 new unit tests. **(2) Hybrid search relevance improvement**: Widened RRF candidate pool from 20 to 50 per ranking method (FTS + vector) across all 4 hybrid search functions (runbooks, knowledge, incidents, handoffs). Semantic-only matches no longer get excluded when FTS doesn't find them in a tight top-20 window. **(3) Multi-instance Uptime Kuma design documented**: Full architecture design (~20h implementation) stored as knowledge entry for future sessions — covers DB schema, watchdog changes, tool updates, backward compat strategy. **(4) Deploy automation documented**: CC-Cloud session startup check (immediate) + GitHub Actions CD (future) stored as knowledge entry. **(5) MCP server instructions condensed** (PR #14): Reduced from ~2KB to ~1KB to prevent Claude Code client-side truncation — CCs were missing HANDOFF ROUTING and ALWAYS directives. Added explicit "AFTER CODE MERGES" directive for deploy handoffs. Fixed deploy routing (→ kensai-cloud, not stealth). **(6) CC Team knowledge entries updated**: Identity & Naming doc now has Code-to-Production Workflow (6-step cycle) with deploy routing to CC-Cloud and validation fan-out. Contribution Standards now applies "never push to main" universally (including CC-Stealth) with Post-Merge Checklist. 33 migrations, 71 tools.
-
-- **Phase 14.1** (search relevance tuning): COMPLETE — **(1) websearch_to_tsquery**: Replaced `plainto_tsquery` in all 40 FTS call sites across `embedding_repo.rs`, `knowledge_repo.rs`, and `search_repo.rs` — supports quoted phrases, `or` keyword, `-exclusion` while keeping AND default. **(2) OR fallback**: When AND-based FTS returns zero results and query has 2+ words, retries with OR-joined terms via `to_tsquery`. Applied to all FTS-only paths (4 hybrid None branches + standalone search_knowledge + search_runbooks). Helper `build_or_tsquery_text()` in `repo/mod.rs` with 6 unit tests. **(3) Title boosting in embeddings**: Title repeated in all 4 `prepare_*_text()` functions in `embeddings.rs` — vector search gives stronger weight to title-matching queries. Requires `backfill_embeddings` post-deploy. PR #16 (Zammad time_unit fix) and PR #17 (search relevance). 33 migrations, 71 tools.
-
-- **Phase 14.2** (backlog improvements): COMPLETE — Four features across 3 PRs (#18, #19, #20). **(1) Embedding truncation** (PR #18): `truncate_for_embedding()` caps all `prepare_*_text()` at 24K chars (~6K tokens) — fixes 5 handoffs that exceeded nomic-embed-text's 8192-token context window. UTF-8 char-boundary safe. 4 new unit tests. **(2) Runbook staleness tracking** (PR #19): `last_verified_at` column on runbooks, auto-set when `log_runbook_execution` records a success. `get_catchup` surfaces stale runbooks (>30 days unverified or never verified). **(3) Duplicate knowledge detection** (PR #19): `add_knowledge` computes cosine similarity against existing entries before inserting. If similarity >85%, returns warning with matches. `force=true` bypasses. **(4) Global compact preference** (PR #19): `preferences` table (scope+key+JSONB) + `set_preference` tool (72nd). All 6 compact-accepting tools use `resolve_compact()` helper — explicit params override preference. **(5) Runbook-incident bi-directional linkage** (PR #20): Optional `incident_id` param on `log_runbook_execution`. `list_executions_for_incident()` repo function for reverse lookups. 35 migrations, 72 tools.
-
-## Safety Design Principles (Phase 9 — Implemented)
-
-These principles govern how ops-brain handles multi-client data. The system serves a solo operator
-managing two clients (HSR hospice + CPA firm) with different compliance domains (HIPAA vs IRS/tax).
-Since there is no second pair of eyes, the system itself must act as the safety gate.
+These principles govern how ops-brain handles multi-client data. The system is designed for a solo
+operator managing multiple clients with different compliance domains (e.g. HIPAA healthcare vs tax/accounting).
+Since there is no second pair of eyes, the system itself acts as the safety gate.
 
 1. **Default-deny cross-client surfacing**: `cross_client_safe` boolean (default: false) on runbooks, knowledge, and incidents tables. Content scoped to client A does NOT surface in client B context unless explicitly marked safe. The entries you forget to tag are the ones with compliance implications.
 
@@ -175,110 +153,6 @@ Since there is no second pair of eyes, the system itself must act as the safety 
 - `delete_knowledge` — deletes by ID (no cross-client gate needed, operates on explicit ID)
 - Watchdog: runbook suggestions client-scoped (same-client + global only)
 
-## Deployment (kensai.cloud)
-
-- **URL**: `https://ops.kensai.cloud/mcp`
-- **Stack**: Docker on kensai.cloud behind Caddy + Cloudflare Tunnel
-- **Database**: shared-postgres (same as Zammad, Nextcloud)
-- **Compose**: `docker-compose.prod.yml` — uses `traefik-net` + `shared-db` networks
-- **Auth**: Bearer token in `OPS_BRAIN_AUTH_TOKEN` env var
-- **Health**: `GET /health` (unauthenticated, used by Docker healthcheck)
-
-### Multi-Instance Claude Code Configuration
-
-All Claude Code instances connect to the single remote deployment. The remote database on kensai.cloud
-is the **single source of truth** — there is no local database for production use. Cross-client safety
-is enforced by the tools (via resolved client context), not by which machine you're on.
-
-- **All machines** (stealth, HSR infra, CPA infra, kensai.cloud): http transport to `https://ops.kensai.cloud/mcp`
-- **Development only**: local stdio transport with local PostgreSQL for testing new code before deploying
-
-Config for all machines (in `~/.claude.json`):
-```json
-{
-  "mcpServers": {
-    "ops-brain": {
-      "type": "http",
-      "url": "https://ops.kensai.cloud/mcp",
-      "headers": {
-        "Authorization": "Bearer <OPS_BRAIN_AUTH_TOKEN>"
-      }
-    }
-  }
-}
-```
-
-## REST API (Phase 8)
-
-- **Endpoint**: `POST /api/briefing`
-- **Auth**: Same bearer token as MCP (`Authorization: Bearer <token>`)
-- **Body**: `{"type": "daily"|"weekly", "client_slug": null|"hsr"|"cpa"}`
-- **Response**: JSON with structured briefing data + markdown content + briefing_id
-- **Purpose**: Enables external consumers (scheduled triggers, cron, webhooks) without MCP protocol
-- **Implementation**: `src/api.rs` — shared `generate_briefing_inner()` function used by both the MCP tool and REST handler
-
-## Scheduled Triggers (Phase 8)
-
-- **Daily**: `trig_017czYNWPXbfvek8kPagR3KT` — 6 AM PR (10:00 UTC) every day
-- **Weekly**: `trig_01NA793waWBaxuB7LFiB8YNP` — 6 AM PR (10:00 UTC) every Monday
-- **Delivery**: Sonnet agent curls `/api/briefing`, emails result via Gmail MCP to k3nsai@gmail.com
-- **Manage**: https://claude.ai/code/scheduled
-
-## Monitoring (Uptime Kuma)
-
-- **URL**: `https://uptime.kensai.cloud` (v2.2.1)
-- **32 monitors**: 8 push (ops scripts), 6 HTTP (web services), 1 TCP (SSH), 17 Docker containers
-- **Push integration**: Ops scripts in `~/ops/` push heartbeats via cron; URLs in `~/ops/conf/.env`
-- **Admin creds**: `~/docker/uptime-kuma/.env` on kensai.cloud
-- **v2 API quirks**:
-  - socket.io only — no REST except `/api/push/:token` and `/metrics` (Prometheus)
-  - Two-phase setup: `POST /setup-database` first, then socket.io for everything else
-  - `add` event (not `addMonitor`), requires `conditions` field (can be `[]`) and `notificationIDList` (can be `[]`)
-  - Push tokens are client-generated, not auto-assigned
-- **Integration**: ops-brain scrapes `/metrics` on demand (no polling). Monitor mappings stored in `monitors` table. `/metrics` requires basic auth (admin creds).
-- **Internal URL**: `http://uptime-kuma:3001` (on `traefik-net` Docker network)
-- **Tools**: `list_monitors`, `get_monitor_status`, `get_monitoring_summary`, `link_monitor`, `unlink_monitor`
-- **Context enrichment**: `get_situational_awareness` and `get_server_context` include live monitoring for linked monitors
-
-## Watchdog (Phase 6)
-
-- **Module**: `src/watchdog.rs` — background tokio task, no new dependencies
-- **Enable**: `OPS_BRAIN_WATCHDOG_ENABLED=true` + `UPTIME_KUMA_URL` must be set
-- **Interval**: `OPS_BRAIN_WATCHDOG_INTERVAL=60` (seconds, default 60)
-- **Behavior**:
-  - Polls Uptime Kuma `/metrics` every interval
-  - Tracks monitor states in memory (HashMap)
-  - Detects UP→DOWN: auto-creates incident `[AUTO] Monitor DOWN: {name}` with severity from server roles, symptoms from monitor data, linked server/service from monitor mappings, suggested runbooks via semantic search
-  - Detects DOWN→UP: auto-resolves the incident with TTR
-  - On startup, recovers state from open `[AUTO]` incidents (survives restarts)
-  - Graceful: if Kuma unreachable or embedding API down, logs error and continues
-- **Noise reduction** (three mechanisms):
-  - **Grace period** (`CONFIRM_POLLS`, default 3): Monitor must be DOWN for N consecutive polls before an incident is created. With 60s interval, that's ~3 minutes. Handles push-monitor heartbeat jitter and transient blips.
-  - **Cooldown** (`COOLDOWN_SECS`, default 1800): After auto-resolving an incident, no new incident for the same monitor for 30 minutes. Handles DOWN→UP→DOWN flapping.
-  - **Deduplication** (Phase 11): Before creating a new incident, checks for a recently resolved incident (24h) with the same title. If found, reopens it and increments `recurrence_count` instead of creating a duplicate. Eliminates recurring heartbeat noise (e.g. push monitors cycling every 5-6h).
-  - Set `CONFIRM_POLLS=1` and `COOLDOWN_SECS=0` to disable flap suppression (original behavior). Deduplication is always active.
-- **Severity logic**: monitor `severity_override` (if set via `link_monitor`) → server roles (domain-controller/dns/dhcp → critical; file-server/rds/database/backup → high) → default "medium"
-- **Tool**: `list_watchdog_incidents` — query auto-created incidents by status
-
-## Zammad Integration (Phase 7)
-
-- **Module**: `src/zammad.rs` — HTTP client for Zammad REST API
-- **Enable**: Set `ZAMMAD_URL` and `ZAMMAD_API_TOKEN`
-- **Auth**: `Token token={api_token}` header (NOT Bearer)
-- **Always uses `?expand=true`** for human-readable responses (state/priority/owner as names, not IDs)
-- **Client mapping**: `clients` table has `zammad_org_id`, `zammad_group_id`, `zammad_customer_id` columns
-- **Ticket links**: `ticket_links` table maps Zammad ticket IDs to ops-brain incidents/servers/services
-- **State IDs**: new=1, open=2, pending_reminder=3, closed=4
-- **Priority IDs**: low=1, normal=2, high=3
-- **Owner (Eduardo)**: user_id=3
-- **Clients**: HSR (org=2, group=2, customer=5), CPA (org=3, group=4, customer=6)
-- **Time accounting types**: 1=Maintenance, 2=On-site, 3=Remote, 4=On-site/Remote
-- **Tags**: soporte-usuario, infraestructura, instalacion, therefore, visitlink, office-365, redes, impresora, backup, monitoreo, configuracion, conectividad
-- **Tools**: `list_tickets`, `get_ticket`, `create_ticket`, `update_ticket`, `add_ticket_note`, `search_tickets`, `link_ticket`, `unlink_ticket`
-- **Context enrichment**: `get_client_overview` shows recent tickets, `get_situational_awareness` and `get_server_context` show linked tickets
-- **Internal URL** (Docker): `http://zammad-railsserver:3000` via `shared-db` network
-- **Public URL**: `https://tickets.kensai.cloud`
-
 ## Key Tool: get_situational_awareness
 
 The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug` and returns a comprehensive briefing: entity details, related entities, services, networks, recent incidents, relevant runbooks, vendor contacts, pending handoffs, knowledge entries, live monitoring status (if Uptime Kuma configured), semantically related content (if embeddings configured), and linked Zammad tickets (if Zammad configured). Cross-client runbooks, knowledge, and incidents are auto-gated. Use `compact=true` to reduce response size (~94K→~10K) by stripping content/body fields. Use `sections` to limit which parts are returned (e.g. `["server","services","monitoring"]`).
@@ -294,11 +168,52 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Auto-embed**: create/update tools generate embeddings best-effort (graceful on failure)
 - **Backfill**: `backfill_embeddings` tool for existing data without embeddings. **Must run after title-boost change** to regenerate vectors.
 - **Graceful degradation**: If embedding API unreachable, all FTS works unchanged. `search_knowledge` with hybrid mode falls back to FTS-only (with OR relaxation).
-- **`semantic_search` merged into `search_knowledge`** (Phase 10): Use `tables` param to search across multiple tables. Default is `["knowledge"]`; set `tables=["knowledge","runbooks","incidents","handoffs"]` for cross-table search. Mode defaults to `"hybrid"` for multi-table.
+- **`semantic_search` merged into `search_knowledge`**: Use `tables` param to search across multiple tables. Default is `["knowledge"]`; set `tables=["knowledge","runbooks","incidents","handoffs"]` for cross-table search. Mode defaults to `"hybrid"` for multi-table.
 - **Context enrichment**: `get_situational_awareness` and `get_server_context` use vector search to find related runbooks/knowledge beyond explicit links
 - **pgvector crate**: `pgvector 0.4` with `sqlx` feature for `Vector` type
-- **Local**: ollama service on stealth (RTX 3070, GPU-accelerated)
-- **Remote**: ollama container on kensai.cloud (CPU-only, same Docker network as ops-brain)
+
+## Watchdog
+
+- **Module**: `src/watchdog.rs` — background tokio task, no new dependencies
+- **Enable**: `OPS_BRAIN_WATCHDOG_ENABLED=true` + `UPTIME_KUMA_URL` must be set
+- **Interval**: `OPS_BRAIN_WATCHDOG_INTERVAL=60` (seconds, default 60)
+- **Behavior**:
+  - Polls Uptime Kuma `/metrics` every interval
+  - Tracks monitor states in memory (HashMap)
+  - Detects UP→DOWN: auto-creates incident `[AUTO] Monitor DOWN: {name}` with severity from server roles, symptoms from monitor data, linked server/service from monitor mappings, suggested runbooks via semantic search
+  - Detects DOWN→UP: auto-resolves the incident with TTR
+  - On startup, recovers state from open `[AUTO]` incidents (survives restarts)
+  - Graceful: if Kuma unreachable or embedding API down, logs error and continues
+- **Noise reduction** (three mechanisms):
+  - **Grace period** (`CONFIRM_POLLS`, default 3): Monitor must be DOWN for N consecutive polls before an incident is created. With 60s interval, that's ~3 minutes. Handles push-monitor heartbeat jitter and transient blips.
+  - **Cooldown** (`COOLDOWN_SECS`, default 1800): After auto-resolving an incident, no new incident for the same monitor for 30 minutes. Handles DOWN→UP→DOWN flapping.
+  - **Deduplication**: Before creating a new incident, checks for a recently resolved incident (24h) with the same title. If found, reopens it and increments `recurrence_count` instead of creating a duplicate. Eliminates recurring heartbeat noise.
+  - Set `CONFIRM_POLLS=1` and `COOLDOWN_SECS=0` to disable flap suppression (original behavior). Deduplication is always active.
+- **Severity logic**: monitor `severity_override` (if set via `link_monitor`) → server roles (domain-controller/dns/dhcp → critical; file-server/rds/database/backup → high) → default "medium"
+- **Tool**: `list_watchdog_incidents` — query auto-created incidents by status
+
+## Zammad Integration
+
+- **Module**: `src/zammad.rs` — HTTP client for Zammad REST API
+- **Enable**: Set `ZAMMAD_URL` and `ZAMMAD_API_TOKEN`
+- **Auth**: `Token token={api_token}` header (NOT Bearer)
+- **Always uses `?expand=true`** for human-readable responses (state/priority/owner as names, not IDs)
+- **Client mapping**: `clients` table has `zammad_org_id`, `zammad_group_id`, `zammad_customer_id` columns
+- **Ticket links**: `ticket_links` table maps Zammad ticket IDs to ops-brain incidents/servers/services
+- **State IDs**: new=1, open=2, pending_reminder=3, closed=4
+- **Priority IDs**: low=1, normal=2, high=3
+- **Default owner**: configurable via `ZAMMAD_DEFAULT_OWNER_ID` env var (omit to leave unassigned)
+- **Tools**: `list_tickets`, `get_ticket`, `create_ticket`, `update_ticket`, `add_ticket_note`, `search_tickets`, `link_ticket`, `unlink_ticket`
+- **Context enrichment**: `get_client_overview` shows recent tickets, `get_situational_awareness` and `get_server_context` show linked tickets
+
+## REST API
+
+- **Endpoint**: `POST /api/briefing`
+- **Auth**: Same bearer token as MCP (`Authorization: Bearer <token>`)
+- **Body**: `{"type": "daily"|"weekly", "client_slug": null|"<slug>"}`
+- **Response**: JSON with structured briefing data + markdown content + briefing_id
+- **Purpose**: Enables external consumers (scheduled triggers, cron, webhooks) without MCP protocol
+- **Implementation**: `src/api.rs` — shared `generate_briefing_inner()` function used by both the MCP tool and REST handler
 
 ## Gotchas
 
@@ -307,80 +222,11 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **"connection closed: initialize request"** on manual `./target/release/ops-brain` run is normal — means no MCP client is connected via stdio, not an actual error
 - **Migration count**: update the comment in this file's Project Layout section when adding new migrations
 - **upsert_server replaces ALL fields** — it's not a partial update. Must pass every field or they get nulled. Always read the current server data before upserting.
-- **seed.sql is foundational only** — clients, sites, networks. All other data comes from live CC sessions. Never add fictional/placeholder data to seed.sql.
-- **SSH to kensai.cloud**: use `ssh kensai.cloud` (Host alias), NOT `ssh ssh.kensai.cloud -p 22022`. The alias picks up the correct key, port, and user from `~/.ssh/config`.
-- **Deploy workflow**: git repo is at `~/ops-brain/` but Docker build context is `~/docker/ops-brain/`. After `git pull` in `~/ops-brain/`, sync to build context with: `rsync -a --exclude=target --exclude=.git --exclude=.env ~/ops-brain/ ~/docker/ops-brain/` (note: **exclude `.env`** to avoid nuking secrets). Then `docker compose -f docker-compose.prod.yml up -d --build` in `~/docker/ops-brain/`.
-- **mold linker is local only** — `.cargo/config.toml` uses mold for fast local builds. The Docker build uses its own linker (musl/gcc inside the container). CCs on other machines without mold can ignore this file — Cargo falls back to the default linker if mold isn't installed.
+- **seed.sql is foundational only** — clients, sites, networks. All other data comes from MCP tool sessions. Never add fictional/placeholder data to seed.sql.
+- **mold linker is local only** — `.cargo/config.toml` uses mold for fast local builds. The Docker build uses its own linker (musl/gcc inside the container). Cargo falls back to the default linker if mold isn't installed.
 - **sqlx-cli requires `DATABASE_URL`** — set it in `.env` or export it before running `sqlx migrate` commands. Same connection string the app uses.
 - **cargo-audit 0.22 has no config file support** — ignores must be passed via `--ignore RUSTSEC-XXXX` CLI flags. The `audit.toml` in the repo root is documentation only. The actual ignore is in `.github/workflows/ci.yml`.
 - **upsert_vendor creates duplicates** — it always INSERTs (no ON CONFLICT). To update an existing vendor, use `upsert_vendor` with `id` parameter, which routes to `update_vendor_by_id` (COALESCE partial update). Without `id`, a new row is created every time.
-
-## Next Steps
-
-### Code — Completed Improvements
-- **`delete_server`**: DONE — accepts slug, shows preview of linked entities, requires confirm=true. Soft delete (status='deleted').
-- **`delete_service`**: DONE — same pattern as delete_server. Soft delete.
-- **`delete_vendor`**: DONE — accepts name (case-insensitive) or ID (UUID), same preview+confirm pattern. Soft delete.
-- **Fuzzy slug suggestions (P2)**: DONE — pg_trgm extension, GIN trigram indexes, `not_found_with_suggestions()` async helper. 43 slug lookup sites updated. `suggest_repo.rs` handles generic similarity queries.
-- **UNION incident queries (P5)**: DONE — `get_related_incidents()` replaces 2-3 separate queries + app-level dedup with single UNION ALL + DISTINCT ON query. Used in `get_situational_awareness` and `get_server_context`.
-- **_warnings array (P6)**: DONE — Context tools (`get_situational_awareness`, `get_client_overview`, `get_server_context`) surface transient sub-query failures in `_warnings` array instead of silently returning empty data. Covers vendors, knowledge, incidents, handoffs, Kuma, Zammad.
-- **Consistent result limits (P7)**: DONE — All list/search tools accept `limit` parameter. List defaults: 50, search defaults: 20. No hard-coded limits remain.
-- **Soft deletes (P8)**: DONE — `delete_server`/`delete_service`/`delete_vendor` set `status='deleted'` instead of hard DELETE. FK references preserved. Migration adds `status` column to services and vendors tables. All list/search/lookup queries exclude deleted records.
-- **ID-based vendor ops (P9)**: DONE — `get_vendor`, `delete_vendor`, `upsert_vendor` accept optional `id` (UUID) parameter. When provided, targets a specific vendor by ID instead of name-based lookup. Fixes duplicate-name disambiguation.
-- **Flexible limit params (P10)**: DONE — All `limit` (and `batch_size`) parameters accept both `50` (number) and `"50"` (string) via custom serde deserializer. Fixes MCP client serialization mismatches.
-- **List tools completeness (P11)**: DONE — Added `list_vendors`, `list_clients`, `list_sites`, `list_networks`. All entity types now have list tools.
-- **search_inventory expansion (P12)**: DONE — Added vendors, clients, sites, networks to FTS search_inventory. Migration adds `search_vector` columns + GIN indexes to all four tables.
-
-### Data Quality
-- **Vendor deduplication**: DONE (2026-03-26) — 19→12 vendors, deduplicated via direct SQL by CC-Cloud.
-- **CPA network missing**: 192.168.0.0/24 not in networks table (HSR and Eduardo home are there).
-- **Embedding backfill**: Knowledge and incidents pushed from local to remote don't have embeddings yet. Run `backfill_embeddings` from a remote CC instance. Also: 5 handoffs failed due to overlength text (now fixed by truncation in Phase 14.2) — backfill will pick them up.
-- **Historical incidents**: 5 incidents still reference fictional hostnames (HVDC01, HVRDS01, HVFS01) in their text. Low priority — they're marked resolved/historical.
-
-### Future Improvements (from CC-HSR Phase 10/11 Assessment)
-
-#### Completed in Phase 11
-- ~~**`search_knowledge` compact mode**~~: DONE — `compact` param (default true for multi-table) returns title/category/tags/snippet.
-- ~~**Incident noise/deduplication**~~: DONE — watchdog reopens recent incidents instead of duplicating. `source` + `recurrence_count` fields.
-- ~~**Client-level SA aggregation**~~: DONE — `get_situational_awareness` with `client_slug` now traverses servers → services/networks.
-- ~~**Historical incident TTR**~~: DONE — seed incidents get realistic TTR + `source` field for analytics.
-- ~~**check_health UX**~~: DONE — helpful message for unlinked servers.
-
-#### P3 — Signal Quality (next priority)
-- ~~**Incident severity auto-classification**~~: DONE (Phase 12) — `severity_override` on monitors table, set via `link_monitor`. Watchdog checks override first, then falls back to role-based logic. Future enhancement: auto-classify based on monitor type (HTTP > push), time of day, or service criticality tags.
-- ~~**Duplicate knowledge detection**~~: DONE (Phase 14.2) — `add_knowledge` cosine-checks against existing entries (>85% similarity warns, `force=true` bypasses).
-- ~~**Runbook staleness tracking**~~: DONE (Phase 14.2) — `last_verified_at` column, auto-set on successful execution, `get_catchup` warns about stale runbooks (>30 days).
-- ~~**Runbook-incident bi-directional linkage**~~: DONE (Phase 14.2) — `incident_id` param on `log_runbook_execution`, `list_executions_for_incident()` for reverse lookups.
-
-#### P4 — Aspirational
-- ~~**Global compact preference**~~: DONE (Phase 14.2) — `preferences` table + `set_preference` tool. `resolve_compact()` helper checks preference when explicit param not set.
-- ~~**Watchdog chronic flapper suppression**~~: DONE (Phase 13.1) — severity degradation at threshold, auto-resolve at 2x.
-- **Dashboard UI**: Web dashboard for Eduardo to view ops-brain data without opening a Claude session. Agreed #1 priority across all CCs.
-- **Multi-instance Uptime Kuma**: ops-brain currently only connects to kensai.cloud's Uptime Kuma. HSR runs a separate instance at status.ihmpr.com with ~18 monitors. `check_health` and `get_monitoring_summary` are blind to HSR infrastructure. Options: multi-instance config, federation, or manual monitor linking.
-- **Handoff count in MCP preamble**: Show pending handoff count in the server instructions so CCs notice them without calling `list_handoffs`.
-- **Tool groups / dynamic loading**: Profile-based tool registration to reduce context window overhead (~12.4K tokens currently). rmcp architectural change.
-- **Auto-deploy on merge**: GitHub Actions workflow to auto-deploy to kensai.cloud when main is updated.
-- **Branch protection**: Require PR + CI pass before merging to main.
-
-### Open-Source Release (v1.0)
-See **RELEASE.md** for the full checklist. Key blockers:
-- **Client data scrub**: seed.sql rewrite, CLAUDE.md split, source code scrub (~8 locations), README scrub
-- **Git history clean squash**: old seed data in history has real infrastructure details
-- **SECURITY.md + LICENSE**: required for public release
-- **Docker-compose for new users**: must work out of the box
-
-### Post-v1.0 Backlog
-- **Client-scope gate tests**: integration tests for all 5 gate conditions
-- **Watchdog logic tests**: flap suppression, severity degradation, dedup/reopen
-- **ARCHITECTURE.md**: domain model, data flow, safety gate rationale
-- **Self-ops runbook**: backup, restore, migration rollback for ops-brain itself
-- **Backup/DR automation**: automated PostgreSQL backups with tested restores
-- **Claude.ai read-only integration**: strategic analysis layer with scoped read access
-
-### Infrastructure Audits (On-Site / SSH)
-- **Backup audit**: Verify what backup solution is actually running at HSR (Veeam? WSB? Synology Active Backup?) and CPA. The "Backup Infrastructure" runbook has action items.
-- **ESXi hardware specs**: ESXi-1 and ESXi-2 are in inventory but hardware/CPU/RAM/storage are unknown. Need ESXi web client or SSH access to fill in.
-- **Server 2016 EOL**: SR-SERVER and HSR-SERVER run Server 2016 (extended support ends Oct 2026). Migration planning needed.
 
 ## CI Pipeline
 
@@ -394,9 +240,7 @@ GitHub Actions runs on every push to `main` and every PR. Two jobs:
 
 CI must pass before merging. If clippy or tests fail, fix locally with `just check` before pushing.
 
-## Contributing (For All CC Instances)
-
-This section is for any Claude Code instance that wants to contribute code to ops-brain. Whether you're running on HV-FS0, kensai-cloud, stealth, or CPA-SRV — follow these rules so we can all act as one.
+## Contributing
 
 ### Branch Naming
 
@@ -514,7 +358,7 @@ async fn test_delete_thing() {
 
 **8. Update counts**
 
-- Update tool count in `CLAUDE.md` (Quick Reference, Phase Status, Project Layout comment)
+- Update tool count in `CLAUDE.md` (Quick Reference, Project Layout comment)
 - Update tool count in `README.md`
 
 ### PR Checklist

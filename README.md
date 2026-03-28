@@ -8,7 +8,7 @@ ops-brain is an [MCP](https://modelcontextprotocol.io/) server that models IT in
 
 **One tool call:**
 ```
-get_situational_awareness(server_slug: "hvfs0")
+get_situational_awareness(server_slug: "web-server-01")
 ```
 **Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
@@ -135,16 +135,16 @@ In addition to MCP tools, ops-brain exposes a REST API for external consumers (s
 
 ```sh
 # Example: generate a daily briefing
-curl -s -X POST https://ops.kensai.cloud/api/briefing \
+curl -s -X POST https://ops.example.com/api/briefing \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"type": "daily"}'
 
 # Scoped to a specific client
-curl -s -X POST https://ops.kensai.cloud/api/briefing \
+curl -s -X POST https://ops.example.com/api/briefing \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"type": "weekly", "client_slug": "hsr"}'
+  -d '{"type": "weekly", "client_slug": "acme-health"}'
 ```
 
 ## Tech Stack
@@ -178,7 +178,7 @@ curl -s -X POST https://ops.kensai.cloud/api/briefing \
 
 ```sh
 # Clone
-git clone https://github.com/TheK3nsai/ops-brain.git
+git clone https://github.com/yourusername/ops-brain.git
 cd ops-brain
 
 # Set up database
@@ -345,10 +345,10 @@ ops-brain serves a solo operator managing two clients with different compliance 
 - [x] **Phase 8**: Scheduled briefings — daily/weekly operational summaries aggregating monitoring, incidents, handoffs, and tickets with historical storage, REST API, Gmail delivery via scheduled triggers — 59 tools (before Phase 9 additions)
 
 - [x] **Phase 9**: Client-scope safety — default-deny cross-client content surfacing (`cross_client_safe` flag on runbooks/knowledge/incidents), withhold-by-default gate pattern (`acknowledge_cross_client` parameter), provenance attribution (`_client_slug`/`_client_name` in results), audit trail (`audit_log` table), watchdog client-scoped runbook suggestions, `compact` mode + `sections` filtering for context tools — 68 tools (incl. list_vendors, list_clients, list_sites, list_networks)
-- [x] **Phase 10**: CC-HSR assessment response — merged `semantic_search` into `search_knowledge` (multi-table via `tables` param), new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail), `runbook_executions` migration — 71 tools
+- [x] **Phase 10**: Field assessment response — merged `semantic_search` into `search_knowledge` (multi-table via `tables` param), new tools: `get_catchup` (changes since timestamp), `check_health` (quick server health ping), `log_runbook_execution` + `list_runbook_executions` (compliance audit trail), `runbook_executions` migration — 71 tools
 - [x] **Phase 11**: Noise reduction + signal quality — watchdog incident deduplication (reopens recent incidents instead of duplicating, `recurrence_count` tracking), `search_knowledge` compact mode (67KB→~5KB for multi-table), client-level SA aggregation (services/networks/vendors via server traversal), `source` field on incidents (`watchdog`/`manual`/`seed`), historical incident TTR fix, `check_health` UX improvements — 71 tools, 31 migrations
 - [x] **Phase 12**: Watchdog intelligence + vendor UX — `severity_override` on monitors (set via `link_monitor`, watchdog checks before role-based fallback), `upsert_vendor` accepts `client_slug` for auto-linking vendors to clients, SA section filter fix (vendors/knowledge respect `sections` param), seed incident source fix — 71 tools, 32 migrations
-- [x] **Phase 13**: API UX fixes (CC-CPA field feedback) — `search_knowledge` browse mode (empty/"*" query returns recent entries), `list_tickets` `client_slug` optional, `list_handoffs` compact mode (default: truncate body to 200 chars), `get_situational_awareness` `machine` param (scopes pending handoffs to requesting CC), hybrid search default for all queries — 71 tools, 32 migrations
+- [x] **Phase 13**: API UX fixes (field feedback) — `search_knowledge` browse mode (empty/"*" query returns recent entries), `list_tickets` `client_slug` optional, `list_handoffs` compact mode (default: truncate body to 200 chars), `get_situational_awareness` `machine` param (scopes pending handoffs to requesting CC), hybrid search default for all queries — 71 tools, 32 migrations
 - [x] **Phase 13.1**: Chronic flapper suppression — automatic severity degradation for monitors that repeatedly flap. `recurrence_count >= threshold` (default 5) → severity "low"; `>= 2x threshold` → auto-resolved. Per-monitor config via `link_monitor` `flap_threshold` param, global default via `OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD` env var. Natural 24h reset — 71 tools, 33 migrations
 - [x] **Phase 14**: CC team field validation fixes — Zammad `time_unit` string/number deserialization fix (PR #16), RRF candidate pool widened 20→50, multi-instance Uptime Kuma design documented, MCP server instructions condensed, CC team knowledge restructured — 71 tools, 33 migrations
 - [x] **Phase 14.1**: Search relevance tuning — `websearch_to_tsquery` replaces `plainto_tsquery` in all 40 FTS call sites (quoted phrases, `or`, `-exclusion`), OR fallback when AND returns zero results (2+ word queries retry with OR-joined terms), title boosting in embedding text preparation (requires `backfill_embeddings`) — 71 tools, 33 migrations
@@ -371,18 +371,18 @@ ops-brain serves a solo operator managing two clients with different compliance 
 
 ### Planned
 
-Prioritized from CC-CPA and CC-HSR field assessments (2026-03-27):
+Prioritized from field assessments (2026-03-27):
 
-- [ ] **Multi-instance Uptime Kuma**: Connect CPA's local Kuma (LAN-only) and HSR's Kuma to ops-brain's watchdog. Options: push agent on remote servers, Cloudflare Tunnel route, or CC-driven periodic push
+- [ ] **Multi-instance Uptime Kuma**: Connect multiple Uptime Kuma instances per client to ops-brain's watchdog. Options: push agent on remote servers, Cloudflare Tunnel route, or CC-driven periodic push
 - [ ] **Handoff push notifications**: Email on handoff creation (P1/critical → immediate, normal → daily briefing). Zammad ticket auto-creation for high/critical handoffs
 - [ ] **Web dashboard**: Read-only operational dashboard at `/dashboard` — monitoring health, open incidents, pending handoffs, CC activity, client cards. Server-rendered HTML (Askama/HTMX) or static JSON API + lightweight frontend
 - [x] **Duplicate knowledge detection**: Cosine similarity check on `add_knowledge` — warns if >85% match, `force=true` to bypass (Phase 14.2)
 - [x] **Runbook staleness tracking**: `last_verified_at` field auto-set on successful execution, `get_catchup` warns about 30+ day stale runbooks (Phase 14.2)
 - [x] **Runbook-incident linkage**: Optional `incident_id` on `log_runbook_execution` for bi-directional tracking, `list_executions_for_incident()` reverse lookup (Phase 14.2)
-- [ ] **Briefing automation**: Auto-email daily/weekly briefings via cron on kensai-cloud (currently via Claude Code scheduled triggers)
+- [ ] **Briefing automation**: Auto-email daily/weekly briefings via cron on the server (currently via Claude Code scheduled triggers)
 - [ ] **Trend analysis**: Daily metric snapshots — backup freshness, disk usage trends, incident frequency over time
 - [ ] **CC coordination**: Incident "claimed" state, incident comment timeline, cross-CC message board
 
 ## License
 
-Private. Open-source release in progress — see RELEASE.md for checklist.
+MIT OR Apache-2.0 (dual-licensed)

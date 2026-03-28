@@ -55,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
             Some(zammad::ZammadConfig {
                 base_url: url.clone(),
                 api_token: token.clone(),
+                default_owner_id: config.zammad_default_owner_id,
             })
         }
         _ => {

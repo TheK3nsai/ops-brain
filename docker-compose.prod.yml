@@ -1,6 +1,6 @@
-# ops-brain — Production deployment on kensai.cloud
-# Uses shared-postgres from shared-services stack
-# Caddy handles routing (no labels needed — add Caddyfile entry)
+# ops-brain — Production deployment (shared PostgreSQL)
+# Assumes PostgreSQL + pgvector already running on shared-db network
+# Reverse proxy handles routing (add to Caddy/Traefik/nginx config)
 
 services:
   ops-brain:

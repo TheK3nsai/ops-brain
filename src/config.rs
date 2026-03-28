@@ -23,7 +23,7 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_MIGRATE", default_value = "true")]
     pub migrate: bool,
 
-    /// Uptime Kuma base URL for metrics scraping (e.g. http://uptime-kuma:3001 or https://uptime.kensai.cloud)
+    /// Uptime Kuma base URL for metrics scraping (e.g. http://uptime-kuma:3001 or https://uptime.example.com)
     #[arg(long, env = "UPTIME_KUMA_URL")]
     pub uptime_kuma_url: Option<String>,
 
@@ -35,13 +35,17 @@ pub struct Config {
     #[arg(long, env = "UPTIME_KUMA_PASSWORD")]
     pub uptime_kuma_password: Option<String>,
 
-    /// Zammad API base URL (e.g. http://zammad-railsserver:3000 or https://tickets.kensai.cloud)
+    /// Zammad API base URL (e.g. http://zammad-railsserver:3000 or https://tickets.example.com)
     #[arg(long, env = "ZAMMAD_URL")]
     pub zammad_url: Option<String>,
 
     /// Zammad API token for authentication
     #[arg(long, env = "ZAMMAD_API_TOKEN")]
     pub zammad_api_token: Option<String>,
+
+    /// Zammad default ticket owner user ID (optional — omit to leave unassigned)
+    #[arg(long, env = "ZAMMAD_DEFAULT_OWNER_ID")]
+    pub zammad_default_owner_id: Option<i64>,
 
     /// Embedding API base URL (OpenAI-compatible). Default: local ollama.
     #[arg(

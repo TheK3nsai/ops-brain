@@ -302,8 +302,8 @@ mod tests {
         let handoff = Handoff {
             id: Uuid::now_v7(),
             from_session_id: None,
-            from_machine: "stealth".to_string(),
-            to_machine: Some("cloudlab".to_string()),
+            from_machine: "dev-laptop".to_string(),
+            to_machine: Some("prod-server".to_string()),
             status: "pending".to_string(),
             priority: "high".to_string(),
             title: "Big handoff".to_string(),
@@ -324,8 +324,8 @@ mod tests {
         let handoff = Handoff {
             id: Uuid::now_v7(),
             from_session_id: None,
-            from_machine: "stealth".to_string(),
-            to_machine: Some("cloudlab".to_string()),
+            from_machine: "dev-laptop".to_string(),
+            to_machine: Some("prod-server".to_string()),
             status: "pending".to_string(),
             priority: "high".to_string(),
             title: "Continue DNS migration".to_string(),

@@ -251,7 +251,7 @@ pub(crate) async fn handle_create_ticket(
         organization_id: org_id,
         state_id,
         priority_id,
-        owner_id: Some(3), // Eduardo
+        owner_id: zammad.default_owner_id,
         tags: p.tags,
         article: crate::zammad::CreateArticleInline {
             body: p.body,
