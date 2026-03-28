@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] — 2026-03-28
+
+### Security
+
+- `search_inventory` now applies cross-client gating on runbooks, knowledge, and incidents
+
+### Fixed
+
+- `upsert_vendor` no longer creates duplicate rows (ON CONFLICT on LOWER(name))
+- `upsert_server` preserves existing fields on update (COALESCE partial update)
+- Connection pool bumped from 10 to 20 (prevents saturation during concurrent sessions)
+- Test isolation documentation corrected (was claiming transaction rollback that didn't exist)
+
 ## [1.0.0] — 2026-03-28
 
 Initial public release.
