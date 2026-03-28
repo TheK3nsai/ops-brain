@@ -1,0 +1,53 @@
+[package]
+name = "ops-brain"
+version = "1.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "MCP server for IT infrastructure operational intelligence"
+repository = "https://github.com/TheK3nsai/ops-brain"
+
+[dependencies]
+# MCP SDK
+rmcp = { version = "1.2", features = ["server", "transport-io", "transport-streamable-http-server"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Database
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+    "migrate",
+    "derive",
+] }
+pgvector = { version = "0.4", features = ["sqlx"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+
+# Types
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# CLI & Config
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP server
+axum = "0.7"
+
+# HTTP client (for Uptime Kuma metrics scraping)
+reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
+
+# Error handling
+anyhow = "1"

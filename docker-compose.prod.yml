@@ -1,0 +1,51 @@
+# ops-brain — Production deployment (shared PostgreSQL)
+# Assumes PostgreSQL + pgvector already running on shared-db network
+# Reverse proxy handles routing (add to Caddy/Traefik/nginx config)
+
+services:
+  ops-brain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ops-brain
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+        reservations:
+          memory: 64m
+    environment:
+      - DATABASE_URL=postgresql://ops_brain:${OPS_BRAIN_DB_PASSWORD}@shared-postgres:5432/ops_brain
+      - OPS_BRAIN_TRANSPORT=http
+      - OPS_BRAIN_LISTEN=0.0.0.0:3000
+      - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN}
+      - OPS_BRAIN_MIGRATE=true
+      # Uptime Kuma monitoring
+      - UPTIME_KUMA_URL=http://uptime-kuma:3001
+      - UPTIME_KUMA_USERNAME=${UPTIME_KUMA_USERNAME}
+      - UPTIME_KUMA_PASSWORD=${UPTIME_KUMA_PASSWORD}
+      # Embeddings (ollama on same Docker network)
+      - OPS_BRAIN_EMBEDDING_URL=http://ollama:11434/v1/embeddings
+      - OPS_BRAIN_EMBEDDING_MODEL=nomic-embed-text
+      # Zammad ticketing integration
+      - ZAMMAD_URL=http://zammad-railsserver:3000
+      - ZAMMAD_API_TOKEN=${ZAMMAD_API_TOKEN}
+      # Proactive monitoring watchdog
+      - OPS_BRAIN_WATCHDOG_ENABLED=${OPS_BRAIN_WATCHDOG_ENABLED:-true}
+      - OPS_BRAIN_WATCHDOG_INTERVAL=${OPS_BRAIN_WATCHDOG_INTERVAL:-60}
+      - RUST_LOG=ops_brain=info
+    networks:
+      - traefik-net
+      - shared-db
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  traefik-net:
+    external: true
+  shared-db:
+    external: true

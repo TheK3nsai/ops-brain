@@ -1,0 +1,67 @@
+# ops-brain — Self-contained deployment for new users
+# Includes PostgreSQL with pgvector. Just run: docker compose up -d
+# Then configure Claude Code to connect via stdio or HTTP.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: ops-brain-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ops_brain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ops_brain}
+      POSTGRES_DB: ops_brain
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./seed:/seed:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ops_brain -d ops_brain"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ops-brain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ops-brain
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${OPS_BRAIN_PORT:-3000}:3000"
+    environment:
+      - DATABASE_URL=postgresql://ops_brain:${POSTGRES_PASSWORD:-ops_brain}@postgres:5432/ops_brain
+      - OPS_BRAIN_TRANSPORT=${OPS_BRAIN_TRANSPORT:-http}
+      - OPS_BRAIN_LISTEN=0.0.0.0:3000
+      - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN:-}
+      - OPS_BRAIN_MIGRATE=true
+      # Embeddings (optional — run ollama with nomic-embed-text for semantic search)
+      - OPS_BRAIN_EMBEDDINGS_ENABLED=${OPS_BRAIN_EMBEDDINGS_ENABLED:-false}
+      - OPS_BRAIN_EMBEDDING_URL=${OPS_BRAIN_EMBEDDING_URL:-http://localhost:11434/v1/embeddings}
+      - OPS_BRAIN_EMBEDDING_MODEL=${OPS_BRAIN_EMBEDDING_MODEL:-nomic-embed-text}
+      # Uptime Kuma monitoring (optional)
+      - UPTIME_KUMA_URL=${UPTIME_KUMA_URL:-}
+      - UPTIME_KUMA_USERNAME=${UPTIME_KUMA_USERNAME:-}
+      - UPTIME_KUMA_PASSWORD=${UPTIME_KUMA_PASSWORD:-}
+      # Zammad ticketing (optional)
+      - ZAMMAD_URL=${ZAMMAD_URL:-}
+      - ZAMMAD_API_TOKEN=${ZAMMAD_API_TOKEN:-}
+      # ZAMMAD_DEFAULT_OWNER_ID — only set if you have a numeric Zammad user ID
+      # (empty string crashes clap's i64 parser)
+      # - ZAMMAD_DEFAULT_OWNER_ID=${ZAMMAD_DEFAULT_OWNER_ID}
+      # Watchdog (optional — requires UPTIME_KUMA_URL)
+      - OPS_BRAIN_WATCHDOG_ENABLED=${OPS_BRAIN_WATCHDOG_ENABLED:-false}
+      - OPS_BRAIN_WATCHDOG_INTERVAL=${OPS_BRAIN_WATCHDOG_INTERVAL:-60}
+      - RUST_LOG=${RUST_LOG:-ops_brain=info}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pgdata:

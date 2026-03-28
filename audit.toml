@@ -1,0 +1,9 @@
+# Cargo audit advisory tracking
+#
+# cargo-audit 0.22 doesn't read config files — ignores are passed via CLI flags
+# in .github/workflows/ci.yml. This file documents the reasoning.
+#
+# RUSTSEC-2023-0071 (rsa) — Marvin Attack timing side-channel
+#   No fix available upstream. Transitive dep via sqlx-mysql, which we don't use
+#   (PostgreSQL only). sqlx includes mysql/sqlite macro support unconditionally.
+#   Ignored in CI via --ignore flag.
