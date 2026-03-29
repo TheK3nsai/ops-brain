@@ -57,6 +57,9 @@ pub struct CreateRunbookParams {
     pub client_slug: Option<String>,
     /// Allow this runbook to surface in other clients' contexts (default: false)
     pub cross_client_safe: Option<bool>,
+    /// URL or path to the canonical source document (e.g. git repo path, wiki URL).
+    /// Ops-brain runbooks are summaries/pointers — the source_url is the authoritative reference.
+    pub source_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -71,6 +74,8 @@ pub struct UpdateRunbookParams {
     pub notes: Option<String>,
     /// Allow this runbook to surface in other clients' contexts
     pub cross_client_safe: Option<bool>,
+    /// URL or path to the canonical source document
+    pub source_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -275,6 +280,7 @@ pub(crate) async fn handle_create_runbook(
         p.notes.as_deref(),
         client_id,
         cross_client_safe,
+        p.source_url.as_deref(),
     )
     .await
     {
@@ -318,6 +324,7 @@ pub(crate) async fn handle_update_runbook(
         p.requires_reboot,
         p.notes.as_deref(),
         p.cross_client_safe,
+        p.source_url.as_deref(),
     )
     .await
     {

@@ -139,6 +139,7 @@ mod runbook_tests {
             Some("Test notes"),
             None,  // no client
             false, // not cross_client_safe
+            None,  // no source_url
         )
         .await
         .unwrap();
@@ -197,6 +198,7 @@ mod runbook_tests {
             None,
             Some(client.id),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -249,6 +251,7 @@ mod runbook_tests {
             None,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -265,6 +268,7 @@ mod runbook_tests {
             None,
             None,
             Some(true),
+            None,
         )
         .await
         .unwrap();
@@ -1185,6 +1189,7 @@ mod runbook_execution_tests {
             None,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
