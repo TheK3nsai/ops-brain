@@ -101,7 +101,7 @@ impl MonitorState {
 /// The watchdog background task.
 pub async fn run(
     pool: PgPool,
-    kuma_config: UptimeKumaConfig,
+    kuma_configs: Vec<UptimeKumaConfig>,
     embedding_client: Option<EmbeddingClient>,
     watchdog_config: WatchdogConfig,
 ) {
@@ -110,7 +110,9 @@ pub async fn run(
         confirm_polls = watchdog_config.confirm_polls,
         cooldown_secs = watchdog_config.cooldown_secs,
         flap_threshold = watchdog_config.flap_threshold,
-        "Watchdog started — polling every {}s (confirm: {} polls, cooldown: {}s, flap threshold: {})",
+        instances = kuma_configs.len(),
+        "Watchdog started — polling {} instance(s) every {}s (confirm: {} polls, cooldown: {}s, flap threshold: {})",
+        kuma_configs.len(),
         watchdog_config.interval_secs,
         watchdog_config.confirm_polls,
         watchdog_config.cooldown_secs,
@@ -128,7 +130,7 @@ pub async fn run(
         ))
         .await;
 
-        match metrics::fetch_metrics(&kuma_config).await {
+        match metrics::fetch_all_metrics(&kuma_configs).await {
             Ok(summary) => {
                 tracing::debug!(
                     total = summary.total,

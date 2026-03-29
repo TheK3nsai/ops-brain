@@ -16,7 +16,7 @@ use crate::zammad::ZammadConfig;
 #[derive(Clone)]
 pub struct ApiState {
     pub pool: PgPool,
-    pub kuma_config: Option<UptimeKumaConfig>,
+    pub kuma_configs: Vec<UptimeKumaConfig>,
     pub zammad_config: Option<ZammadConfig>,
 }
 
@@ -56,7 +56,7 @@ pub async fn generate_briefing(
 
     match generate_briefing_inner(
         &state.pool,
-        &state.kuma_config,
+        &state.kuma_configs,
         &state.zammad_config,
         &briefing_type,
         client.as_ref(),
@@ -71,7 +71,7 @@ pub async fn generate_briefing(
 /// Core briefing generation logic shared between the MCP tool and the REST API.
 pub async fn generate_briefing_inner(
     pool: &PgPool,
-    kuma_config: &Option<UptimeKumaConfig>,
+    kuma_configs: &[UptimeKumaConfig],
     zammad_config: &Option<ZammadConfig>,
     briefing_type: &str,
     client: Option<&crate::models::client::Client>,
@@ -81,8 +81,8 @@ pub async fn generate_briefing_inner(
     let client_name = client.map(|c| c.name.as_str()).unwrap_or("All Clients");
 
     // ── Monitoring ──
-    let monitoring_data = if let Some(kuma) = kuma_config {
-        match crate::metrics::fetch_metrics(kuma).await {
+    let monitoring_data = if !kuma_configs.is_empty() {
+        match crate::metrics::fetch_all_metrics(kuma_configs).await {
             Ok(summary) => {
                 let down_names: Vec<String> = summary
                     .monitors

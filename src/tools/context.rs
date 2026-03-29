@@ -543,8 +543,8 @@ pub(crate) async fn handle_get_situational_awareness(
     }
 
     // Fetch live monitoring data for linked servers/services
-    if let Some(ref kuma_config) = brain.kuma_config {
-        match crate::metrics::fetch_metrics(kuma_config).await {
+    if !brain.kuma_configs.is_empty() {
+        match crate::metrics::fetch_all_metrics(&brain.kuma_configs).await {
             Ok(metrics) => {
                 // Get monitor mappings for this server and its services
                 let mut monitor_names: std::collections::HashSet<String> =
@@ -1052,8 +1052,8 @@ pub(crate) async fn handle_get_server_context(
 
     // Fetch live monitoring data for this server and its services
     let mut monitoring: Vec<serde_json::Value> = Vec::new();
-    if let Some(ref kuma_config) = brain.kuma_config {
-        match crate::metrics::fetch_metrics(kuma_config).await {
+    if !brain.kuma_configs.is_empty() {
+        match crate::metrics::fetch_all_metrics(&brain.kuma_configs).await {
             Ok(metrics) => {
                 let mut monitor_names: std::collections::HashSet<String> =
                     std::collections::HashSet::new();

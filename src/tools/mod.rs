@@ -25,7 +25,7 @@ use crate::zammad::ZammadConfig;
 #[derive(Clone)]
 pub struct OpsBrain {
     pub(crate) pool: PgPool,
-    pub(crate) kuma_config: Option<UptimeKumaConfig>,
+    pub(crate) kuma_configs: Vec<UptimeKumaConfig>,
     pub(crate) embedding_client: Option<EmbeddingClient>,
     pub(crate) zammad_config: Option<ZammadConfig>,
     tool_router: ToolRouter<Self>,
@@ -35,13 +35,13 @@ pub struct OpsBrain {
 impl OpsBrain {
     pub fn new(
         pool: PgPool,
-        kuma_config: Option<UptimeKumaConfig>,
+        kuma_configs: Vec<UptimeKumaConfig>,
         embedding_client: Option<EmbeddingClient>,
         zammad_config: Option<ZammadConfig>,
     ) -> Self {
         Self {
             pool,
-            kuma_config,
+            kuma_configs,
             embedding_client,
             zammad_config,
             tool_router: Self::tool_router(),

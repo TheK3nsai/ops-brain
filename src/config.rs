@@ -23,17 +23,23 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_MIGRATE", default_value = "true")]
     pub migrate: bool,
 
-    /// Uptime Kuma base URL for metrics scraping (e.g. http://uptime-kuma:3001 or https://uptime.example.com)
+    /// Uptime Kuma base URL for metrics scraping (e.g. http://uptime-kuma:3001 or https://uptime.example.com).
+    /// For a single instance. Use UPTIME_KUMA_INSTANCES for multiple instances.
     #[arg(long, env = "UPTIME_KUMA_URL")]
     pub uptime_kuma_url: Option<String>,
 
-    /// Optional basic auth username for Uptime Kuma /metrics endpoint
+    /// Optional basic auth username for Uptime Kuma /metrics endpoint (single-instance mode)
     #[arg(long, env = "UPTIME_KUMA_USERNAME")]
     pub uptime_kuma_username: Option<String>,
 
-    /// Optional basic auth password for Uptime Kuma /metrics endpoint
+    /// Optional basic auth password for Uptime Kuma /metrics endpoint (single-instance mode)
     #[arg(long, env = "UPTIME_KUMA_PASSWORD")]
     pub uptime_kuma_password: Option<String>,
+
+    /// Multiple Uptime Kuma instances as JSON array. Takes precedence over UPTIME_KUMA_URL.
+    /// Format: [{"name":"cloud","url":"http://kuma:3001"},{"name":"lab","url":"http://10.0.0.1:3001","username":"user","password":"pass"}]
+    #[arg(long, env = "UPTIME_KUMA_INSTANCES")]
+    pub uptime_kuma_instances: Option<String>,
 
     /// Zammad API base URL (e.g. http://zammad-railsserver:3000 or https://tickets.example.com)
     #[arg(long, env = "ZAMMAD_URL")]
