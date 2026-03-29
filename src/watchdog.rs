@@ -377,11 +377,27 @@ async fn handle_down_transition(
     monitor_status: &MonitorStatus,
     config: &WatchdogConfig,
 ) -> Option<Uuid> {
-    // Look up the monitor mapping in the DB
-    let monitor_mapping = crate::repo::monitor_repo::get_monitor_by_name(pool, monitor_name)
+    // Look up the monitor mapping in the DB.
+    // Try exact name first (handles both prefixed and unprefixed links),
+    // then fall back to stripped name for multi-instance prefix mismatch.
+    let monitor_mapping = match crate::repo::monitor_repo::get_monitor_by_name(pool, monitor_name)
         .await
         .ok()
-        .flatten();
+        .flatten()
+    {
+        Some(m) => Some(m),
+        None => {
+            let stripped = crate::metrics::strip_instance_prefix(monitor_name);
+            if stripped != monitor_name {
+                crate::repo::monitor_repo::get_monitor_by_name(pool, stripped)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            }
+        }
+    };
 
     // Resolve server and client for the incident
     let (server_id, service_id, client_id, severity) = if let Some(ref mapping) = monitor_mapping {

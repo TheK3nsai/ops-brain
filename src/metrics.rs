@@ -144,6 +144,16 @@ pub async fn fetch_all_metrics(configs: &[UptimeKumaConfig]) -> Result<MetricsSu
     })
 }
 
+/// Strip the `instance_name/` prefix from a monitor name (if present).
+///
+/// In multi-instance mode, `fetch_all_metrics` prefixes monitor names with `instance/`.
+/// This helper returns the unprefixed name for DB lookups where monitors were linked
+/// without the prefix.
+pub fn strip_instance_prefix(name: &str) -> &str {
+    // Only strip if there's a `/` — single-instance names have no prefix
+    name.split_once('/').map_or(name, |(_, rest)| rest)
+}
+
 /// Parse Prometheus exposition format text into structured monitor data.
 ///
 /// We look for these metric families:
@@ -427,5 +437,15 @@ monitor_status{monitor_name="Middle",monitor_type="http",monitor_url="",monitor_
 "#;
         let result = parse_prometheus_metrics(input).unwrap();
         assert!(result.monitors[0].response_time_ms.is_none());
+    }
+
+    #[test]
+    fn test_strip_instance_prefix() {
+        assert_eq!(strip_instance_prefix("kensai-cloud/Nextcloud"), "Nextcloud");
+        assert_eq!(strip_instance_prefix("lab/DC Ping"), "DC Ping");
+        assert_eq!(strip_instance_prefix("Nextcloud"), "Nextcloud");
+        assert_eq!(strip_instance_prefix(""), "");
+        // Only strips the first segment
+        assert_eq!(strip_instance_prefix("a/b/c"), "b/c");
     }
 }
