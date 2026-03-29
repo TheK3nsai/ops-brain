@@ -21,10 +21,8 @@ services:
       - OPS_BRAIN_LISTEN=0.0.0.0:3000
       - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN}
       - OPS_BRAIN_MIGRATE=true
-      # Uptime Kuma monitoring
-      - UPTIME_KUMA_URL=http://uptime-kuma:3001
-      - UPTIME_KUMA_USERNAME=${UPTIME_KUMA_USERNAME}
-      - UPTIME_KUMA_PASSWORD=${UPTIME_KUMA_PASSWORD}
+      # Uptime Kuma monitoring (multi-instance JSON)
+      - UPTIME_KUMA_INSTANCES=${UPTIME_KUMA_INSTANCES}
       # Embeddings (ollama on same Docker network)
       - OPS_BRAIN_EMBEDDING_URL=http://ollama:11434/v1/embeddings
       - OPS_BRAIN_EMBEDDING_MODEL=nomic-embed-text

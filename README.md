@@ -14,9 +14,11 @@ get_situational_awareness(server_slug: "web-server-01")
 
 ## Key Features
 
-- **72 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
+- **73 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
 - **Hybrid search** — full-text (tsvector + websearch_to_tsquery) combined with semantic search (pgvector + nomic-embed-text) via Reciprocal Rank Fusion
+- **Multi-instance Uptime Kuma** — aggregate monitoring from multiple Kuma instances with partial failure tolerance
 - **Proactive monitoring** — background watchdog polls Uptime Kuma, auto-creates/resolves incidents with severity logic, flap suppression, and deduplication
+- **Staleness tracking** — tiered alerts for runbooks (30d), knowledge (60d), and services (90d) that haven't been verified
 - **Cross-machine coordination** — sessions and handoffs let multiple Claude Code instances collaborate on shared infrastructure
 - **Client-scope safety** — default-deny cross-client data gate for multi-client environments with different compliance domains (e.g. HIPAA vs tax/accounting)
 - **Zammad integration** — ticket CRUD, search, and bi-directional linking to incidents/servers/services
@@ -101,9 +103,9 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 }
 ```
 
-## Tools (72)
+## Tools (73)
 
-### Inventory (22)
+### Inventory (23)
 | Tool | Description |
 |------|-------------|
 | `get_server` | Server details + services, site, networks. Fuzzy slug suggestions on typos ("Did you mean: ...?") |
@@ -116,6 +118,7 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 | `search_inventory` | Full-text search across all 10 entity types |
 | `upsert_client` / `upsert_site` / `upsert_server` | Create or update records |
 | `upsert_service` / `upsert_vendor` | Create or update. `upsert_vendor` accepts `client_slug` to auto-link |
+| `upsert_network` | Create or update a network by slug |
 | `link_server_service` | Associate a service with a server |
 | `delete_server` / `delete_service` / `delete_vendor` | Soft-delete with preview + confirm safety gate |
 
@@ -272,9 +275,10 @@ ops-brain is designed for solo operators managing multiple clients with differen
 | `OPS_BRAIN_EMBEDDING_URL` | `http://localhost:11434/v1/embeddings` | OpenAI-compatible embedding API |
 | `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
 | `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | API key (not needed for ollama) |
-| `UPTIME_KUMA_URL` | (none) | Uptime Kuma base URL |
-| `UPTIME_KUMA_USERNAME` | (none) | Basic auth for /metrics |
-| `UPTIME_KUMA_PASSWORD` | (none) | Basic auth for /metrics |
+| `UPTIME_KUMA_URL` | (none) | Uptime Kuma base URL (single instance, backward compat) |
+| `UPTIME_KUMA_USERNAME` | (none) | Basic auth for /metrics (single instance) |
+| `UPTIME_KUMA_PASSWORD` | (none) | Basic auth for /metrics (single instance) |
+| `UPTIME_KUMA_INSTANCES` | (none) | Multi-instance JSON array (takes precedence). Format: `[{"name":"cloud","url":"..."}]` |
 | `OPS_BRAIN_WATCHDOG_ENABLED` | `false` | Enable proactive monitoring |
 | `OPS_BRAIN_WATCHDOG_INTERVAL` | `60` | Polling interval (seconds) |
 | `OPS_BRAIN_WATCHDOG_CONFIRM_POLLS` | `3` | Consecutive DOWN polls before incident |
@@ -287,7 +291,6 @@ ops-brain is designed for solo operators managing multiple clients with differen
 
 ## Planned
 
-- **Multi-instance Uptime Kuma** — connect multiple Kuma instances per client
 - **Web dashboard** — read-only operational view without a Claude session
 - **Briefing automation** — server-side cron for daily/weekly email delivery
 - **Trend analysis** — daily metric snapshots for backup freshness, disk usage, incident frequency

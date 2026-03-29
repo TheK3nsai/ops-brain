@@ -26,7 +26,7 @@ src/
     mod.rs           # OpsBrain struct + #[tool] stubs (delegate to category modules)
     helpers.rs       # Shared helpers: json_result, error_result, not_found_with_suggestions, filter_cross_client, compact_*, etc.
     shared.rs        # Shared async functions: embed_and_store, get_query_embedding, build_client_lookup, log_audit_entries
-    inventory.rs     # Parameter structs + handler implementations for inventory tools (22 tools)
+    inventory.rs     # Parameter structs + handler implementations for inventory tools (23 tools)
     runbooks.rs      # Parameter structs + handler implementations for runbook tools
     knowledge.rs     # Parameter structs + handler implementations for knowledge tools
     context.rs       # Parameter/response structs + handler implementations for context tools
@@ -40,7 +40,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 35 sqlx migration files (auto-run on startup)
+migrations/        # 39 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data (clients, sites, networks)
 ```
 

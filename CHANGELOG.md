@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] — 2026-03-29
+
+### Added
+
+- **Multi-instance Uptime Kuma** — watchdog and monitoring tools aggregate from multiple Kuma instances via `UPTIME_KUMA_INSTANCES` JSON env var. Single `UPTIME_KUMA_URL` still works for backward compat. Partial failure tolerant.
+- **`upsert_network` tool** — create or update networks by slug (PR #22)
+- **`source_url` on runbooks** — runbooks can reference canonical external docs
+- **Staleness tracking** for knowledge & services — `last_verified_at` column with tiered briefing alerts (runbooks 30d, knowledge 60d, services 90d). `update_knowledge(verified=true)` and `upsert_service(verified=true)` mark entries as verified.
+- Sessions & coordination section in CLAUDE.md
+
+### Changed
+
+- Tool count: 72 → 73 (`upsert_network`)
+- Migration count: 35 → 39
+- `docker-compose.prod.yml` uses `UPTIME_KUMA_INSTANCES` (replaces single-instance env vars)
+
 ## [1.1.0] — 2026-03-28
 
 ### Security
