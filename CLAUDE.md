@@ -180,7 +180,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Module**: `src/watchdog.rs` — background tokio task, no new dependencies
 - **Enable**: `OPS_BRAIN_WATCHDOG_ENABLED=true` + at least one Uptime Kuma instance configured
 - **Instances**: Supports multiple Uptime Kuma instances via `UPTIME_KUMA_INSTANCES` JSON env var. Falls back to single `UPTIME_KUMA_URL` for backward compat.
-- **Multi-instance naming**: When >1 instance is configured, monitor names are prefixed with `instance_name/` (e.g. `linux-lab/DC Ping`). Single instance = no prefix (backward compat).
+- **Multi-instance naming**: When >1 instance is configured, monitor names are prefixed with `instance_name/` (e.g. `linux-lab/DC Ping`). Single instance = no prefix (backward compat). All lookups (`check_health`, `get_monitor_status`, watchdog DOWN transitions) are prefix-tolerant: they try exact match first, then strip the `instance/` prefix as fallback. This means `link_monitor` names work with or without the prefix.
 - **Interval**: `OPS_BRAIN_WATCHDOG_INTERVAL=60` (seconds, default 60)
 - **Behavior**:
   - Polls all configured Uptime Kuma instances via `fetch_all_metrics()` every interval
@@ -242,6 +242,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **cargo-audit 0.22 has no config file support** — ignores must be passed via `--ignore RUSTSEC-XXXX` CLI flags. The `audit.toml` in the repo root is documentation only. The actual ignore is in `.github/workflows/ci.yml`.
 - **upsert_vendor matches by name (case-insensitive)** — ON CONFLICT on `LOWER(name)` for active vendors. Calling `upsert_vendor` with an existing vendor name updates it (COALESCE). Use `id` parameter to update a specific vendor by UUID.
 - **nomic-embed-text tokenization** — real markdown/code content tokenizes at ~1-1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` in `src/embeddings.rs` is 6,000 (not 24K). Do not increase without empirical testing against production data — code-heavy content fails at ~7,200 chars, plain markdown at ~8,200 chars (8,192-token context window).
+- **`link_monitor` names in multi-instance mode** — `link_monitor` stores the monitor name exactly as provided. In multi-instance mode, Kuma names are prefixed with `instance/` internally. All lookups are prefix-tolerant (try exact, then strip prefix), so linking with the unprefixed Kuma name (e.g. `"Nextcloud"`) works fine. Linking with the prefixed name (e.g. `"kensai-cloud/Nextcloud"`) also works. Helper: `metrics::strip_instance_prefix()`.
 
 ## CI Pipeline
 
