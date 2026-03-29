@@ -575,10 +575,78 @@ pub(crate) async fn handle_get_catchup(
                 }),
             );
         }
-        Ok(_) => {} // no stale runbooks — don't clutter the response
+        Ok(_) => {}
         Err(e) => {
             results.insert(
                 "stale_runbooks_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+        }
+    }
+
+    // Stale knowledge: not verified in 60+ days (or never verified)
+    match crate::repo::knowledge_repo::list_stale_knowledge(&brain.pool, 60, 10).await {
+        Ok(stale) if !stale.is_empty() => {
+            let items: Vec<serde_json::Value> = stale
+                .iter()
+                .map(|k| {
+                    serde_json::json!({
+                        "id": k.id,
+                        "title": k.title,
+                        "category": k.category,
+                        "last_verified_at": k.last_verified_at,
+                        "updated_at": k.updated_at,
+                    })
+                })
+                .collect();
+            results.insert(
+                "stale_knowledge".to_string(),
+                serde_json::json!({
+                    "count": items.len(),
+                    "threshold_days": 60,
+                    "items": items,
+                    "_tip": "Knowledge entries not verified in 60+ days. Use update_knowledge with verified=true to confirm accuracy.",
+                }),
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            results.insert(
+                "stale_knowledge_error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
+        }
+    }
+
+    // Stale services: not verified in 90+ days (or never verified)
+    match crate::repo::service_repo::list_stale_services(&brain.pool, 90, 10).await {
+        Ok(stale) if !stale.is_empty() => {
+            let items: Vec<serde_json::Value> = stale
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "slug": s.slug,
+                        "name": s.name,
+                        "category": s.category,
+                        "last_verified_at": s.last_verified_at,
+                        "updated_at": s.updated_at,
+                    })
+                })
+                .collect();
+            results.insert(
+                "stale_services".to_string(),
+                serde_json::json!({
+                    "count": items.len(),
+                    "threshold_days": 90,
+                    "items": items,
+                    "_tip": "Services not verified in 90+ days. Use upsert_service with verified=true to confirm accuracy.",
+                }),
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            results.insert(
+                "stale_services_error".to_string(),
                 serde_json::Value::String(e.to_string()),
             );
         }

@@ -201,6 +201,7 @@ mod tests {
             tags: vec![],
             client_id: None,
             cross_client_safe: false,
+            last_verified_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

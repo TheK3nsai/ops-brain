@@ -137,6 +137,8 @@ pub struct UpsertServiceParams {
     pub description: Option<String>,
     pub criticality: Option<String>,
     pub notes: Option<String>,
+    /// Set to true to mark this service as verified (confirms notes/config are still accurate).
+    pub verified: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -712,7 +714,21 @@ pub(crate) async fn handle_upsert_service(
     )
     .await
     {
-        Ok(service) => json_result(&service),
+        Ok(service) => {
+            // Mark as verified if requested
+            if p.verified.unwrap_or(false) {
+                if let Err(e) =
+                    crate::repo::service_repo::update_last_verified_at(&brain.pool, service.id)
+                        .await
+                {
+                    tracing::warn!(
+                        "Failed to update last_verified_at for service {}: {e}",
+                        service.id
+                    );
+                }
+            }
+            json_result(&service)
+        }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }

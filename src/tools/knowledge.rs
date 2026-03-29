@@ -161,6 +161,9 @@ pub struct UpdateKnowledgeParams {
     pub tags: Option<Vec<String>>,
     /// Allow this entry to surface in other clients' contexts
     pub cross_client_safe: Option<bool>,
+    /// Set to true to mark this entry as verified (confirms content is still accurate).
+    /// Sets last_verified_at to now without requiring content changes.
+    pub verified: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -277,6 +280,14 @@ pub(crate) async fn handle_update_knowledge(
         Ok(None) => return not_found("Knowledge", &p.id),
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
+
+    // Mark as verified if requested
+    if p.verified.unwrap_or(false) {
+        if let Err(e) = crate::repo::knowledge_repo::update_last_verified_at(&brain.pool, id).await
+        {
+            tracing::warn!("Failed to update last_verified_at for knowledge {id}: {e}");
+        }
+    }
 
     match crate::repo::knowledge_repo::update_knowledge(
         &brain.pool,

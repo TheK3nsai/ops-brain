@@ -11,6 +11,7 @@ pub struct Knowledge {
     pub tags: Vec<String>,
     pub client_id: Option<Uuid>,
     pub cross_client_safe: bool,
+    pub last_verified_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
