@@ -95,9 +95,10 @@ sqlx migrate info          # Show migration status
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
-| `UPTIME_KUMA_URL` | (none) | Uptime Kuma base URL for /metrics scraping |
-| `UPTIME_KUMA_USERNAME` | (none) | Basic auth username for /metrics (if needed) |
-| `UPTIME_KUMA_PASSWORD` | (none) | Basic auth password for /metrics (if needed) |
+| `UPTIME_KUMA_URL` | (none) | Uptime Kuma base URL for /metrics scraping (single instance) |
+| `UPTIME_KUMA_USERNAME` | (none) | Basic auth username for /metrics (single instance) |
+| `UPTIME_KUMA_PASSWORD` | (none) | Basic auth password for /metrics (single instance) |
+| `UPTIME_KUMA_INSTANCES` | (none) | Multiple Kuma instances as JSON array (takes precedence over URL). Format: `[{"name":"cloud","url":"http://..."},{"name":"lab","url":"http://..."}]` |
 | `OPS_BRAIN_EMBEDDING_URL` | `http://localhost:11434/v1/embeddings` | Embedding API URL (OpenAI-compatible) |
 | `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
 | `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | API key for embedding service (not needed for ollama) |
@@ -177,10 +178,13 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 ## Watchdog
 
 - **Module**: `src/watchdog.rs` — background tokio task, no new dependencies
-- **Enable**: `OPS_BRAIN_WATCHDOG_ENABLED=true` + `UPTIME_KUMA_URL` must be set
+- **Enable**: `OPS_BRAIN_WATCHDOG_ENABLED=true` + at least one Uptime Kuma instance configured
+- **Instances**: Supports multiple Uptime Kuma instances via `UPTIME_KUMA_INSTANCES` JSON env var. Falls back to single `UPTIME_KUMA_URL` for backward compat.
+- **Multi-instance naming**: When >1 instance is configured, monitor names are prefixed with `instance_name/` (e.g. `linux-lab/DC Ping`). Single instance = no prefix (backward compat).
 - **Interval**: `OPS_BRAIN_WATCHDOG_INTERVAL=60` (seconds, default 60)
 - **Behavior**:
-  - Polls Uptime Kuma `/metrics` every interval
+  - Polls all configured Uptime Kuma instances via `fetch_all_metrics()` every interval
+  - Partial failure tolerant: if one instance is unreachable, monitors from other instances are still processed
   - Tracks monitor states in memory (HashMap)
   - Detects UP→DOWN: auto-creates incident `[AUTO] Monitor DOWN: {name}` with severity from server roles, symptoms from monitor data, linked server/service from monitor mappings, suggested runbooks via semantic search
   - Detects DOWN→UP: auto-resolves the incident with TTR

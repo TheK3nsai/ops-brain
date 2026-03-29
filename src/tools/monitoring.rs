@@ -82,12 +82,13 @@ pub(crate) async fn handle_list_monitors(
     brain: &super::OpsBrain,
     p: ListMonitorsParams,
 ) -> CallToolResult {
-    let kuma_config = match &brain.kuma_config {
-        Some(c) => c,
-        None => return error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)"),
-    };
+    if brain.kuma_configs.is_empty() {
+        return error_result(
+            "Uptime Kuma not configured (set UPTIME_KUMA_URL or UPTIME_KUMA_INSTANCES)",
+        );
+    }
 
-    let summary = match crate::metrics::fetch_metrics(kuma_config).await {
+    let summary = match crate::metrics::fetch_all_metrics(&brain.kuma_configs).await {
         Ok(s) => s,
         Err(e) => return error_result(&format!("Failed to fetch metrics: {e}")),
     };
@@ -133,12 +134,13 @@ pub(crate) async fn handle_get_monitor_status(
     brain: &super::OpsBrain,
     p: GetMonitorStatusParams,
 ) -> CallToolResult {
-    let kuma_config = match &brain.kuma_config {
-        Some(c) => c,
-        None => return error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)"),
-    };
+    if brain.kuma_configs.is_empty() {
+        return error_result(
+            "Uptime Kuma not configured (set UPTIME_KUMA_URL or UPTIME_KUMA_INSTANCES)",
+        );
+    }
 
-    let summary = match crate::metrics::fetch_metrics(kuma_config).await {
+    let summary = match crate::metrics::fetch_all_metrics(&brain.kuma_configs).await {
         Ok(s) => s,
         Err(e) => return error_result(&format!("Failed to fetch metrics: {e}")),
     };
@@ -182,12 +184,13 @@ pub(crate) async fn handle_get_monitoring_summary(
     brain: &super::OpsBrain,
     _p: GetMonitoringSummaryParams,
 ) -> CallToolResult {
-    let kuma_config = match &brain.kuma_config {
-        Some(c) => c,
-        None => return error_result("Uptime Kuma not configured (set UPTIME_KUMA_URL)"),
-    };
+    if brain.kuma_configs.is_empty() {
+        return error_result(
+            "Uptime Kuma not configured (set UPTIME_KUMA_URL or UPTIME_KUMA_INSTANCES)",
+        );
+    }
 
-    let summary = match crate::metrics::fetch_metrics(kuma_config).await {
+    let summary = match crate::metrics::fetch_all_metrics(&brain.kuma_configs).await {
         Ok(s) => s,
         Err(e) => return error_result(&format!("Failed to fetch metrics: {e}")),
     };
@@ -384,19 +387,16 @@ pub(crate) async fn handle_check_health(
     }
 
     // Fetch live metrics
-    let kuma_config = match &brain.kuma_config {
-        Some(c) => c,
-        None => {
-            return json_result(&serde_json::json!({
-                "server": p.slug,
-                "status": "UNKNOWN",
-                "reason": "Uptime Kuma not configured (set UPTIME_KUMA_URL)",
-                "linked_monitors": linked_monitors.len(),
-            }))
-        }
-    };
+    if brain.kuma_configs.is_empty() {
+        return json_result(&serde_json::json!({
+            "server": p.slug,
+            "status": "UNKNOWN",
+            "reason": "Uptime Kuma not configured (set UPTIME_KUMA_URL or UPTIME_KUMA_INSTANCES)",
+            "linked_monitors": linked_monitors.len(),
+        }));
+    }
 
-    let summary = match crate::metrics::fetch_metrics(kuma_config).await {
+    let summary = match crate::metrics::fetch_all_metrics(&brain.kuma_configs).await {
         Ok(s) => s,
         Err(e) => return error_result(&format!("Failed to fetch metrics: {e}")),
     };

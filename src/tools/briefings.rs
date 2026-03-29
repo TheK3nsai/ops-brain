@@ -111,7 +111,7 @@ pub(crate) async fn handle_generate_briefing(
 
     match crate::api::generate_briefing_inner(
         &brain.pool,
-        &brain.kuma_config,
+        &brain.kuma_configs,
         &brain.zammad_config,
         &p.briefing_type.to_lowercase(),
         client.as_ref(),

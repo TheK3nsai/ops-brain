@@ -5,6 +5,9 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize)]
 pub struct MonitorStatus {
     pub name: String,
+    /// Which Uptime Kuma instance this monitor belongs to (set by fetch_all_metrics)
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub instance: String,
     pub monitor_type: String,
     pub url: String,
     pub hostname: String,
@@ -30,9 +33,11 @@ pub struct MetricsSummary {
     pub monitors: Vec<MonitorStatus>,
 }
 
-/// Configuration for connecting to Uptime Kuma
+/// Configuration for connecting to a single Uptime Kuma instance
 #[derive(Debug, Clone)]
 pub struct UptimeKumaConfig {
+    /// Instance name for display and multi-instance monitor prefixing
+    pub name: String,
     pub base_url: String,
     pub username: Option<String>,
     pub password: Option<String>,
@@ -79,6 +84,66 @@ pub async fn fetch_metrics(config: &UptimeKumaConfig) -> Result<MetricsSummary, 
     parse_prometheus_metrics(&body)
 }
 
+/// Fetch metrics from all configured Uptime Kuma instances and merge results.
+///
+/// When only one instance is configured, monitor names are returned as-is (backward compat).
+/// When multiple instances are configured, monitor names are prefixed with `instance_name/`
+/// to prevent collisions and provide clear provenance.
+///
+/// Partial failures are tolerated: if some instances are unreachable, monitors from
+/// reachable instances are still returned. Only returns an error if ALL instances fail.
+pub async fn fetch_all_metrics(configs: &[UptimeKumaConfig]) -> Result<MetricsSummary, String> {
+    if configs.is_empty() {
+        return Err("No Uptime Kuma instances configured".to_string());
+    }
+
+    let multi = configs.len() > 1;
+    let mut all_monitors: Vec<MonitorStatus> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    for config in configs {
+        match fetch_metrics(config).await {
+            Ok(summary) => {
+                for mut monitor in summary.monitors {
+                    monitor.instance = config.name.clone();
+                    if multi {
+                        monitor.name = format!("{}/{}", config.name, monitor.name);
+                    }
+                    all_monitors.push(monitor);
+                }
+            }
+            Err(e) => {
+                let msg = format!("{}: {}", config.name, e);
+                tracing::warn!("Uptime Kuma instance error: {msg}");
+                errors.push(msg);
+            }
+        }
+    }
+
+    if all_monitors.is_empty() && !errors.is_empty() {
+        return Err(format!(
+            "All Uptime Kuma instances failed: {}",
+            errors.join("; ")
+        ));
+    }
+
+    all_monitors.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let up = all_monitors.iter().filter(|m| m.status == 1).count();
+    let down = all_monitors.iter().filter(|m| m.status == 0).count();
+    let pending = all_monitors.iter().filter(|m| m.status == 2).count();
+    let maintenance = all_monitors.iter().filter(|m| m.status == 3).count();
+
+    Ok(MetricsSummary {
+        total: all_monitors.len(),
+        up,
+        down,
+        pending,
+        maintenance,
+        monitors: all_monitors,
+    })
+}
+
 /// Parse Prometheus exposition format text into structured monitor data.
 ///
 /// We look for these metric families:
@@ -122,6 +187,7 @@ fn parse_prometheus_metrics(text: &str) -> Result<MetricsSummary, String> {
             let entry = monitors.entry(monitor_name.clone()).or_insert_with(|| {
                 MonitorStatus {
                     name: monitor_name,
+                    instance: String::new(),
                     monitor_type: labels.get("monitor_type").cloned().unwrap_or_default(),
                     url: labels.get("monitor_url").cloned().unwrap_or_default(),
                     hostname: labels.get("monitor_hostname").cloned().unwrap_or_default(),

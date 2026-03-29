@@ -40,14 +40,52 @@ async fn main() -> anyhow::Result<()> {
         db::run_migrations(&pool).await?;
     }
 
-    let kuma_config = config.uptime_kuma_url.as_ref().map(|url| {
-        tracing::info!("Uptime Kuma metrics configured: {}", url);
-        metrics::UptimeKumaConfig {
-            base_url: url.clone(),
-            username: config.uptime_kuma_username.clone(),
-            password: config.uptime_kuma_password.clone(),
-        }
-    });
+    let kuma_configs: Vec<metrics::UptimeKumaConfig> =
+        if let Some(ref instances_json) = config.uptime_kuma_instances {
+            // Multi-instance mode: parse JSON array
+            #[derive(serde::Deserialize)]
+            struct KumaInstance {
+                name: String,
+                url: String,
+                username: Option<String>,
+                password: Option<String>,
+            }
+            match serde_json::from_str::<Vec<KumaInstance>>(instances_json) {
+                Ok(instances) => {
+                    tracing::info!(
+                        "Uptime Kuma: {} instance(s) configured via UPTIME_KUMA_INSTANCES",
+                        instances.len()
+                    );
+                    instances
+                        .into_iter()
+                        .map(|i| {
+                            tracing::info!("  - {} → {}", i.name, i.url);
+                            metrics::UptimeKumaConfig {
+                                name: i.name,
+                                base_url: i.url,
+                                username: i.username,
+                                password: i.password,
+                            }
+                        })
+                        .collect()
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse UPTIME_KUMA_INSTANCES: {e}");
+                    vec![]
+                }
+            }
+        } else if let Some(ref url) = config.uptime_kuma_url {
+            // Single-instance mode (backward compat)
+            tracing::info!("Uptime Kuma metrics configured: {}", url);
+            vec![metrics::UptimeKumaConfig {
+                name: "default".to_string(),
+                base_url: url.clone(),
+                username: config.uptime_kuma_username.clone(),
+                password: config.uptime_kuma_password.clone(),
+            }]
+        } else {
+            vec![]
+        };
 
     let zammad_config = match (&config.zammad_url, &config.zammad_api_token) {
         (Some(url), Some(token)) => {
@@ -82,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn watchdog background task if enabled and Uptime Kuma is configured
     if config.watchdog_enabled {
-        if let Some(ref kuma) = kuma_config {
+        if !kuma_configs.is_empty() {
             let watchdog_config = watchdog::WatchdogConfig {
                 interval_secs: config.watchdog_interval_secs,
                 confirm_polls: config.watchdog_confirm_polls,
@@ -93,24 +131,25 @@ async fn main() -> anyhow::Result<()> {
                 interval = watchdog_config.interval_secs,
                 confirm_polls = watchdog_config.confirm_polls,
                 cooldown_secs = watchdog_config.cooldown_secs,
+                instances = kuma_configs.len(),
                 "Starting proactive monitoring watchdog"
             );
             tokio::spawn(watchdog::run(
                 pool.clone(),
-                kuma.clone(),
+                kuma_configs.clone(),
                 embedding_client.clone(),
                 watchdog_config,
             ));
         } else {
             tracing::warn!(
-                "Watchdog enabled but UPTIME_KUMA_URL not set — watchdog will not start"
+                "Watchdog enabled but no Uptime Kuma instances configured — watchdog will not start"
             );
         }
     }
 
     let server = OpsBrain::new(
         pool.clone(),
-        kuma_config.clone(),
+        kuma_configs.clone(),
         embedding_client.clone(),
         zammad_config.clone(),
     );
@@ -132,18 +171,18 @@ async fn main() -> anyhow::Result<()> {
 
             let api_state = Arc::new(api::ApiState {
                 pool: pool.clone(),
-                kuma_config: kuma_config.clone(),
+                kuma_configs: kuma_configs.clone(),
                 zammad_config: zammad_config.clone(),
             });
 
-            let kuma_config_http = kuma_config.clone();
+            let kuma_configs_http = kuma_configs.clone();
             let embedding_client_http = embedding_client.clone();
             let zammad_config_http = zammad_config.clone();
             let mcp_service = StreamableHttpService::new(
                 move || {
                     Ok(OpsBrain::new(
                         pool.clone(),
-                        kuma_config_http.clone(),
+                        kuma_configs_http.clone(),
                         embedding_client_http.clone(),
                         zammad_config_http.clone(),
                     ))
