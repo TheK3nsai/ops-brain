@@ -83,6 +83,35 @@ pub async fn count_service_references(
     Ok(refs)
 }
 
+/// Mark a service as verified (confirms notes/config are still accurate).
+pub async fn update_last_verified_at(pool: &PgPool, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE services SET last_verified_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List services never verified or last verified before the given threshold.
+pub async fn list_stale_services(
+    pool: &PgPool,
+    stale_days: i32,
+    limit: i64,
+) -> Result<Vec<Service>, sqlx::Error> {
+    sqlx::query_as::<_, Service>(
+        "SELECT * FROM services
+         WHERE status = 'active'
+           AND (last_verified_at IS NULL
+                OR last_verified_at < now() - ($1 || ' days')::interval)
+         ORDER BY last_verified_at ASC NULLS FIRST
+         LIMIT $2",
+    )
+    .bind(stale_days)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn delete_service(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result =
         sqlx::query("UPDATE services SET status = 'deleted', updated_at = NOW() WHERE id = $1")

@@ -104,6 +104,34 @@ pub async fn update_knowledge(
     .await
 }
 
+/// Mark a knowledge entry as verified (confirms content is still accurate).
+pub async fn update_last_verified_at(pool: &PgPool, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE knowledge SET last_verified_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List knowledge entries never verified or last verified before the given threshold.
+pub async fn list_stale_knowledge(
+    pool: &PgPool,
+    stale_days: i32,
+    limit: i64,
+) -> Result<Vec<Knowledge>, sqlx::Error> {
+    sqlx::query_as::<_, Knowledge>(
+        "SELECT * FROM knowledge
+         WHERE last_verified_at IS NULL
+            OR last_verified_at < now() - ($1 || ' days')::interval
+         ORDER BY last_verified_at ASC NULLS FIRST
+         LIMIT $2",
+    )
+    .bind(stale_days)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn delete_knowledge(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM knowledge WHERE id = $1")
         .bind(id)
