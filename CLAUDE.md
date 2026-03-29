@@ -203,6 +203,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Sessions are optional** — `start_session`/`end_session` are only needed for handoff work or long cross-CC sessions. Most interactions (quick tasks, lookups, troubleshooting) don't need them.
 - **Startup is adaptive** — if the user leads with a task, handle it first. Check handoffs at a natural pause, not as mandatory ceremony.
 - **Handoffs are the coordination layer** — creating a handoff IS the notification mechanism. Completing work doesn't auto-notify anyone.
+- **Knowledge policy** — knowledge entries are for gotchas, safety warnings, compliance rules, and vendor behavior ONLY. Do NOT add infrastructure documentation, config file contents, audit reports, historical logs, architecture diagrams, Docker layouts, crontabs, or resource limits. Before adding knowledge, ask: "Will another CC need this to avoid a mistake?" If no, don't add it. If it's already in CLAUDE.md, config files, git repos, or server/service entities, don't add it. Every entry costs tokens across all CC instances.
 - See the "CC Team — Contribution Standards" knowledge entry for full details.
 
 ## Zammad Integration

@@ -906,13 +906,19 @@ impl ServerHandler for OpsBrain {
                  creating cross-client content. \
                  STANDARDS: search_knowledge 'CC Team Contribution Standards' before \
                  authoring knowledge, runbooks, or incidents. \
+                 KNOWLEDGE POLICY: Knowledge is for gotchas, safety warnings, compliance \
+                 rules, and vendor behavior ONLY. Do NOT add infrastructure docs, config \
+                 contents, audit reports, historical logs, or architecture diagrams. Before \
+                 adding knowledge, ask: will another CC need this to avoid a mistake? If \
+                 no, don't add it. If it's already in CLAUDE.md, config files, git, or \
+                 entities, don't add it. \
                  ROUTING: Use hostname in to_machine when creating handoffs. Route to the \
                  machine closest to the target infrastructure. \
                  AFTER CODE MERGES: Always create a deploy handoff to the production server \
                  with commit hash, deploy steps, and validation checklist. \
                  ALWAYS: (1) get_situational_awareness before infra changes, \
-                 (2) add_knowledge for lessons learned, (3) create_handoff for unfinished \
-                 or cross-CC work.",
+                 (2) add_knowledge ONLY for gotchas/safety/compliance, \
+                 (3) create_handoff for unfinished or cross-CC work.",
             )
     }
 }
