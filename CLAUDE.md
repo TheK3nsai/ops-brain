@@ -194,6 +194,13 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **Severity logic**: monitor `severity_override` (if set via `link_monitor`) → server roles (domain-controller/dns/dhcp → critical; file-server/rds/database/backup → high) → default "medium"
 - **Tool**: `list_watchdog_incidents` — query auto-created incidents by status
 
+## Sessions & Coordination
+
+- **Sessions are optional** — `start_session`/`end_session` are only needed for handoff work or long cross-CC sessions. Most interactions (quick tasks, lookups, troubleshooting) don't need them.
+- **Startup is adaptive** — if the user leads with a task, handle it first. Check handoffs at a natural pause, not as mandatory ceremony.
+- **Handoffs are the coordination layer** — creating a handoff IS the notification mechanism. Completing work doesn't auto-notify anyone.
+- See the "CC Team — Contribution Standards" knowledge entry for full details.
+
 ## Zammad Integration
 
 - **Module**: `src/zammad.rs` — HTTP client for Zammad REST API
