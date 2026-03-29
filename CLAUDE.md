@@ -40,7 +40,7 @@ src/
   metrics.rs       # Uptime Kuma /metrics scraper (Prometheus format parser)
   watchdog.rs      # Proactive monitoring: polls Kuma, detects transitions, auto-creates incidents
   zammad.rs        # Zammad REST API client (HTTP, Token auth, ticket/article CRUD)
-migrations/        # 35 sqlx migration files (auto-run on startup)
+migrations/        # 37 sqlx migration files (auto-run on startup)
 seed/seed.sql      # Idempotent seed data (clients, sites, networks)
 ```
 
