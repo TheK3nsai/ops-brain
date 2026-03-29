@@ -100,12 +100,13 @@ pub async fn create_runbook(
     notes: Option<&str>,
     client_id: Option<Uuid>,
     cross_client_safe: bool,
+    source_url: Option<&str>,
 ) -> Result<Runbook, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Runbook>(
         "INSERT INTO runbooks (id, title, slug, category, content, version, tags,
-            estimated_minutes, requires_reboot, notes, client_id, cross_client_safe)
-         VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, $10, $11)
+            estimated_minutes, requires_reboot, notes, client_id, cross_client_safe, source_url)
+         VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *",
     )
     .bind(id)
@@ -119,6 +120,7 @@ pub async fn create_runbook(
     .bind(notes)
     .bind(client_id)
     .bind(cross_client_safe)
+    .bind(source_url)
     .fetch_one(pool)
     .await
 }
@@ -135,6 +137,7 @@ pub async fn update_runbook(
     requires_reboot: Option<bool>,
     notes: Option<&str>,
     cross_client_safe: Option<bool>,
+    source_url: Option<&str>,
 ) -> Result<Runbook, sqlx::Error> {
     sqlx::query_as::<_, Runbook>(
         "UPDATE runbooks SET
@@ -146,6 +149,7 @@ pub async fn update_runbook(
             requires_reboot = COALESCE($7, requires_reboot),
             notes = COALESCE($8, notes),
             cross_client_safe = COALESCE($9, cross_client_safe),
+            source_url = COALESCE($10, source_url),
             version = version + 1,
             updated_at = NOW()
          WHERE id = $1 RETURNING *",
@@ -159,6 +163,7 @@ pub async fn update_runbook(
     .bind(requires_reboot)
     .bind(notes)
     .bind(cross_client_safe)
+    .bind(source_url)
     .fetch_one(pool)
     .await
 }
