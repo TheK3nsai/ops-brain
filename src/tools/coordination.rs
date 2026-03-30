@@ -88,6 +88,12 @@ pub struct SearchHandoffsParams {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteHandoffParams {
+    /// Handoff ID (UUID)
+    pub handoff_id: String,
+}
+
 // ===== CATCHUP PARAMS =====
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -343,6 +349,22 @@ pub(crate) async fn handle_search_handoffs(
     match result {
         Ok(handoffs) => json_result(&handoffs),
         Err(e) => error_result(&format!("Search error: {e}")),
+    }
+}
+
+pub(crate) async fn handle_delete_handoff(
+    brain: &super::OpsBrain,
+    p: DeleteHandoffParams,
+) -> CallToolResult {
+    let id = match uuid::Uuid::parse_str(&p.handoff_id) {
+        Ok(id) => id,
+        Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
+    };
+
+    match crate::repo::handoff_repo::delete_handoff(&brain.pool, id).await {
+        Ok(true) => json_result(&serde_json::json!({"deleted": true, "id": p.handoff_id})),
+        Ok(false) => not_found("Handoff", &p.handoff_id),
+        Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
 

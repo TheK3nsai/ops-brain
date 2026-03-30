@@ -100,6 +100,14 @@ pub async fn list_handoffs(
     q.fetch_all(pool).await
 }
 
+pub async fn delete_handoff(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM handoffs WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn search_handoffs(
     pool: &PgPool,
     query: &str,

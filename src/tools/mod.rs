@@ -602,6 +602,17 @@ impl OpsBrain {
     }
 
     #[tool(
+        name = "delete_handoff",
+        description = "Permanently delete a handoff by ID (hard delete)"
+    )]
+    async fn delete_handoff(
+        &self,
+        params: Parameters<coordination::DeleteHandoffParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(coordination::handle_delete_handoff(self, params.0).await)
+    }
+
+    #[tool(
         name = "get_catchup",
         description = "Changes since a timestamp: new/updated handoffs, incidents, knowledge, runbooks. \
         Compact mode (default) returns summaries only."
