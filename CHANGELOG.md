@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] — 2026-03-30
+
+### Added
+
+- **`delete_handoff` tool** — hard delete handoffs by ID, requested after duplicate handoff cleanup pain
+
+### Changed
+
+- Tool count: 73 → 74
+
 ## [1.2.0] — 2026-03-29
 
 ### Added

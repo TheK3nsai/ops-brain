@@ -14,7 +14,7 @@ get_situational_awareness(server_slug: "web-server-01")
 
 ## Key Features
 
-- **73 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
+- **74 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
 - **Hybrid search** — full-text (tsvector + websearch_to_tsquery) combined with semantic search (pgvector + nomic-embed-text) via Reciprocal Rank Fusion
 - **Multi-instance Uptime Kuma** — aggregate monitoring from multiple Kuma instances with partial failure tolerance
 - **Proactive monitoring** — background watchdog polls Uptime Kuma, auto-creates/resolves incidents with severity logic, flap suppression, and deduplication
@@ -103,7 +103,7 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 }
 ```
 
-## Tools (73)
+## Tools (74)
 
 ### Inventory (23)
 | Tool | Description |
@@ -153,11 +153,12 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 | `search_incidents` | Search (mode: fts/semantic/hybrid) |
 | `link_incident` | Link servers, services, runbooks, and vendors |
 
-### Sessions & Handoffs (9)
+### Sessions & Handoffs (10)
 | Tool | Description |
 |------|-------------|
 | `start_session` / `end_session` / `list_sessions` | Work session tracking per machine |
 | `create_handoff` / `accept_handoff` / `complete_handoff` | Cross-machine task coordination |
+| `delete_handoff` | Permanently delete a handoff by ID (hard delete) |
 | `list_handoffs` / `search_handoffs` | Filter/search handoffs. Compact mode (default) truncates bodies |
 | `get_catchup` | What changed since a timestamp — handoffs, incidents, knowledge, runbooks, stale runbook warnings |
 
