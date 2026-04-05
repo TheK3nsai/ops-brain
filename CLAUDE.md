@@ -67,6 +67,13 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **nomic-embed-text tokenization** -- real content tokenizes at ~1-1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` is 6,000. Do not increase without empirical testing.
 - **`link_monitor` names in multi-instance mode** -- all lookups are prefix-tolerant (try exact, then strip `instance/` prefix), so linking with unprefixed Kuma names works fine.
 
+## Development Workflow
+
+- **Before committing non-trivial changes**: run `/review` — spawns the project reviewer agent to catch logic and safety issues the pre-commit hook can't
+- **Pre-commit hook** catches fmt, clippy, and check automatically — no need to run these manually
+- **After merging to main**: run `/deploy ops-brain` to SSH deploy to kensai.cloud directly (falls back to handoff if SSH is unavailable)
+- **Subagents**: Use `ops-dev` for implementation/refactoring, `reviewer` for code review. Both are in `.claude/agents/`.
+
 ## What NOT to Do
 
 - **Don't modify existing migrations** -- checksum mismatch will break deployments
