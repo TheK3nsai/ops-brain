@@ -795,36 +795,35 @@ impl ServerHandler for OpsBrain {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ops-brain", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Operational intelligence for IT infrastructure. Key tools: \
-                 get_situational_awareness (context), search_knowledge (AI search, \
-                 use tables param for cross-table), search_inventory (full-text across \
-                 all entities), get_monitoring_summary (live health), list_tickets / \
-                 create_ticket (Zammad), generate_briefing (daily/weekly summaries). \
+                "Operational intelligence for IT infrastructure. \
                  \
-                 MULTI-CC TEAM: You are one of several Claude Code instances sharing \
-                 this server. \
-                 IDENTITY: search_knowledge 'CC Team Identity Naming' to find your CC \
-                 name by hostname. Use it in all authored content. \
-                 STARTUP: If no immediate user task, check list_handoffs for your machine \
-                 and list_incidents for your client scope. P1 handoffs first. If the user \
-                 leads with a task, handle it first — check handoffs at a natural pause. \
-                 COMPLIANCE: search_knowledge 'CC Team Compliance Data Sharing' before \
-                 creating cross-client content. \
-                 STANDARDS: search_knowledge 'CC Team Contribution Standards' before \
-                 authoring knowledge, runbooks, or incidents. \
-                 KNOWLEDGE POLICY: Knowledge is for gotchas, safety warnings, compliance \
-                 rules, and vendor behavior ONLY. Do NOT add infrastructure docs, config \
-                 contents, audit reports, historical logs, or architecture diagrams. Before \
-                 adding knowledge, ask: will another CC need this to avoid a mistake? If \
-                 no, don't add it. If it's already in CLAUDE.md, config files, git, or \
-                 entities, don't add it. \
-                 ROUTING: Use hostname in to_machine when creating handoffs. Route to the \
-                 machine closest to the target infrastructure. \
-                 AFTER CODE MERGES: Always create a deploy handoff to the production server \
-                 with commit hash, deploy steps, and validation checklist. \
+                 MULTI-CC: Shared by several Claude Code instances. \
+                 Identity map: kensai-cloud=CC-Cloud, stealth=CC-Stealth, \
+                 HV-FS0=CC-HSR, CPA-SRV=CC-CPA. Use your CC name in authored content. \
+                 \
+                 KEY TOOLS: get_situational_awareness (full context, use compact=true), \
+                 search_knowledge (AI search, tables param for multi-table), \
+                 search_inventory (full-text all entities), get_monitoring_summary \
+                 (live health), list_tickets/create_ticket (Zammad), \
+                 generate_briefing (daily/weekly). \
+                 \
+                 STARTUP: Handle user's task first. Check list_handoffs and \
+                 list_incidents at a natural pause. \
+                 \
+                 COORDINATION: Use hostname in to_machine for handoffs. Route to \
+                 the machine closest to the target infrastructure. After code merges, \
+                 create a deploy handoff with commit hash and validation checklist. \
+                 \
+                 KNOWLEDGE: Gotchas, safety warnings, compliance rules only. \
+                 Test: will another CC need this to avoid a mistake? If no, skip. \
+                 \
+                 CROSS-CLIENT: Content is client-scoped by default. Cross-client \
+                 content is withheld unless acknowledged. search_knowledge \
+                 'CC Team Compliance' for detailed rules before creating \
+                 cross-client content. \
+                 \
                  ALWAYS: (1) get_situational_awareness before infra changes, \
-                 (2) add_knowledge ONLY for gotchas/safety/compliance, \
-                 (3) create_handoff for unfinished or cross-CC work.",
+                 (2) create_handoff for unfinished or cross-CC work.",
             )
     }
 }
