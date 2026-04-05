@@ -146,33 +146,31 @@ pub(crate) async fn handle_get_monitor_status(
     };
 
     let monitor = match summary.monitors.iter().find(|m| {
-        m.name == p.monitor_name
-            || crate::metrics::strip_instance_prefix(&m.name) == p.monitor_name
+        m.name == p.monitor_name || crate::metrics::strip_instance_prefix(&m.name) == p.monitor_name
     }) {
         Some(m) => m,
         None => return not_found("Monitor", &p.monitor_name),
     };
 
     // Look up DB mapping by exact name, then try stripped prefix for multi-instance mismatch
-    let mapping =
-        match crate::repo::monitor_repo::get_monitor_by_name(&brain.pool, &p.monitor_name)
-            .await
-            .ok()
-            .flatten()
-        {
-            Some(m) => Some(m),
-            None => {
-                let stripped = crate::metrics::strip_instance_prefix(&p.monitor_name);
-                if stripped != p.monitor_name {
-                    crate::repo::monitor_repo::get_monitor_by_name(&brain.pool, stripped)
-                        .await
-                        .ok()
-                        .flatten()
-                } else {
-                    None
-                }
+    let mapping = match crate::repo::monitor_repo::get_monitor_by_name(&brain.pool, &p.monitor_name)
+        .await
+        .ok()
+        .flatten()
+    {
+        Some(m) => Some(m),
+        None => {
+            let stripped = crate::metrics::strip_instance_prefix(&p.monitor_name);
+            if stripped != p.monitor_name {
+                crate::repo::monitor_repo::get_monitor_by_name(&brain.pool, stripped)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
             }
-        };
+        }
+    };
 
     let mut result = serde_json::to_value(monitor).unwrap_or_default();
     inject_push_diagnostic_hint(&mut result, monitor);
