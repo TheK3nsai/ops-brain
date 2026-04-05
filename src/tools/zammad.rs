@@ -48,32 +48,6 @@ pub struct CreateTicketParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct UpdateTicketParams {
-    /// Zammad ticket ID
-    pub ticket_id: i64,
-    /// New title (optional)
-    pub title: Option<String>,
-    /// New state: "new", "open", "pending_reminder", "closed" (optional)
-    pub state: Option<String>,
-    /// New priority: "low", "normal", "high" (optional)
-    pub priority: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct AddTicketNoteParams {
-    /// Zammad ticket ID
-    pub ticket_id: i64,
-    /// Note body text
-    pub body: String,
-    /// Whether this is an internal note (default: true) vs public reply
-    pub internal: Option<bool>,
-    /// Time spent in minutes for time accounting on this article
-    pub time_unit: Option<f64>,
-    /// Time accounting type: 1=Maintenance, 2=On-site, 3=Remote, 4=On-site/Remote
-    pub time_accounting_type_id: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchTicketsParams {
     /// Search query text (Zammad Elasticsearch syntax)
     pub query: String,
@@ -284,75 +258,6 @@ pub(crate) async fn handle_create_ticket(
     }
 
     json_result(&ticket)
-}
-
-pub(crate) async fn handle_update_ticket(
-    brain: &super::OpsBrain,
-    p: UpdateTicketParams,
-) -> CallToolResult {
-    let zammad = match &brain.zammad_config {
-        Some(c) => c,
-        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
-    };
-
-    let state_id = match &p.state {
-        Some(s) => match crate::zammad::state_name_to_id(s) {
-            Some(id) => Some(id),
-            None => {
-                return error_result(&format!(
-                    "Unknown state: '{s}'. Use: new, open, pending_reminder, closed"
-                ))
-            }
-        },
-        None => None,
-    };
-
-    let priority_id = match &p.priority {
-        Some(pr) => match crate::zammad::priority_name_to_id(pr) {
-            Some(id) => Some(id),
-            None => {
-                return error_result(&format!("Unknown priority: '{pr}'. Use: low, normal, high"))
-            }
-        },
-        None => None,
-    };
-
-    let payload = crate::zammad::UpdateTicketPayload {
-        title: p.title,
-        state_id,
-        priority_id,
-        owner_id: None,
-    };
-
-    match crate::zammad::update_ticket(zammad, p.ticket_id, &payload).await {
-        Ok(ticket) => json_result(&ticket),
-        Err(e) => error_result(&e),
-    }
-}
-
-pub(crate) async fn handle_add_ticket_note(
-    brain: &super::OpsBrain,
-    p: AddTicketNoteParams,
-) -> CallToolResult {
-    let zammad = match &brain.zammad_config {
-        Some(c) => c,
-        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
-    };
-
-    let payload = crate::zammad::CreateArticlePayload {
-        ticket_id: p.ticket_id,
-        body: p.body,
-        content_type: Some("text/plain".to_string()),
-        article_type: Some("note".to_string()),
-        internal: Some(p.internal.unwrap_or(true)),
-        time_unit: p.time_unit,
-        time_accounting_type_id: p.time_accounting_type_id,
-    };
-
-    match crate::zammad::add_ticket_article(zammad, &payload).await {
-        Ok(article) => json_result(&article),
-        Err(e) => error_result(&e),
-    }
 }
 
 pub(crate) async fn handle_search_tickets(

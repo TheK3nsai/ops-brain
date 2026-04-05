@@ -14,7 +14,7 @@ get_situational_awareness(server_slug: "web-server-01")
 
 ## Key Features
 
-- **74 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
+- **65 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
 - **Hybrid search** — full-text (tsvector + websearch_to_tsquery) combined with semantic search (pgvector + nomic-embed-text) via Reciprocal Rank Fusion
 - **Multi-instance Uptime Kuma** — aggregate monitoring from multiple Kuma instances with partial failure tolerance
 - **Proactive monitoring** — background watchdog polls Uptime Kuma, auto-creates/resolves incidents with severity logic, flap suppression, and deduplication
@@ -103,7 +103,7 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 }
 ```
 
-## Tools (74)
+## Tools (65)
 
 ### Inventory (23)
 | Tool | Description |
@@ -122,19 +122,18 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 | `link_server_service` | Associate a service with a server |
 | `delete_server` / `delete_service` / `delete_vendor` | Soft-delete with preview + confirm safety gate |
 
-### Runbooks (7)
+### Runbooks (5)
 | Tool | Description |
 |------|-------------|
 | `get_runbook` / `list_runbooks` | Retrieve by slug or filter by category/service/server/tag/client |
 | `search_runbooks` | Search (mode: fts/semantic/hybrid). Supports `client_slug` scoping + cross-client gate |
 | `create_runbook` / `update_runbook` | CRUD with auto-versioning and client ownership |
-| `log_runbook_execution` | Record execution — who, result, duration, notes. Compliance audit trail |
-| `list_runbook_executions` | Execution history for a runbook or across all |
 
-### Knowledge (3)
+### Knowledge (5)
 | Tool | Description |
 |------|-------------|
-| `add_knowledge` | Store operational facts, gotchas, tips. Duplicate detection (cosine >85% warns, `force=true` bypasses) |
+| `add_knowledge` / `update_knowledge` | Store and update operational facts, gotchas, tips. Duplicate detection (cosine >85% warns, `force=true` bypasses) |
+| `delete_knowledge` | Permanently delete a knowledge entry by ID |
 | `search_knowledge` | Hybrid search across knowledge, runbooks, incidents, handoffs via `tables` param. Browse mode (empty query = recent entries). Cross-client gate |
 | `list_knowledge` | Filter by category or client |
 
@@ -153,10 +152,9 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 | `search_incidents` | Search (mode: fts/semantic/hybrid) |
 | `link_incident` | Link servers, services, runbooks, and vendors |
 
-### Sessions & Handoffs (10)
+### Handoffs (7)
 | Tool | Description |
 |------|-------------|
-| `start_session` / `end_session` / `list_sessions` | Work session tracking per machine |
 | `create_handoff` / `accept_handoff` / `complete_handoff` | Cross-machine task coordination |
 | `delete_handoff` | Permanently delete a handoff by ID (hard delete) |
 | `list_handoffs` / `search_handoffs` | Filter/search handoffs. Compact mode (default) truncates bodies |
@@ -171,20 +169,18 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 | `list_watchdog_incidents` | Auto-created incidents from proactive monitoring |
 | `check_health` | Quick server health based on linked monitors |
 
-### Zammad Ticketing (8)
+### Zammad Ticketing (6)
 | Tool | Description |
 |------|-------------|
 | `list_tickets` / `get_ticket` | List (filter by client/state/priority) or get with full article history |
-| `create_ticket` / `update_ticket` | Ticket CRUD, optionally linked to ops-brain incidents |
-| `add_ticket_note` | Internal note with optional time accounting |
+| `create_ticket` | Create ticket, optionally linked to ops-brain incidents |
 | `search_tickets` | Full-text search (Elasticsearch syntax) |
 | `link_ticket` / `unlink_ticket` | Map Zammad tickets to incidents/servers/services |
 
-### Briefings (3)
+### Briefings (1)
 | Tool | Description |
 |------|-------------|
 | `generate_briefing` | Daily or weekly operational summary — monitoring, incidents, handoffs, tickets |
-| `list_briefings` / `get_briefing` | Historical briefing access |
 
 ### Other (2)
 | Tool | Description |
@@ -293,9 +289,6 @@ ops-brain is designed for solo operators managing multiple clients with differen
 ## Planned
 
 - **Web dashboard** — read-only operational view without a Claude session
-- **Briefing automation** — server-side cron for daily/weekly email delivery
-- **Trend analysis** — daily metric snapshots for backup freshness, disk usage, incident frequency
-- **Auto-deploy** — GitHub Actions CD on merge to main
 
 ## License
 

@@ -502,44 +502,6 @@ mod coordination_tests {
     use super::*;
 
     #[tokio::test]
-    async fn session_lifecycle() {
-        let pool = pool().await;
-        let machine_id = format!("test-{}", Uuid::now_v7());
-
-        let session = ops_brain::repo::session_repo::start_session(&pool, &machine_id, "test-host")
-            .await
-            .unwrap();
-
-        assert!(session.ended_at.is_none());
-        assert_eq!(session.machine_hostname, "test-host");
-
-        // List active sessions
-        let active =
-            ops_brain::repo::session_repo::list_sessions(&pool, Some(&machine_id), true, 10)
-                .await
-                .unwrap();
-        assert!(active.iter().any(|s| s.id == session.id));
-
-        // End session
-        let ended = ops_brain::repo::session_repo::end_session(
-            &pool,
-            session.id,
-            Some("Completed testing"),
-        )
-        .await
-        .unwrap();
-        assert!(ended.ended_at.is_some());
-        assert_eq!(ended.summary.as_deref(), Some("Completed testing"));
-
-        // Cleanup
-        sqlx::query("DELETE FROM sessions WHERE id = $1")
-            .bind(session.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
     async fn handoff_lifecycle() {
         let pool = pool().await;
 
@@ -674,7 +636,7 @@ mod briefing_tests {
     use super::*;
 
     #[tokio::test]
-    async fn insert_and_retrieve_briefing() {
+    async fn insert_briefing() {
         let pool = pool().await;
 
         let briefing = ops_brain::repo::briefing_repo::insert_briefing(
@@ -692,19 +654,6 @@ mod briefing_tests {
             briefing.content,
             "# Daily Briefing\n\nAll systems operational."
         );
-
-        // Get by ID
-        let fetched = ops_brain::repo::briefing_repo::get_briefing(&pool, briefing.id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.content, briefing.content);
-
-        // List briefings
-        let list = ops_brain::repo::briefing_repo::list_briefings(&pool, Some("daily"), None, 10)
-            .await
-            .unwrap();
-        assert!(list.iter().any(|b| b.id == briefing.id));
 
         // Cleanup
         sqlx::query("DELETE FROM briefings WHERE id = $1")
@@ -1167,104 +1116,6 @@ mod suggest_tests {
 }
 
 // ===== Runbook Execution Repo =====
-
-mod runbook_execution_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn log_and_list_execution() {
-        let pool = pool().await;
-        let slug = format!("test-rb-exec-{}", Uuid::now_v7());
-
-        // Create a runbook to reference
-        let runbook = ops_brain::repo::runbook_repo::create_runbook(
-            &pool,
-            "Test Runbook for Execution",
-            &slug,
-            Some("testing"),
-            "Step 1: do the thing",
-            &[],
-            Some(10),
-            false,
-            None,
-            None,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
-
-        // Log an execution
-        let exec = ops_brain::repo::runbook_execution_repo::log_execution(
-            &pool,
-            runbook.id,
-            "CC-DevLaptop",
-            "success",
-            Some("DR test completed, all systems restored"),
-            Some(45),
-            None,
-            Some("alpha"),
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(exec.runbook_id, runbook.id);
-        assert_eq!(exec.executor, "CC-DevLaptop");
-        assert_eq!(exec.result, "success");
-        assert_eq!(
-            exec.notes.as_deref(),
-            Some("DR test completed, all systems restored")
-        );
-        assert_eq!(exec.duration_minutes, Some(45));
-        assert_eq!(exec.client_slug.as_deref(), Some("alpha"));
-
-        // Log another execution
-        let exec2 = ops_brain::repo::runbook_execution_repo::log_execution(
-            &pool,
-            runbook.id,
-            "CC-Remote",
-            "failure",
-            Some("Network issue during step 3"),
-            Some(15),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(exec2.result, "failure");
-
-        // List executions for this runbook
-        let list = ops_brain::repo::runbook_execution_repo::list_executions_for_runbook(
-            &pool, runbook.id, 10,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(list.len(), 2);
-
-        // List recent executions (global)
-        let recent = ops_brain::repo::runbook_execution_repo::list_recent_executions(&pool, 100)
-            .await
-            .unwrap();
-        assert!(recent.iter().any(|e| e.id == exec.id));
-        assert!(recent.iter().any(|e| e.id == exec2.id));
-
-        // Cleanup
-        sqlx::query("DELETE FROM runbook_executions WHERE runbook_id = $1")
-            .bind(runbook.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM runbooks WHERE id = $1")
-            .bind(runbook.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-}
 
 // ===== Vendor Dedup Tests =====
 

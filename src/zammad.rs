@@ -162,35 +162,6 @@ pub struct CreateArticleInline {
     pub time_accounting_type_id: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct UpdateTicketPayload {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub priority_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner_id: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CreateArticlePayload {
-    pub ticket_id: i64,
-    pub body: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content_type: Option<String>,
-    #[serde(rename = "type")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub article_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub internal: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time_unit: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time_accounting_type_id: Option<i64>,
-}
-
 // ===== API functions =====
 
 fn build_client(_config: &ZammadConfig) -> reqwest::Client {
@@ -370,71 +341,6 @@ pub async fn create_ticket(
         .json::<ZammadTicket>()
         .await
         .map_err(|e| format!("Failed to parse Zammad create ticket response: {e}"))
-}
-
-/// Update an existing ticket
-pub async fn update_ticket(
-    config: &ZammadConfig,
-    ticket_id: i64,
-    payload: &UpdateTicketPayload,
-) -> Result<ZammadTicket, String> {
-    let client = build_client(config);
-    let url = api_url(config, &format!("/tickets/{ticket_id}"));
-
-    let response = client
-        .put(&url)
-        .header("Authorization", auth_header(config))
-        .header("Content-Type", "application/json")
-        .query(&[("expand", "true")])
-        .json(payload)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to update Zammad ticket {ticket_id}: {e}"))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Zammad PUT ticket {ticket_id} returned HTTP {status}: {body}"
-        ));
-    }
-
-    response
-        .json::<ZammadTicket>()
-        .await
-        .map_err(|e| format!("Failed to parse Zammad update ticket response: {e}"))
-}
-
-/// Add an article (note/reply) to a ticket
-pub async fn add_ticket_article(
-    config: &ZammadConfig,
-    payload: &CreateArticlePayload,
-) -> Result<ZammadArticle, String> {
-    let client = build_client(config);
-    let url = api_url(config, "/ticket_articles");
-
-    let response = client
-        .post(&url)
-        .header("Authorization", auth_header(config))
-        .header("Content-Type", "application/json")
-        .json(payload)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to add article to ticket {}: {e}", payload.ticket_id))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Zammad POST article for ticket {} returned HTTP {status}: {body}",
-            payload.ticket_id
-        ));
-    }
-
-    response
-        .json::<ZammadArticle>()
-        .await
-        .map_err(|e| format!("Failed to parse Zammad article response: {e}"))
 }
 
 #[cfg(test)]

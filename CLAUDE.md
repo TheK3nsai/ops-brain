@@ -47,9 +47,8 @@ Multi-client data handling for a solo operator managing clients with different c
 
 The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug` and returns a comprehensive briefing. Use `compact=true` to reduce response size (~94K->~10K). Use `sections` to limit which parts are returned (e.g. `["server","services","monitoring"]`).
 
-## Sessions & Coordination
+## Coordination
 
-- **Sessions are optional** -- only needed for handoff work or long cross-CC sessions
 - **Startup is adaptive** -- if the user leads with a task, handle it first. Check handoffs at a natural pause.
 - **Handoffs are the coordination layer** -- creating a handoff IS the notification mechanism
 - **Knowledge policy** -- knowledge entries are for gotchas, safety warnings, compliance rules, and vendor behavior ONLY. Every entry costs tokens across all CC instances.

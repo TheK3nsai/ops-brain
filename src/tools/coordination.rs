@@ -7,35 +7,6 @@ use super::helpers::{error_result, json_result, not_found};
 use super::shared::{embed_and_store, get_query_embedding, resolve_compact};
 use rmcp::model::*;
 
-// ===== SESSION PARAMS =====
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct StartSessionParams {
-    /// Machine identifier (e.g. "dev-laptop", "prod-server")
-    pub machine_id: String,
-    /// Machine hostname
-    pub machine_hostname: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct EndSessionParams {
-    /// Session ID (UUID)
-    pub session_id: String,
-    /// Summary of what was accomplished in this session
-    pub summary: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListSessionsParams {
-    /// Filter by machine ID
-    pub machine_id: Option<String>,
-    /// Only show active (not ended) sessions
-    pub active_only: Option<bool>,
-    /// Max results (default 20)
-    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
-    pub limit: Option<i64>,
-}
-
 // ===== HANDOFF PARAMS =====
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -107,55 +78,6 @@ pub struct GetCatchupParams {
     pub limit: Option<i64>,
     /// Summary fields only, excludes completed handoffs (default: true). Set false for full bodies.
     pub compact: Option<bool>,
-}
-
-// ===== SESSION HANDLERS =====
-
-pub(crate) async fn handle_start_session(
-    brain: &super::OpsBrain,
-    p: StartSessionParams,
-) -> CallToolResult {
-    match crate::repo::session_repo::start_session(&brain.pool, &p.machine_id, &p.machine_hostname)
-        .await
-    {
-        Ok(session) => json_result(&session),
-        Err(e) => error_result(&format!("Database error: {e}")),
-    }
-}
-
-pub(crate) async fn handle_end_session(
-    brain: &super::OpsBrain,
-    p: EndSessionParams,
-) -> CallToolResult {
-    let id = match uuid::Uuid::parse_str(&p.session_id) {
-        Ok(id) => id,
-        Err(_) => return error_result(&format!("Invalid UUID: {}", p.session_id)),
-    };
-
-    match crate::repo::session_repo::end_session(&brain.pool, id, p.summary.as_deref()).await {
-        Ok(session) => json_result(&session),
-        Err(e) => error_result(&format!("Database error: {e}")),
-    }
-}
-
-pub(crate) async fn handle_list_sessions(
-    brain: &super::OpsBrain,
-    p: ListSessionsParams,
-) -> CallToolResult {
-    let limit = p.limit.unwrap_or(20);
-    let active_only = p.active_only.unwrap_or(false);
-
-    match crate::repo::session_repo::list_sessions(
-        &brain.pool,
-        p.machine_id.as_deref(),
-        active_only,
-        limit,
-    )
-    .await
-    {
-        Ok(sessions) => json_result(&sessions),
-        Err(e) => error_result(&format!("Database error: {e}")),
-    }
 }
 
 // ===== HANDOFF HANDLERS =====
@@ -593,7 +515,7 @@ pub(crate) async fn handle_get_catchup(
                     "count": items.len(),
                     "threshold_days": 30,
                     "items": items,
-                    "_tip": "Runbooks not verified in 30+ days. Use log_runbook_execution with result='success' to mark as verified.",
+                    "_tip": "Runbooks not verified in 30+ days. Use update_runbook with verified=true to mark as current.",
                 }),
             );
         }

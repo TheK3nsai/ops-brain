@@ -323,30 +323,6 @@ impl OpsBrain {
         Ok(runbooks::handle_update_runbook(self, params.0).await)
     }
 
-    #[tool(
-        name = "log_runbook_execution",
-        description = "Record a runbook execution for audit trail. Tracks executor, result, duration. \
-        Optional client_slug for HIPAA compliance. incident_id for bi-directional linking. \
-        Successful runs update last_verified_at."
-    )]
-    async fn log_runbook_execution(
-        &self,
-        params: Parameters<runbooks::LogRunbookExecutionParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(runbooks::handle_log_runbook_execution(self, params.0).await)
-    }
-
-    #[tool(
-        name = "list_runbook_executions",
-        description = "List runbook execution history. Optionally filter by runbook slug."
-    )]
-    async fn list_runbook_executions(
-        &self,
-        params: Parameters<runbooks::ListRunbookExecutionsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(runbooks::handle_list_runbook_executions(self, params.0).await)
-    }
-
     // ===== KNOWLEDGE TOOLS =====
 
     #[tool(
@@ -510,41 +486,6 @@ impl OpsBrain {
         params: Parameters<incidents::LinkIncidentParams>,
     ) -> Result<CallToolResult, McpError> {
         Ok(incidents::handle_link_incident(self, params.0).await)
-    }
-
-    // ===== SESSION TOOLS =====
-
-    #[tool(
-        name = "start_session",
-        description = "Start a new work session on a machine. Returns session ID for handoff tracking."
-    )]
-    async fn start_session(
-        &self,
-        params: Parameters<coordination::StartSessionParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_start_session(self, params.0).await)
-    }
-
-    #[tool(
-        name = "end_session",
-        description = "End a work session with an optional summary of what was accomplished"
-    )]
-    async fn end_session(
-        &self,
-        params: Parameters<coordination::EndSessionParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_end_session(self, params.0).await)
-    }
-
-    #[tool(
-        name = "list_sessions",
-        description = "List work sessions, optionally filtered by machine and active status"
-    )]
-    async fn list_sessions(
-        &self,
-        params: Parameters<coordination::ListSessionsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_list_sessions(self, params.0).await)
     }
 
     // ===== HANDOFF TOOLS =====
@@ -753,28 +694,6 @@ impl OpsBrain {
     }
 
     #[tool(
-        name = "update_ticket",
-        description = "Update a Zammad ticket's state, priority, or title."
-    )]
-    async fn update_ticket(
-        &self,
-        params: Parameters<zammad::UpdateTicketParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(zammad::handle_update_ticket(self, params.0).await)
-    }
-
-    #[tool(
-        name = "add_ticket_note",
-        description = "Add an internal note (or public reply) to a Zammad ticket. Supports time accounting."
-    )]
-    async fn add_ticket_note(
-        &self,
-        params: Parameters<zammad::AddTicketNoteParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(zammad::handle_add_ticket_note(self, params.0).await)
-    }
-
-    #[tool(
         name = "search_tickets",
         description = "Search Zammad tickets via Elasticsearch syntax."
     )]
@@ -819,28 +738,6 @@ impl OpsBrain {
         params: Parameters<briefings::GenerateBriefingParams>,
     ) -> Result<CallToolResult, McpError> {
         Ok(briefings::handle_generate_briefing(self, params.0).await)
-    }
-
-    #[tool(
-        name = "list_briefings",
-        description = "List previous briefings. Filter by type (daily/weekly) and/or client slug."
-    )]
-    async fn list_briefings(
-        &self,
-        params: Parameters<briefings::ListBriefingsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(briefings::handle_list_briefings(self, params.0).await)
-    }
-
-    #[tool(
-        name = "get_briefing",
-        description = "Retrieve a specific briefing by ID."
-    )]
-    async fn get_briefing(
-        &self,
-        params: Parameters<briefings::GetBriefingParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(briefings::handle_get_briefing(self, params.0).await)
     }
 
     // ── Delete tools (inventory cleanup) ──────────────────────────────
@@ -911,8 +808,6 @@ impl ServerHandler for OpsBrain {
                  STARTUP: If no immediate user task, check list_handoffs for your machine \
                  and list_incidents for your client scope. P1 handoffs first. If the user \
                  leads with a task, handle it first — check handoffs at a natural pause. \
-                 Sessions (start_session/end_session) are optional — only for handoff \
-                 work or long cross-CC sessions. \
                  COMPLIANCE: search_knowledge 'CC Team Compliance Data Sharing' before \
                  creating cross-client content. \
                  STANDARDS: search_knowledge 'CC Team Contribution Standards' before \

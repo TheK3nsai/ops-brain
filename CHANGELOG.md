@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] — 2026-04-05
+
+### Removed
+
+- **Session tools** (`start_session`, `end_session`, `list_sessions`) — sessions were optional ceremony; handoffs are the real coordination layer
+- **Runbook execution tools** (`log_runbook_execution`, `list_runbook_executions`) — audit trail nobody reviewed
+- **Briefing browse tools** (`list_briefings`, `get_briefing`) — briefings delivered via server-side cron email; on-demand `generate_briefing` retained
+- **Zammad pass-through tools** (`update_ticket`, `add_ticket_note`) — use Zammad UI directly for updates/notes; create, search, and linking tools retained
+- Dead repo modules, model files, and integration tests for removed tools
+
+### Changed
+
+- Tool count: 74 → 65 (reduced token footprint for all CC instances)
+- Updated server instructions to remove session references
+- `get_catchup` stale runbook tip updated to reference `update_runbook(verified=true)` instead of removed `log_runbook_execution`
+
 ## [1.2.1] — 2026-03-30
 
 ### Added
