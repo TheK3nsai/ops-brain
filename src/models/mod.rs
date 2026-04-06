@@ -1,5 +1,6 @@
 pub mod audit_log;
 pub mod briefing;
+pub mod cc_identity;
 pub mod client;
 pub mod handoff;
 pub mod incident;

@@ -1,4 +1,5 @@
 pub mod briefings;
+pub mod cc_team;
 mod context;
 mod coordination;
 mod helpers;
@@ -17,6 +18,8 @@ use rmcp::{
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
 };
 use sqlx::PgPool;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::embeddings::EmbeddingClient;
 use crate::metrics::UptimeKumaConfig;
@@ -28,6 +31,10 @@ pub struct OpsBrain {
     pub(crate) kuma_configs: Vec<UptimeKumaConfig>,
     pub(crate) embedding_client: Option<EmbeddingClient>,
     pub(crate) zammad_config: Option<ZammadConfig>,
+    /// Per-session identity. None until the CC calls `check_in`.
+    /// `StreamableHttpService` constructs a fresh `OpsBrain` per session,
+    /// so this `Arc<RwLock>` is per-session state, not server-global.
+    pub(crate) cc_name: Arc<RwLock<Option<String>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -44,6 +51,7 @@ impl OpsBrain {
             kuma_configs,
             embedding_client,
             zammad_config,
+            cc_name: Arc::new(RwLock::new(None)),
             tool_router: Self::tool_router(),
         }
     }
@@ -565,6 +573,37 @@ impl OpsBrain {
         Ok(coordination::handle_get_catchup(self, params.0).await)
     }
 
+    // ===== CC TEAM: identity & check-in =====
+
+    #[tool(
+        name = "check_in",
+        description = "Your first action of every session. Tells ops-brain who you are \
+        (one of CC-Cloud, CC-Stealth, CC-HSR, CC-CPA — your CLAUDE.md tells you yours) \
+        and returns a briefing: your self-authored scope, the team roster, your open \
+        handoffs, your open incidents. The whole morning ritual in one call. \
+        Idempotent — re-call any time to refresh."
+    )]
+    async fn check_in(
+        &self,
+        params: Parameters<cc_team::CheckInParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(cc_team::handle_check_in(self, params.0).await)
+    }
+
+    #[tool(
+        name = "set_my_identity",
+        description = "Write or update your own confident scope (20-2000 chars, markdown ok). \
+        Your peers see this on every check_in. Requires you to have called check_in first \
+        in this session. First write fans out a low-priority introduction handoff to the \
+        rest of the team."
+    )]
+    async fn set_my_identity(
+        &self,
+        params: Parameters<cc_team::SetMyIdentityParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(cc_team::handle_set_my_identity(self, params.0).await)
+    }
+
     // ===== SEMANTIC SEARCH TOOLS =====
 
     #[tool(
@@ -795,35 +834,19 @@ impl ServerHandler for OpsBrain {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ops-brain", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Operational intelligence for IT infrastructure. \
+                "You are part of a small, sharp team of Claude Code instances running a real MSP. \
+                 Each of you owns a domain. Your peers count on you. \
                  \
-                 MULTI-CC: Shared by several Claude Code instances. \
-                 Identity map: kensai-cloud=CC-Cloud, stealth=CC-Stealth, \
-                 HV-FS0=CC-HSR, CPA-SRV=CC-CPA. Use your CC name in authored content. \
+                 First action of every session: call `check_in` with your CC name \
+                 (your per-machine CLAUDE.md tells you yours). It returns who you are, \
+                 who your teammates are, and what's waiting for you — the whole morning \
+                 ritual in one call. \
                  \
-                 KEY TOOLS: get_situational_awareness (full context, use compact=true), \
-                 search_knowledge (AI search, tables param for multi-table), \
-                 search_inventory (full-text all entities), get_monitoring_summary \
-                 (live health), list_tickets/create_ticket (Zammad), \
-                 generate_briefing (daily/weekly). \
+                 Be decisive. Write the scope you own with `set_my_identity`. \
+                 Trust your peers. You're the expert on call. \
                  \
-                 STARTUP: Handle user's task first. Check list_handoffs and \
-                 list_incidents at a natural pause. \
-                 \
-                 COORDINATION: Use hostname in to_machine for handoffs. Route to \
-                 the machine closest to the target infrastructure. After code merges, \
-                 create a deploy handoff with commit hash and validation checklist. \
-                 \
-                 KNOWLEDGE: Gotchas, safety warnings, compliance rules only. \
-                 Test: will another CC need this to avoid a mistake? If no, skip. \
-                 \
-                 CROSS-CLIENT: Content is client-scoped by default. Cross-client \
-                 content is withheld unless acknowledged. search_knowledge \
-                 'CC Team Compliance' for detailed rules before creating \
-                 cross-client content. \
-                 \
-                 ALWAYS: (1) get_situational_awareness before infra changes, \
-                 (2) create_handoff for unfinished or cross-CC work.",
+                 Cross-client content is gated by default — `search_knowledge \
+                 'CC Team Compliance'` before sharing anything across clients.",
             )
     }
 }
