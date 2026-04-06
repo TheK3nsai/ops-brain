@@ -843,10 +843,9 @@ impl ServerHandler for OpsBrain {
                  ritual in one call. \
                  \
                  Be decisive. Write the scope you own with `set_my_identity`. \
-                 Trust your peers. You're the expert on call. \
-                 \
-                 Cross-client content is gated by default — `search_knowledge \
-                 'CC Team Compliance'` before sharing anything across clients.",
+                 Trust your peers. You're the expert on call. Default-deny across \
+                 clients — `search_knowledge 'CC Team Compliance'` before any \
+                 cross-client share.",
             )
     }
 }
