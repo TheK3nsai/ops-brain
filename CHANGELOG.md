@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **`check_in` tool** — every CC's first action of every session. Self-declares CC name, returns a one-shot briefing: your self-authored scope, the team roster, your open handoffs, your open incidents in scope. The whole morning ritual collapses into one call.
+- **`set_my_identity` tool** — each CC writes its own confident scope (20-2000 chars, markdown). Self-sovereign by construction: a CC can only ever update its own row. Peers see this on every check_in.
+- **`cc_identities` table** (migration `20260406000001`) — TEXT PK on cc_name, holds the four self-authored team identities.
+- **First-write announcement handoffs** — when a CC writes its identity for the first time, ops-brain fans out a low-priority intro handoff to every other CC's machine. Best-effort, per-peer failures logged but don't fail the parent call.
+- **Per-session identity state** on `OpsBrain` — `Arc<RwLock<Option<String>>>` populated by `check_in`, consumed by `set_my_identity`. Per-session because `StreamableHttpService` constructs a fresh `OpsBrain` per connection.
+
+### Changed
+
+- **`get_info` instructions slimmed from ~170 words to ~50** — the only thing the static string says now is "you're on a team, call check_in first." Tool list, knowledge policy, coordination protocol, compliance gate all moved to where they belong (knowledge entries, the briefing payload, or the code itself). The instructions are now an invitation, not a manual.
+- Tool count: 65 → 67
+
 ## [1.3.0] — 2026-04-05
 
 ### Removed

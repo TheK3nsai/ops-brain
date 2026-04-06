@@ -56,6 +56,46 @@ pub async fn list_incidents(
     q.fetch_all(pool).await
 }
 
+/// List open incidents in the scope a single CC owns.
+///
+/// Semantics differ from `list_incidents` in one important way: when
+/// `client_id = None`, this returns ONLY rows where `client_id IS NULL`
+/// (global infrastructure incidents) — NOT every incident across every
+/// client. This is the correct shape for the cc_team briefing, where
+/// CC-Cloud and CC-Stealth own the global infra and must not see
+/// hospice or CPA incidents in their morning briefing.
+pub async fn list_open_incidents_for_cc(
+    pool: &PgPool,
+    client_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<Incident>, sqlx::Error> {
+    match client_id {
+        Some(cid) => {
+            sqlx::query_as::<_, Incident>(
+                "SELECT * FROM incidents
+             WHERE client_id = $1 AND status = 'open'
+             ORDER BY reported_at DESC
+             LIMIT $2",
+            )
+            .bind(cid)
+            .bind(limit)
+            .fetch_all(pool)
+            .await
+        }
+        None => {
+            sqlx::query_as::<_, Incident>(
+                "SELECT * FROM incidents
+             WHERE client_id IS NULL AND status = 'open'
+             ORDER BY reported_at DESC
+             LIMIT $1",
+            )
+            .bind(limit)
+            .fetch_all(pool)
+            .await
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn create_incident(
     pool: &PgPool,

@@ -1472,3 +1472,236 @@ mod server_partial_update_tests {
         cleanup(&pool, &server_slug, site_id, client_id).await;
     }
 }
+
+// ===== CC Identity Repo & Team Flow =====
+
+mod cc_team_tests {
+    use super::*;
+
+    /// Use a unique test cc_name (not a real one) so we never collide with
+    /// real entries on a shared dev DB. The repo accepts any TEXT key — the
+    /// CC_TEAM allowlist is enforced one layer up at the handler.
+    fn test_cc_name() -> String {
+        format!("TEST-CC-{}", Uuid::now_v7())
+    }
+
+    async fn delete_identity(pool: &PgPool, cc_name: &str) {
+        sqlx::query("DELETE FROM cc_identities WHERE cc_name = $1")
+            .bind(cc_name)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_first_write_returns_first_write_true() {
+        let pool = pool().await;
+        let cc = test_cc_name();
+
+        let (row, was_first) = ops_brain::repo::cc_identity_repo::upsert(
+            &pool,
+            &cc,
+            "I am a test identity for the cc team flow.",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(row.cc_name, cc);
+        assert!(row.body.contains("test identity"));
+        assert!(was_first, "first write should report was_first=true");
+
+        delete_identity(&pool, &cc).await;
+    }
+
+    #[tokio::test]
+    async fn upsert_second_write_reports_not_first() {
+        let pool = pool().await;
+        let cc = test_cc_name();
+
+        let (_, first) =
+            ops_brain::repo::cc_identity_repo::upsert(&pool, &cc, "first body content here")
+                .await
+                .unwrap();
+        assert!(first);
+
+        let (row, second) = ops_brain::repo::cc_identity_repo::upsert(
+            &pool,
+            &cc,
+            "second body content overwrites first",
+        )
+        .await
+        .unwrap();
+        assert!(!second, "subsequent write should report was_first=false");
+        assert!(row.body.contains("second body"));
+        assert!(!row.body.contains("first body"));
+
+        delete_identity(&pool, &cc).await;
+    }
+
+    #[tokio::test]
+    async fn get_returns_none_for_unknown_cc() {
+        let pool = pool().await;
+        let result =
+            ops_brain::repo::cc_identity_repo::get(&pool, "TEST-CC-definitely-not-real-12345")
+                .await
+                .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_all_includes_recent_upsert() {
+        let pool = pool().await;
+        let cc = test_cc_name();
+
+        ops_brain::repo::cc_identity_repo::upsert(&pool, &cc, "list-all visibility check body")
+            .await
+            .unwrap();
+
+        let all = ops_brain::repo::cc_identity_repo::list_all(&pool)
+            .await
+            .unwrap();
+        assert!(
+            all.iter().any(|i| i.cc_name == cc),
+            "list_all should include the just-upserted row"
+        );
+
+        delete_identity(&pool, &cc).await;
+    }
+
+    #[tokio::test]
+    async fn upsert_updates_timestamp() {
+        let pool = pool().await;
+        let cc = test_cc_name();
+
+        let (r1, _) =
+            ops_brain::repo::cc_identity_repo::upsert(&pool, &cc, "original timestamp body")
+                .await
+                .unwrap();
+        let t1 = r1.updated_at;
+
+        // Sleep just enough for NOW() to advance.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let (r2, _) =
+            ops_brain::repo::cc_identity_repo::upsert(&pool, &cc, "rewrite timestamp body")
+                .await
+                .unwrap();
+        assert!(r2.updated_at > t1, "updated_at should advance on rewrite");
+
+        delete_identity(&pool, &cc).await;
+    }
+
+    // ===== Handler-level safety guards =====
+    //
+    // The repo tests above cover the data layer. These tests cover the
+    // handler guards that make the "a CC can only ever update its own row"
+    // claim provably true: invalid name rejection, set_my_identity requires
+    // prior check_in, and the no-mid-session-impersonation rule.
+
+    fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
+        ops_brain::tools::OpsBrain::new(pool, vec![], None, None)
+    }
+
+    fn extract_text(result: &rmcp::model::CallToolResult) -> String {
+        result
+            .content
+            .first()
+            .expect("result has at least one content item")
+            .as_text()
+            .expect("content is text")
+            .text
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn handler_check_in_rejects_invalid_name() {
+        let brain = build_brain(pool().await);
+        let result = ops_brain::tools::cc_team::handle_check_in(
+            &brain,
+            ops_brain::tools::cc_team::CheckInParams {
+                my_name: "CC-NotReal".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(text.contains("Invalid CC name"));
+        assert!(text.contains("CC-Cloud"), "error should list valid names");
+    }
+
+    #[tokio::test]
+    async fn handler_set_my_identity_requires_prior_check_in() {
+        let brain = build_brain(pool().await);
+        // No check_in called — this is the safety guarantee under test.
+        let result = ops_brain::tools::cc_team::handle_set_my_identity(
+            &brain,
+            ops_brain::tools::cc_team::SetMyIdentityParams {
+                body: "I am a confident teammate with a clear scope to defend.".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(text.contains("haven't checked in"));
+    }
+
+    #[tokio::test]
+    async fn handler_check_in_rejects_conflicting_name_swap() {
+        let brain = build_brain(pool().await);
+
+        let r1 = ops_brain::tools::cc_team::handle_check_in(
+            &brain,
+            ops_brain::tools::cc_team::CheckInParams {
+                my_name: "CC-Stealth".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(
+            r1.is_error,
+            Some(false),
+            "first valid check_in should succeed"
+        );
+
+        // Same session attempting to switch identity must be rejected.
+        let r2 = ops_brain::tools::cc_team::handle_check_in(
+            &brain,
+            ops_brain::tools::cc_team::CheckInParams {
+                my_name: "CC-CPA".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(r2.is_error, Some(true));
+        let text = extract_text(&r2);
+        assert!(text.contains("Already checked in"));
+        assert!(text.contains("CC-Stealth"));
+        assert!(text.contains("CC-CPA"));
+    }
+
+    #[tokio::test]
+    async fn handler_check_in_same_name_is_idempotent() {
+        let brain = build_brain(pool().await);
+
+        let r1 = ops_brain::tools::cc_team::handle_check_in(
+            &brain,
+            ops_brain::tools::cc_team::CheckInParams {
+                my_name: "CC-Stealth".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(r1.is_error, Some(false));
+
+        // Same name → refresh, should succeed again.
+        let r2 = ops_brain::tools::cc_team::handle_check_in(
+            &brain,
+            ops_brain::tools::cc_team::CheckInParams {
+                my_name: "CC-Stealth".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(
+            r2.is_error,
+            Some(false),
+            "same-name re-check should succeed (refresh ritual)"
+        );
+    }
+}
