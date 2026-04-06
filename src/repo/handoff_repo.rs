@@ -3,6 +3,11 @@ use uuid::Uuid;
 
 use crate::models::handoff::Handoff;
 
+/// How long a notify-class handoff stays visible in operational queries
+/// (list_handoffs, check_in) before being filtered out at read time. The row
+/// itself is preserved for audit and search history.
+pub const NOTIFY_TTL_DAYS: i32 = 7;
+
 pub async fn get_handoff(pool: &PgPool, id: Uuid) -> Result<Option<Handoff>, sqlx::Error> {
     sqlx::query_as::<_, Handoff>("SELECT * FROM handoffs WHERE id = $1")
         .bind(id)
@@ -17,14 +22,15 @@ pub async fn create_handoff(
     from_machine: &str,
     to_machine: Option<&str>,
     priority: &str,
+    category: &str,
     title: &str,
     body: &str,
     context: Option<&serde_json::Value>,
 ) -> Result<Handoff, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Handoff>(
-        "INSERT INTO handoffs (id, from_session_id, from_machine, to_machine, priority, title, body, context)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "INSERT INTO handoffs (id, from_session_id, from_machine, to_machine, priority, category, title, body, context)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *",
     )
     .bind(id)
@@ -32,6 +38,7 @@ pub async fn create_handoff(
     .bind(from_machine)
     .bind(to_machine)
     .bind(priority)
+    .bind(category)
     .bind(title)
     .bind(body)
     .bind(context)
@@ -54,11 +61,14 @@ pub async fn update_handoff_status(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn list_handoffs(
     pool: &PgPool,
     status: Option<&str>,
     to_machine: Option<&str>,
     from_machine: Option<&str>,
+    category: Option<&str>,
+    include_notify: bool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let mut query = String::from("SELECT * FROM handoffs");
@@ -77,6 +87,20 @@ pub async fn list_handoffs(
         conditions.push(format!("from_machine = ${param_idx}"));
         param_idx += 1;
     }
+    if category.is_some() {
+        // Explicit category filter wins; include_notify is ignored.
+        conditions.push(format!("category = ${param_idx}"));
+        param_idx += 1;
+    } else if !include_notify {
+        // Default: action queue only.
+        conditions.push("category = 'action'".to_string());
+    }
+
+    // Read-time pruning: stale notify rows never resurface in operational
+    // queries. The row stays in the table; it just stops being noise.
+    conditions.push(format!(
+        "(category = 'action' OR created_at > now() - interval '{NOTIFY_TTL_DAYS} days')"
+    ));
 
     if !conditions.is_empty() {
         query.push_str(" WHERE ");
@@ -93,6 +117,9 @@ pub async fn list_handoffs(
         q = q.bind(v);
     }
     if let Some(v) = from_machine {
+        q = q.bind(v);
+    }
+    if let Some(v) = category {
         q = q.bind(v);
     }
     q = q.bind(limit);
