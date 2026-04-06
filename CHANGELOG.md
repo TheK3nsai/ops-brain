@@ -15,6 +15,8 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **`get_info` instructions slimmed from ~170 words to ~50** — the only thing the static string says now is "you're on a team, call check_in first." Tool list, knowledge policy, coordination protocol, compliance gate all moved to where they belong (knowledge entries, the briefing payload, or the code itself). The instructions are now an invitation, not a manual.
+- **`check_in` bootstrap response: drop redundant `next` field** (PR #30) — when a CC is in `bootstrap` state, the briefing's `your_scope` prose already nudges the CC to call `set_my_identity`. The `next` field was just restating the same idea on a different surface. Now omitted in bootstrap; kept for `self_authored` where it carries real operational guidance.
+- **MCP `get_info` instructions tonal fix** (PR #30) — the compliance gate sentence was folded into the same imperative cluster as "Be decisive. Trust your peers." Previously it dangled as its own paragraph and read tonally tacked-on. Same content, one rhythm.
 - Tool count: 65 → 67
 
 ## [1.3.0] — 2026-04-05
