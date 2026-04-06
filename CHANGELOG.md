@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Handoff `category` column — `action` vs `notify` split** (migration `20260406000002`) — `action` (default) is the existing persistent semantics; `notify` is for ephemeral FYIs (introductions, watchdog drops, "I just shipped X" announcements). `list_handoffs` defaults to action-only; pass `include_notify=true` or `category="notify"` to see them. Notify-class older than 7 days is filtered out at read time (rows preserved for audit/search). `check_in` surfaces action handoffs in `open_handoffs_to_you` as before, and adds a compact `recent_notifications` block (id/title/from/created_at, no body) so the action queue stays the focus. `set_my_identity` first-write fan-out now uses `category="notify"` so introductions don't pollute action queues. Composite index `idx_handoffs_category_status` for the hot path.
 - **`check_in` tool** — every CC's first action of every session. Self-declares CC name, returns a one-shot briefing: your self-authored scope, the team roster, your open handoffs, your open incidents in scope. The whole morning ritual collapses into one call.
 - **`set_my_identity` tool** — each CC writes its own confident scope (20-2000 chars, markdown). Self-sovereign by construction: a CC can only ever update its own row. Peers see this on every check_in.
 - **`cc_identities` table** (migration `20260406000001`) — TEXT PK on cc_name, holds the four self-authored team identities.

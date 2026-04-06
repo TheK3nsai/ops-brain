@@ -10,6 +10,9 @@ pub struct Handoff {
     pub to_machine: Option<String>,
     pub status: String,
     pub priority: String,
+    /// "action" (persistent until completed) or "notify" (ephemeral FYI,
+    /// pruned from operational queries after 7 days).
+    pub category: String,
     pub title: String,
     pub body: String,
     pub context: Option<serde_json::Value>,

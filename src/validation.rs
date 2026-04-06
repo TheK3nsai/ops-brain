@@ -62,6 +62,7 @@ pub const INCIDENT_SEVERITIES: &[&str] = &["low", "medium", "high", "critical"];
 pub const INCIDENT_STATUSES: &[&str] = &["open", "resolved"];
 pub const HANDOFF_STATUSES: &[&str] = &["pending", "accepted", "completed"];
 pub const HANDOFF_PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
+pub const HANDOFF_CATEGORIES: &[&str] = &["action", "notify"];
 pub const RUNBOOK_USAGES: &[&str] = &["followed", "not-applicable", "not-followed"];
 pub const SEARCH_MODES: &[&str] = &["fts", "semantic", "hybrid"];
 pub const BRIEFING_TYPES: &[&str] = &["daily", "weekly"];
@@ -165,6 +166,13 @@ mod tests {
     fn all_handoff_priorities_valid() {
         for p in HANDOFF_PRIORITIES {
             assert!(validate_required(p, "priority", HANDOFF_PRIORITIES).is_ok());
+        }
+    }
+
+    #[test]
+    fn all_handoff_categories_valid() {
+        for c in HANDOFF_CATEGORIES {
+            assert!(validate_required(c, "category", HANDOFF_CATEGORIES).is_ok());
         }
     }
 

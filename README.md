@@ -155,9 +155,9 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 ### Handoffs (7)
 | Tool | Description |
 |------|-------------|
-| `create_handoff` / `accept_handoff` / `complete_handoff` | Cross-machine task coordination |
+| `create_handoff` / `accept_handoff` / `complete_handoff` | Cross-machine task coordination. `category="action"` (default, persistent) or `"notify"` (ephemeral FYI) |
 | `delete_handoff` | Permanently delete a handoff by ID (hard delete) |
-| `list_handoffs` / `search_handoffs` | Filter/search handoffs. Compact mode (default) truncates bodies |
+| `list_handoffs` / `search_handoffs` | Filter/search handoffs. Defaults to action-only; `include_notify=true` to include notifications. Compact mode (default) truncates bodies |
 | `get_catchup` | What changed since a timestamp — handoffs, incidents, knowledge, runbooks, stale runbook warnings |
 
 ### Monitoring (7)

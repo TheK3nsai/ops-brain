@@ -191,10 +191,33 @@ async fn build_briefing(
         .collect();
 
     // Open handoffs targeted at your machine.
-    let handoffs =
-        handoff_repo::list_handoffs(&brain.pool, Some("pending"), Some(hostname), None, 20)
-            .await
-            .map_err(|e| format!("Failed to load handoffs: {e}"))?;
+    //
+    // Action and notify are queried separately so the briefing keeps the
+    // action queue front-and-center. Notify-class older than NOTIFY_TTL_DAYS
+    // is filtered out at the repo level — stale FYIs never resurface.
+    let action_handoffs = handoff_repo::list_handoffs(
+        &brain.pool,
+        Some("pending"),
+        Some(hostname),
+        None,
+        Some("action"),
+        false,
+        20,
+    )
+    .await
+    .map_err(|e| format!("Failed to load action handoffs: {e}"))?;
+
+    let notify_handoffs = handoff_repo::list_handoffs(
+        &brain.pool,
+        Some("pending"),
+        Some(hostname),
+        None,
+        Some("notify"),
+        true,
+        20,
+    )
+    .await
+    .map_err(|e| format!("Failed to load notify handoffs: {e}"))?;
 
     // Open incidents in your scope (client-scoped for CC-HSR/CC-CPA, global otherwise).
     let client_id = match client_slug {
@@ -212,6 +235,22 @@ async fn build_briefing(
         .await
         .map_err(|e| format!("Failed to load incidents for {cc_name}: {e}"))?;
 
+    // Notify-class is intentionally compact: id/title/from/created_at only,
+    // no body. The action queue is the focus; notifications are a glanceable
+    // secondary block. Anyone who wants the full text can list with
+    // category="notify" or get_handoff by id.
+    let notify_summary: Vec<serde_json::Value> = notify_handoffs
+        .iter()
+        .map(|h| {
+            serde_json::json!({
+                "id": h.id,
+                "title": h.title,
+                "from_machine": h.from_machine,
+                "created_at": h.created_at,
+            })
+        })
+        .collect();
+
     let mut payload = serde_json::json!({
         "you": cc_name,
         "hostname": hostname,
@@ -219,8 +258,12 @@ async fn build_briefing(
         "your_scope_status": scope_status,
         "team": team,
         "open_handoffs_to_you": {
-            "count": handoffs.len(),
-            "items": handoffs,
+            "count": action_handoffs.len(),
+            "items": action_handoffs,
+        },
+        "recent_notifications": {
+            "count": notify_summary.len(),
+            "items": notify_summary,
         },
         "open_incidents_in_your_scope": {
             "count": incidents.len(),
@@ -289,6 +332,7 @@ async fn announce_introduction(brain: &super::OpsBrain, new_cc: &str, body: &str
             from_hostname,
             Some(peer_host),
             "low",
+            "notify",
             &title,
             &announce_body,
             None,

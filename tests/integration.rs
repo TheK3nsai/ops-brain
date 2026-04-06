@@ -511,6 +511,7 @@ mod coordination_tests {
             "dev-laptop",
             Some("prod-server"),
             "high",
+            "action",
             "Continue DNS migration",
             "Need to update remaining A records",
             None,
@@ -519,6 +520,7 @@ mod coordination_tests {
         .unwrap();
 
         assert_eq!(handoff.status, "pending");
+        assert_eq!(handoff.category, "action");
         assert_eq!(handoff.from_machine, "dev-laptop");
         assert_eq!(handoff.to_machine.as_deref(), Some("prod-server"));
 
@@ -537,15 +539,107 @@ mod coordination_tests {
         assert_eq!(completed.status, "completed");
 
         // List by status
-        let pending =
-            ops_brain::repo::handoff_repo::list_handoffs(&pool, Some("pending"), None, None, 10)
-                .await
-                .unwrap();
+        let pending = ops_brain::repo::handoff_repo::list_handoffs(
+            &pool,
+            Some("pending"),
+            None,
+            None,
+            None,
+            false,
+            10,
+        )
+        .await
+        .unwrap();
         assert!(!pending.iter().any(|h| h.id == handoff.id));
 
         // Cleanup
         sqlx::query("DELETE FROM handoffs WHERE id = $1")
             .bind(handoff.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn handoff_category_default_filters_notify() {
+        let pool = pool().await;
+
+        let action = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            "dev-laptop",
+            Some("category-test-host"),
+            "normal",
+            "action",
+            "Action item",
+            "Body",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let notify = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            "dev-laptop",
+            Some("category-test-host"),
+            "low",
+            "notify",
+            "FYI item",
+            "Body",
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Default (include_notify=false): only action surfaces.
+        let default_list = ops_brain::repo::handoff_repo::list_handoffs(
+            &pool,
+            Some("pending"),
+            Some("category-test-host"),
+            None,
+            None,
+            false,
+            50,
+        )
+        .await
+        .unwrap();
+        assert!(default_list.iter().any(|h| h.id == action.id));
+        assert!(!default_list.iter().any(|h| h.id == notify.id));
+
+        // include_notify=true: both surface.
+        let combined = ops_brain::repo::handoff_repo::list_handoffs(
+            &pool,
+            Some("pending"),
+            Some("category-test-host"),
+            None,
+            None,
+            true,
+            50,
+        )
+        .await
+        .unwrap();
+        assert!(combined.iter().any(|h| h.id == action.id));
+        assert!(combined.iter().any(|h| h.id == notify.id));
+
+        // Explicit category=notify: only notify.
+        let notify_only = ops_brain::repo::handoff_repo::list_handoffs(
+            &pool,
+            Some("pending"),
+            Some("category-test-host"),
+            None,
+            Some("notify"),
+            false,
+            50,
+        )
+        .await
+        .unwrap();
+        assert!(notify_only.iter().any(|h| h.id == notify.id));
+        assert!(!notify_only.iter().any(|h| h.id == action.id));
+
+        // Cleanup
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![action.id, notify.id])
             .execute(&pool)
             .await
             .unwrap();

@@ -162,10 +162,19 @@ pub async fn generate_briefing_inner(
     };
 
     // ── Pending handoffs ──
-    let pending_handoffs =
-        crate::repo::handoff_repo::list_handoffs(pool, Some("pending"), None, None, 20)
-            .await
-            .unwrap_or_default();
+    // Briefings show actionable work only — notify-class FYIs are not "pending"
+    // in any meaningful sense.
+    let pending_handoffs = crate::repo::handoff_repo::list_handoffs(
+        pool,
+        Some("pending"),
+        None,
+        None,
+        None,
+        false,
+        20,
+    )
+    .await
+    .unwrap_or_default();
 
     let handoff_data = briefings::HandoffSummaryData {
         pending_count: pending_handoffs.len(),

@@ -761,7 +761,7 @@ async fn browse_recent_entries(
                 }
             }
             "handoffs" => {
-                match crate::repo::handoff_repo::list_handoffs(&brain.pool, None, None, None, limit).await {
+                match crate::repo::handoff_repo::list_handoffs(&brain.pool, None, None, None, None, false, limit).await {
                     Ok(items) => {
                         let json_items: Vec<serde_json::Value> = items.iter().filter_map(|h| serde_json::to_value(h).ok()).collect();
                         let final_items = if compact { compact_search_results(&json_items, "handoffs") } else { json_items };

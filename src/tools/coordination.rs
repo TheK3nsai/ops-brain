@@ -17,6 +17,11 @@ pub struct CreateHandoffParams {
     pub to_machine: Option<String>,
     /// Priority: low, normal, high, or critical
     pub priority: Option<String>,
+    /// Category: "action" (default — persistent until completed) or "notify"
+    /// (ephemeral FYI, auto-pruned from operational queries after 7 days).
+    /// Use "notify" for introductions, watchdog drops, "I just shipped X"
+    /// announcements — anything the recipient doesn't need to act on.
+    pub category: Option<String>,
     /// Short title for the handoff
     pub title: String,
     /// Detailed body (markdown supported)
@@ -41,6 +46,12 @@ pub struct ListHandoffsParams {
     pub to_machine: Option<String>,
     /// Filter by source machine
     pub from_machine: Option<String>,
+    /// Filter by category: "action" or "notify". Overrides include_notify
+    /// when set. Omit to use the default action-only view.
+    pub category: Option<String>,
+    /// Include notify-class handoffs alongside action ones (default: false).
+    /// Ignored when `category` is set explicitly.
+    pub include_notify: Option<bool>,
     /// Max results (default 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
@@ -87,11 +98,19 @@ pub(crate) async fn handle_create_handoff(
     p: CreateHandoffParams,
 ) -> CallToolResult {
     let priority = p.priority.as_deref().unwrap_or("normal");
+    let category = p.category.as_deref().unwrap_or("action");
 
     if let Err(msg) = crate::validation::validate_required(
         priority,
         "priority",
         crate::validation::HANDOFF_PRIORITIES,
+    ) {
+        return error_result(&msg);
+    }
+    if let Err(msg) = crate::validation::validate_required(
+        category,
+        "category",
+        crate::validation::HANDOFF_CATEGORIES,
     ) {
         return error_result(&msg);
     }
@@ -111,6 +130,7 @@ pub(crate) async fn handle_create_handoff(
         &p.from_machine,
         p.to_machine.as_deref(),
         priority,
+        category,
         &p.title,
         &p.body,
         p.context.as_ref(),
@@ -189,11 +209,19 @@ pub(crate) async fn handle_list_handoffs(
 ) -> CallToolResult {
     let limit = p.limit.unwrap_or(20);
     let compact = resolve_compact(&brain.pool, p.compact, true).await;
+    let include_notify = p.include_notify.unwrap_or(false);
 
     if let Err(msg) = crate::validation::validate_option(
         p.status.as_deref(),
         "status",
         crate::validation::HANDOFF_STATUSES,
+    ) {
+        return error_result(&msg);
+    }
+    if let Err(msg) = crate::validation::validate_option(
+        p.category.as_deref(),
+        "category",
+        crate::validation::HANDOFF_CATEGORIES,
     ) {
         return error_result(&msg);
     }
@@ -203,6 +231,8 @@ pub(crate) async fn handle_list_handoffs(
         p.status.as_deref(),
         p.to_machine.as_deref(),
         p.from_machine.as_deref(),
+        p.category.as_deref(),
+        include_notify,
         limit,
     )
     .await
