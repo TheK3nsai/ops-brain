@@ -66,12 +66,13 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **upsert_vendor matches by name (case-insensitive)** -- ON CONFLICT on `LOWER(name)` for active vendors
 - **nomic-embed-text tokenization** -- real content tokenizes at ~1-1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` is 6,000. Do not increase without empirical testing.
 - **`link_monitor` names in multi-instance mode** -- all lookups are prefix-tolerant (try exact, then strip `instance/` prefix), so linking with unprefixed Kuma names works fine.
+- **Production deploys MUST use `-f docker-compose.prod.yml`** -- `~/ops-brain` on kensai.cloud has TWO compose files. The default `docker-compose.yml` is the dev file with bundled empty postgres + isolated network/volume. Running `docker compose ...` (or `down`) without the `-f` flag will create a fresh empty `ops-brain-db` container, recreate `ops-brain` wired to it, and run migrations on the empty database. The real DB lives in `shared-postgres` and is only referenced by `docker-compose.prod.yml`. CC-Stealth tripped on this during the PR #31 escape-hatch deploy (2026-04-06); recovery is `docker compose -f docker-compose.prod.yml up -d ops-brain`.
 
 ## Development Workflow
 
 - **Before committing non-trivial changes**: run `/review` — spawns the project reviewer agent to catch logic and safety issues the pre-commit hook can't
 - **Pre-commit hook** catches fmt, clippy, and check automatically — no need to run these manually
-- **After merging to main**: run `/deploy ops-brain` to SSH deploy to kensai.cloud directly (falls back to handoff if SSH is unavailable)
+- **After merging to main**: hand off the deploy to **CC-Cloud** (the canonical ops-brain deployer — they live on kensai.cloud and know the layout). The `/deploy` skill creates the handoff for you. SSH escape hatch is reserved for cases where CC-Cloud is unavailable AND the change is genuinely urgent; even then, **always** pass `-f docker-compose.prod.yml` (see Gotchas).
 - **Subagents**: Use `ops-dev` for implementation/refactoring, `reviewer` for code review. Both are in `.claude/agents/`.
 
 ## What NOT to Do
