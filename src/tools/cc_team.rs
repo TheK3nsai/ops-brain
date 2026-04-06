@@ -212,7 +212,7 @@ async fn build_briefing(
         .await
         .map_err(|e| format!("Failed to load incidents for {cc_name}: {e}"))?;
 
-    Ok(serde_json::json!({
+    let mut payload = serde_json::json!({
         "you": cc_name,
         "hostname": hostname,
         "your_scope": your_scope,
@@ -227,18 +227,29 @@ async fn build_briefing(
             "items": incidents,
             "client_slug": client_slug,
         },
-        "next": next_steps_hint(scope_status),
-    }))
+    });
+
+    // Only emit `next` when there's something the prose hasn't already said.
+    // In bootstrap state, `your_scope` itself already tells the CC to call
+    // set_my_identity — adding `next` on top is just noise.
+    if let Some(hint) = next_steps_hint(scope_status) {
+        payload
+            .as_object_mut()
+            .expect("briefing payload is a JSON object")
+            .insert("next".to_string(), serde_json::Value::String(hint.into()));
+    }
+
+    Ok(payload)
 }
 
-fn next_steps_hint(status: &str) -> &'static str {
+/// Returns a follow-up hint for the response, or `None` when the rest of the
+/// payload already nudges the CC in the right direction (bootstrap state).
+fn next_steps_hint(status: &str) -> Option<&'static str> {
     match status {
-        "bootstrap" => {
-            "Your scope is empty. Read your_scope, then call set_my_identity to write your own."
-        }
-        _ => {
-            "Handle the user's task first. Process open handoffs and incidents at a natural pause."
-        }
+        "self_authored" => Some(
+            "Handle the user's task first. Process open handoffs and incidents at a natural pause.",
+        ),
+        _ => None,
     }
 }
 
@@ -369,8 +380,12 @@ mod tests {
 
     #[test]
     fn next_steps_hint_branches() {
-        assert!(next_steps_hint("bootstrap").contains("set_my_identity"));
-        assert!(next_steps_hint("self_authored").contains("user's task"));
+        // Bootstrap state: prose already says it, so no extra hint.
+        assert!(next_steps_hint("bootstrap").is_none());
+        // Self-authored: surface the operational reminder.
+        assert!(next_steps_hint("self_authored")
+            .expect("self_authored should have a hint")
+            .contains("user's task"));
     }
 
     #[test]
