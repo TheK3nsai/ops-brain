@@ -21,7 +21,6 @@ pub(crate) fn build_or_tsquery_text(query: &str) -> Option<String> {
 
 pub mod audit_log_repo;
 pub mod briefing_repo;
-pub mod cc_identity_repo;
 pub mod client_repo;
 pub mod embedding_repo;
 pub mod handoff_repo;
@@ -29,7 +28,6 @@ pub mod incident_repo;
 pub mod knowledge_repo;
 pub mod monitor_repo;
 pub mod network_repo;
-pub mod preference_repo;
 pub mod runbook_repo;
 pub mod search_repo;
 pub mod server_repo;
