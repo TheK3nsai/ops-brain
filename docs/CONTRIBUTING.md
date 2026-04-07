@@ -88,6 +88,8 @@ pub(crate) async fn handle_delete_thing(brain: &super::OpsBrain, params: DeleteT
 }
 ```
 
+**Visibility note:** Use `pub(crate)` by default. If you want to write *handler-level* integration tests that call the handler directly (not just the repo layer), promote the handler to `pub` **and** promote the module declaration in `src/tools/mod.rs` from `mod foo` to `pub mod foo` — integration tests live in a separate crate and cannot reach `pub(crate)` items. See `src/tools/cc_team.rs` + `src/tools/knowledge.rs` for the established pattern, and `tests/integration.rs::check_in_tests` / `knowledge_provenance_tests` for example handler-level test modules.
+
 **6. Tool stub**
 
 Add a thin stub to the `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs`:

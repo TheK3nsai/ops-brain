@@ -53,7 +53,7 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 
 - **No startup ritual** -- there is no required "first call." If the user leads with a task, do the task. Call `check_in` when you actually want to know what's pending from the rest of the team; otherwise don't. (This replaces the old v1.4 "morning ritual" framing — see CHANGELOG v1.5.)
 - **Handoffs are the coordination layer** -- creating a handoff IS the notification mechanism. `action`-category for things the recipient must do; `notify`-category for FYI broadcasts (auto-pruned after 7 days).
-- **Knowledge policy** -- knowledge entries are for gotchas, safety warnings, compliance rules, and vendor behavior ONLY. Every entry costs tokens across all CC instances. If it would fit in your own CLAUDE.md, put it there instead.
+- **Knowledge policy** -- knowledge entries are for gotchas, safety warnings, compliance rules, and vendor behavior ONLY. Every entry costs tokens across all CC instances. If it would fit in your own CLAUDE.md, put it there instead. `add_knowledge` requires `author_cc` (your CC name from your per-machine CLAUDE.md) and accepts an optional `source_incident_id` to link the entry back to the incident that produced it — provenance is immutable via the tool surface once set.
 - **Default-deny across clients** -- cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
 
 ## Gotchas
