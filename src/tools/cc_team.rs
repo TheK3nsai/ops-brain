@@ -140,9 +140,10 @@ pub async fn handle_check_in(brain: &super::OpsBrain, p: CheckInParams) -> CallT
             Err(e) => return error_result(&format!("Failed to load incidents: {e}")),
         };
 
+    // Response shape is intentionally minimal: action handoffs, notify-class
+    // handoffs (compact), incidents in scope. No identity echo (the CC already
+    // knows its own name and hostname — that's the whole point of v1.5).
     json_result(&serde_json::json!({
-        "you": cc_name,
-        "hostname": hostname,
         "open_handoffs_to_you": {
             "count": action_handoffs.len(),
             "items": action_handoffs,
