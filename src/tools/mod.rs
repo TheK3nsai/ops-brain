@@ -5,7 +5,7 @@ mod coordination;
 mod helpers;
 mod incidents;
 mod inventory;
-mod knowledge;
+pub mod knowledge;
 mod monitoring;
 mod runbooks;
 mod search;
@@ -328,7 +328,7 @@ impl OpsBrain {
 
     #[tool(
         name = "add_knowledge",
-        description = "Add a knowledge base entry (lesson learned, gotcha, tip, etc.)"
+        description = "Add a knowledge base entry (lesson, gotcha, tip). Requires author_cc — your CC name (read it from your CLAUDE.md)."
     )]
     async fn add_knowledge(
         &self,

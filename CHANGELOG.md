@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Knowledge provenance: `author_cc`, `source_incident_id`, `_staleness_warning`** (migration `20260408000001`) — v1.5 established that local is the source of truth for everything *except* shared cross-CC knowledge; this release closes the provenance gap in that one shared artifact. Every new knowledge entry is stamped with its author CC at create time, optionally linked to the incident that produced it, and surfaces a read-time staleness flag when it goes >90 days without a verify.
+  - **`author_cc` is required on `add_knowledge`** — validated against the `CC_TEAM` allowlist (`CC-Cloud`, `CC-Stealth`, `CC-HSR`, `CC-CPA`). Missing or unknown names fail loudly with the full allowlist in the error. Pre-v1.6 rows stay NULL — no forced backfill, no fabricated authorship. **Breaking change**: existing MCP callers that omit `author_cc` will see a clean error and need to pass their CC name (read from per-machine CLAUDE.md) on the first call after deploy. This is intentional: soft-defaulting to NULL would perpetuate the stealth bug we're closing.
+  - **`author_cc` is immutable via the tool surface** — `UpdateKnowledgeParams` has no `author_cc` field, so the compiler itself guarantees the invariant. Provenance that can be rewritten isn't provenance. Emergency correction still possible via direct SQL.
+  - **`source_incident_id` is optional and post-hoc updatable** — can be set at create time or added later via `update_knowledge`. FK with `ON DELETE SET NULL` on `incidents(id)` so cleaning up incidents doesn't cascade-delete the lessons learned from them. Handlers verify the incident exists before INSERT/UPDATE so failures are clean errors rather than raw FK violations.
+  - **`_staleness_warning` is computed at read time** — `true` if `last_verified_at.unwrap_or(created_at)` is older than 90 days. No schema column, no background job, no drift. Surfaced in `search_knowledge` (single-table, multi-table, and browse modes), `list_knowledge`, and on every knowledge result returned through compact or non-compact paths. Threshold constant is `KNOWLEDGE_STALE_DAYS = 90` in `src/tools/knowledge.rs`.
+  - **`CC_TEAM` allowlist helpers** exposed from `src/tools/cc_team.rs` as `pub(crate) fn is_valid_cc_name` and `pub(crate) fn cc_allowlist`, reusing the static `CC_TEAM` table instead of duplicating the 4-name list. The `knowledge` module uses them for validation without a DB-side membership table.
+- **15 new tests** — 7 pure-logic unit tests in `src/tools/knowledge.rs` (staleness thresholds, off-by-one guards, JSON enrichment) + 8 handler-level integration tests in `tests/integration.rs::knowledge_provenance_tests` (allowlist validation, FK existence checks, author_cc immutability, post-hoc linking, staleness surfaced on list). Existing `knowledge_tests::add_and_get_knowledge` and `knowledge_cross_client_safe_field` updated for the new required repo param.
+
+### Changed
+
+- **`knowledge` module visibility: `mod knowledge` → `pub mod knowledge`** in `src/tools/mod.rs`, so handler-level integration tests can reach `handle_add_knowledge`, `handle_update_knowledge`, and `handle_list_knowledge`. Matches the existing `pub mod cc_team` pattern. Internal handlers moved from `pub(crate)` to `pub` for the same reason.
+- **Migration count: 42 → 43.** Tool count unchanged at 64 (new params on existing tools, no new tools). No fields added to `check_in` (hard-stop respected).
+
 ## [1.5.0] — 2026-04-07
 
 **ops-brain is the team bus, not a brain.** Local is the source of truth for each CC — its CLAUDE.md is its scope, its filesystem is its state, its git history is its memory. ops-brain exists for things CCs genuinely cannot do alone: handoffs to each other, shared incidents, cross-client knowledge with isolation rules, monitors, tickets that span systems. If a question can be answered without ops-brain, it should be.
