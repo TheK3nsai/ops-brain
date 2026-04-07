@@ -1621,9 +1621,21 @@ mod check_in_tests {
         .await;
         assert_eq!(result.is_error, Some(false));
         let text = extract_text(&result);
-        assert!(text.contains("CC-Stealth"));
+        // The three things a sovereign CC needs from the bus.
         assert!(text.contains("open_handoffs_to_you"));
         assert!(text.contains("recent_notifications"));
         assert!(text.contains("open_incidents_in_your_scope"));
+        // v1.5 regression guards: identity echo must NOT be in the response.
+        // Local is the source of truth — the CC already knows its own name
+        // and hostname; echoing them back was the last trace of the v1.4
+        // "tell me who I am" framing.
+        assert!(
+            !text.contains("\"you\":"),
+            "v1.5: `you` field must not echo CC name back — identity is local"
+        );
+        assert!(
+            !text.contains("\"hostname\":"),
+            "v1.5: `hostname` field must not echo back — local is the source of truth"
+        );
     }
 }
