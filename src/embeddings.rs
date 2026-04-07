@@ -204,6 +204,8 @@ mod tests {
             client_id: None,
             cross_client_safe: false,
             last_verified_at: None,
+            author_cc: None,
+            source_incident_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

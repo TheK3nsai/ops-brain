@@ -302,12 +302,16 @@ mod knowledge_tests {
             &["ci".to_string()],
             None,
             false,
+            Some("CC-Stealth"),
+            None,
         )
         .await
         .unwrap();
 
         assert_eq!(k.title, "Test Knowledge Entry");
         assert!(!k.cross_client_safe);
+        assert_eq!(k.author_cc.as_deref(), Some("CC-Stealth"));
+        assert_eq!(k.source_incident_id, None);
 
         let fetched = ops_brain::repo::knowledge_repo::get_knowledge(&pool, k.id)
             .await
@@ -335,6 +339,8 @@ mod knowledge_tests {
             &[],
             None,
             true,
+            Some("CC-Stealth"),
+            None,
         )
         .await
         .unwrap();
@@ -344,6 +350,512 @@ mod knowledge_tests {
         // Cleanup
         sqlx::query("DELETE FROM knowledge WHERE id = $1")
             .bind(k.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+// ===== Knowledge Provenance (v1.6) =====
+//
+// Handler-level end-to-end tests for the provenance feature:
+//   - author_cc allowlist validation (fail loudly on invalid names)
+//   - source_incident_id FK resolution (exist-check before INSERT)
+//   - author_cc immutability across updates (enforced at type level)
+//   - source_incident_id updatable post-hoc
+//   - staleness flag surfaced in list_knowledge results
+//
+// Pure logic (is_knowledge_stale, knowledge_entries_to_json) is unit-tested
+// in src/tools/knowledge.rs — these tests exist to catch handler-layer
+// regressions (validation, error messages, response shapes).
+
+mod knowledge_provenance_tests {
+    use super::*;
+
+    fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
+        ops_brain::tools::OpsBrain::new(pool, vec![], None, None)
+    }
+
+    fn extract_text(result: &rmcp::model::CallToolResult) -> String {
+        result
+            .content
+            .first()
+            .expect("result has at least one content item")
+            .as_text()
+            .expect("content is text")
+            .text
+            .clone()
+    }
+
+    /// Strip all whitespace so assertions are robust against pretty vs
+    /// compact JSON formatting. `json_result` currently pretty-prints,
+    /// meaning `"field": "value"` with a space after the colon, but we
+    /// don't want tests to break if that changes.
+    fn no_ws(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    async fn seed_incident(pool: &PgPool) -> uuid::Uuid {
+        let incident = ops_brain::repo::incident_repo::create_incident(
+            pool,
+            "provenance test incident",
+            "low",
+            None,
+            Some("synthetic symptoms for FK link"),
+            Some("created by knowledge_provenance_tests"),
+            false,
+        )
+        .await
+        .unwrap();
+        incident.id
+    }
+
+    #[tokio::test]
+    async fn handler_add_knowledge_rejects_invalid_author_cc() {
+        let brain = build_brain(pool().await);
+        let result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: "rejected title".to_string(),
+                content: "rejected content".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-NotReal".to_string(),
+                source_incident_id: None,
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(
+            text.contains("Invalid author_cc"),
+            "error should name the field"
+        );
+        assert!(text.contains("CC-Stealth"), "error should list valid names");
+    }
+
+    #[tokio::test]
+    async fn handler_add_knowledge_stores_author_cc() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: format!("provenance stored {}", uuid::Uuid::now_v7()),
+                content: "content stamped with author".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-Stealth".to_string(),
+                source_incident_id: None,
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(false));
+        let text = extract_text(&result);
+        let compact = no_ws(&text);
+        assert!(compact.contains("\"author_cc\":\"CC-Stealth\""));
+        assert!(compact.contains("\"source_incident_id\":null"));
+
+        // Cleanup: extract id from the JSON and delete.
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let id = v.get("id").and_then(|x| x.as_str()).unwrap().to_string();
+        sqlx::query("DELETE FROM knowledge WHERE id = $1::uuid")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn handler_add_knowledge_links_source_incident_id() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let incident_id = seed_incident(&pool).await;
+
+        let result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: format!("linked to incident {incident_id}"),
+                content: "knowledge born from an incident".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-Stealth".to_string(),
+                source_incident_id: Some(incident_id.to_string()),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(false));
+        let text = extract_text(&result);
+        assert!(
+            no_ws(&text).contains(&format!("\"source_incident_id\":\"{incident_id}\"")),
+            "response should include the FK value"
+        );
+
+        // Cleanup (knowledge first, incident last — FK order doesn't matter
+        // due to ON DELETE SET NULL, but keeps the fixture tidy).
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let id = v.get("id").and_then(|x| x.as_str()).unwrap().to_string();
+        sqlx::query("DELETE FROM knowledge WHERE id = $1::uuid")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM incidents WHERE id = $1")
+            .bind(incident_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn handler_add_knowledge_rejects_nonexistent_incident() {
+        let brain = build_brain(pool().await);
+        let ghost_id = uuid::Uuid::now_v7();
+        let result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: "should not land".to_string(),
+                content: "no incident behind this".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-Stealth".to_string(),
+                source_incident_id: Some(ghost_id.to_string()),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(
+            text.contains("Incident not found"),
+            "error should be explicit about the missing incident, not a raw FK violation"
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_add_knowledge_rejects_malformed_incident_uuid() {
+        let brain = build_brain(pool().await);
+        let result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: "malformed uuid".to_string(),
+                content: "not a uuid string".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-Stealth".to_string(),
+                source_incident_id: Some("obviously-not-a-uuid".to_string()),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(text.contains("Invalid source_incident_id UUID"));
+    }
+
+    #[tokio::test]
+    async fn handler_update_knowledge_can_link_source_incident_id_post_hoc() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+
+        // Create knowledge without a source incident.
+        let add_result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: format!("post-hoc link {}", uuid::Uuid::now_v7()),
+                content: "initially unlinked".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-Stealth".to_string(),
+                source_incident_id: None,
+            },
+        )
+        .await;
+        let text = extract_text(&add_result);
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let knowledge_id = v.get("id").and_then(|x| x.as_str()).unwrap().to_string();
+
+        // Seed an incident and link it via update.
+        let incident_id = seed_incident(&pool).await;
+        let update_result = ops_brain::tools::knowledge::handle_update_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::UpdateKnowledgeParams {
+                id: knowledge_id.clone(),
+                title: None,
+                content: None,
+                category: None,
+                tags: None,
+                cross_client_safe: None,
+                verified: None,
+                source_incident_id: Some(incident_id.to_string()),
+            },
+        )
+        .await;
+        assert_eq!(update_result.is_error, Some(false));
+        let updated_text = extract_text(&update_result);
+        let updated_compact = no_ws(&updated_text);
+        assert!(updated_compact.contains(&format!("\"source_incident_id\":\"{incident_id}\"")));
+        assert!(
+            updated_compact.contains("\"author_cc\":\"CC-Stealth\""),
+            "author_cc should be preserved across update"
+        );
+
+        // Cleanup
+        sqlx::query("DELETE FROM knowledge WHERE id = $1::uuid")
+            .bind(&knowledge_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM incidents WHERE id = $1")
+            .bind(incident_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn handler_update_knowledge_cannot_mutate_author_cc() {
+        // Structural test: UpdateKnowledgeParams has no `author_cc` field,
+        // so the compiler itself guarantees this invariant. This test
+        // documents the guarantee via a positive assertion: after an
+        // update, author_cc is unchanged from the original value.
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+
+        let add_result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: format!("immutable author {}", uuid::Uuid::now_v7()),
+                content: "v1".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-HSR".to_string(),
+                source_incident_id: None,
+            },
+        )
+        .await;
+        let text = extract_text(&add_result);
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let knowledge_id = v.get("id").and_then(|x| x.as_str()).unwrap().to_string();
+        assert!(no_ws(&text).contains("\"author_cc\":\"CC-HSR\""));
+
+        // Update unrelated field (content) — author_cc must still be CC-HSR.
+        let update_result = ops_brain::tools::knowledge::handle_update_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::UpdateKnowledgeParams {
+                id: knowledge_id.clone(),
+                title: None,
+                content: Some("v2 — rewritten but still by CC-HSR".to_string()),
+                category: None,
+                tags: None,
+                cross_client_safe: None,
+                verified: None,
+                source_incident_id: None,
+            },
+        )
+        .await;
+        assert_eq!(update_result.is_error, Some(false));
+        let updated_text = extract_text(&update_result);
+        assert!(
+            no_ws(&updated_text).contains("\"author_cc\":\"CC-HSR\""),
+            "author_cc must be preserved across updates — provenance is immutable"
+        );
+
+        // Cleanup
+        sqlx::query("DELETE FROM knowledge WHERE id = $1::uuid")
+            .bind(&knowledge_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn handler_list_knowledge_surfaces_staleness_warning() {
+        // Create a fresh entry via handler, then backdate it via SQL to
+        // force the stale flag, then list and verify the flag is true.
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+
+        let add_result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: format!("staleness test {}", uuid::Uuid::now_v7()),
+                content: "will be backdated".to_string(),
+                category: Some("provenance-test-stale".to_string()),
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-Stealth".to_string(),
+                source_incident_id: None,
+            },
+        )
+        .await;
+        let text = extract_text(&add_result);
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let knowledge_id = v.get("id").and_then(|x| x.as_str()).unwrap().to_string();
+
+        // Backdate created_at to 100 days ago; leave last_verified_at NULL.
+        sqlx::query(
+            "UPDATE knowledge SET created_at = now() - interval '100 days', \
+             last_verified_at = NULL WHERE id = $1::uuid",
+        )
+        .bind(&knowledge_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let list_result = ops_brain::tools::knowledge::handle_list_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::ListKnowledgeParams {
+                category: Some("provenance-test-stale".to_string()),
+                client_slug: None,
+                limit: Some(10),
+            },
+        )
+        .await;
+        assert_eq!(list_result.is_error, Some(false));
+        let list_text = extract_text(&list_result);
+        assert!(
+            no_ws(&list_text).contains("\"_staleness_warning\":true"),
+            "backdated entry should be flagged stale; got: {list_text}"
+        );
+
+        // Also assert that a fresh entry in the same category comes back false.
+        let fresh_add = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: format!("fresh staleness test {}", uuid::Uuid::now_v7()),
+                content: "not backdated".to_string(),
+                category: Some("provenance-test-stale".to_string()),
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-Stealth".to_string(),
+                source_incident_id: None,
+            },
+        )
+        .await;
+        let fresh_text = extract_text(&fresh_add);
+        let fresh_v: serde_json::Value = serde_json::from_str(&fresh_text).unwrap();
+        let fresh_id = fresh_v
+            .get("id")
+            .and_then(|x| x.as_str())
+            .unwrap()
+            .to_string();
+
+        let list_again = ops_brain::tools::knowledge::handle_list_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::ListKnowledgeParams {
+                category: Some("provenance-test-stale".to_string()),
+                client_slug: None,
+                limit: Some(10),
+            },
+        )
+        .await;
+        let list_again_text = extract_text(&list_again);
+        assert!(
+            no_ws(&list_again_text).contains("\"_staleness_warning\":false"),
+            "fresh entry should not be flagged stale; got: {list_again_text}"
+        );
+
+        // Cleanup
+        sqlx::query("DELETE FROM knowledge WHERE id = $1::uuid")
+            .bind(&knowledge_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM knowledge WHERE id = $1::uuid")
+            .bind(&fresh_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_incident_id_on_delete_set_null() {
+        // Migration 20260408000001 uses `ON DELETE SET NULL` on the
+        // source_incident_id FK so cleaning up incidents does not
+        // cascade-delete the knowledge we learned from them. This test
+        // guards the cascade behavior at runtime — if a future migration
+        // ever flips this to `ON DELETE CASCADE` by mistake, this test
+        // will fail loudly.
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let incident_id = seed_incident(&pool).await;
+
+        let add_result = ops_brain::tools::knowledge::handle_add_knowledge(
+            &brain,
+            ops_brain::tools::knowledge::AddKnowledgeParams {
+                title: format!("cascade test {}", uuid::Uuid::now_v7()),
+                content: "linked to an incident that will be deleted".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author_cc: "CC-Stealth".to_string(),
+                source_incident_id: Some(incident_id.to_string()),
+            },
+        )
+        .await;
+        assert_eq!(add_result.is_error, Some(false));
+        let text = extract_text(&add_result);
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let knowledge_id = v.get("id").and_then(|x| x.as_str()).unwrap().to_string();
+
+        // Sanity: knowledge is currently linked to the incident.
+        assert!(
+            no_ws(&text).contains(&format!("\"source_incident_id\":\"{incident_id}\"")),
+            "pre-delete: knowledge should be linked to incident"
+        );
+
+        // Delete the incident. Knowledge row must survive.
+        sqlx::query("DELETE FROM incidents WHERE id = $1")
+            .bind(incident_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Knowledge row still exists, but its source_incident_id is NULL.
+        let knowledge_uuid = uuid::Uuid::parse_str(&knowledge_id).unwrap();
+        let fetched = ops_brain::repo::knowledge_repo::get_knowledge(&pool, knowledge_uuid)
+            .await
+            .unwrap()
+            .expect("knowledge row must survive incident deletion");
+        assert_eq!(
+            fetched.source_incident_id, None,
+            "FK cascade must be SET NULL, not CASCADE — incident cleanup should never delete learned lessons"
+        );
+        assert_eq!(
+            fetched.author_cc.as_deref(),
+            Some("CC-Stealth"),
+            "author_cc must survive cascade unchanged"
+        );
+
+        // Cleanup
+        sqlx::query("DELETE FROM knowledge WHERE id = $1")
+            .bind(knowledge_uuid)
             .execute(&pool)
             .await
             .unwrap();

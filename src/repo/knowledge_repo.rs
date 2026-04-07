@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::models::knowledge::Knowledge;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn add_knowledge(
     pool: &PgPool,
     title: &str,
@@ -11,11 +12,13 @@ pub async fn add_knowledge(
     tags: &[String],
     client_id: Option<Uuid>,
     cross_client_safe: bool,
+    author_cc: Option<&str>,
+    source_incident_id: Option<Uuid>,
 ) -> Result<Knowledge, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Knowledge>(
-        "INSERT INTO knowledge (id, title, content, category, tags, client_id, cross_client_safe)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO knowledge (id, title, content, category, tags, client_id, cross_client_safe, author_cc, source_incident_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *",
     )
     .bind(id)
@@ -25,6 +28,8 @@ pub async fn add_knowledge(
     .bind(tags)
     .bind(client_id)
     .bind(cross_client_safe)
+    .bind(author_cc)
+    .bind(source_incident_id)
     .fetch_one(pool)
     .await
 }
@@ -83,7 +88,11 @@ pub async fn update_knowledge(
     category: Option<&str>,
     tags: Option<&[String]>,
     cross_client_safe: Option<bool>,
+    source_incident_id: Option<Uuid>,
 ) -> Result<Knowledge, sqlx::Error> {
+    // NOTE: `author_cc` is intentionally NOT updatable — provenance is
+    // immutable via the tool surface. Direct SQL is still possible for
+    // emergency correction. See migration 20260408000001.
     sqlx::query_as::<_, Knowledge>(
         "UPDATE knowledge SET
             title = COALESCE($2, title),
@@ -91,6 +100,7 @@ pub async fn update_knowledge(
             category = COALESCE($4, category),
             tags = COALESCE($5, tags),
             cross_client_safe = COALESCE($6, cross_client_safe),
+            source_incident_id = COALESCE($7, source_incident_id),
             updated_at = NOW()
          WHERE id = $1 RETURNING *",
     )
@@ -100,6 +110,7 @@ pub async fn update_knowledge(
     .bind(category)
     .bind(tags)
     .bind(cross_client_safe)
+    .bind(source_incident_id)
     .fetch_one(pool)
     .await
 }

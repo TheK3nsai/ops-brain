@@ -44,6 +44,21 @@ fn allowlist_names() -> Vec<&'static str> {
     CC_TEAM.iter().map(|(n, _, _)| *n).collect()
 }
 
+/// Returns true if `cc_name` exactly matches one of the four valid CC names.
+/// Case-sensitive. Exposed for use by other tool handlers (e.g. knowledge
+/// provenance validation in `add_knowledge`) that need the same allowlist
+/// gate without duplicating the `CC_TEAM` table.
+pub(crate) fn is_valid_cc_name(cc_name: &str) -> bool {
+    CC_TEAM.iter().any(|(n, _, _)| *n == cc_name)
+}
+
+/// Returns the list of all valid CC names, in `CC_TEAM` declaration order.
+/// Use when building user-facing error messages that need to display the
+/// full allowlist.
+pub(crate) fn cc_allowlist() -> Vec<&'static str> {
+    allowlist_names()
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CheckInParams {
     /// Your CC name on the team. Must be one of: CC-Cloud, CC-Stealth,

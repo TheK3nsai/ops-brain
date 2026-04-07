@@ -25,6 +25,11 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
             "cross_client_safe",
             "_client_slug",
             "_client_name",
+            // v1.6 provenance fields
+            "author_cc",
+            "source_incident_id",
+            "last_verified_at",
+            "_staleness_warning",
             "created_at",
             "updated_at",
         ],
@@ -117,6 +122,43 @@ fn compact_search_results(
         .collect()
 }
 
+/// v1.6: knowledge staleness threshold in days. An entry is considered stale
+/// if (now - last_verified_at.unwrap_or(created_at)) exceeds this. Computed
+/// at read time — no schema column, no background job.
+const KNOWLEDGE_STALE_DAYS: i64 = 90;
+
+/// True if a knowledge entry is stale: >90 days since last verification, or
+/// since creation if it has never been verified.
+fn is_knowledge_stale(k: &crate::models::knowledge::Knowledge) -> bool {
+    let most_recent_check = k.last_verified_at.unwrap_or(k.created_at);
+    let age = chrono::Utc::now() - most_recent_check;
+    age > chrono::Duration::days(KNOWLEDGE_STALE_DAYS)
+}
+
+/// Serialize knowledge entries to JSON values with `_staleness_warning`
+/// computed at read time and injected into each item. Use this in place of
+/// the raw `serde_json::to_value(k)` pattern whenever knowledge results are
+/// returned to the user — keeps staleness signals visible in both compact
+/// and non-compact modes without a schema column.
+fn knowledge_entries_to_json(
+    items: &[crate::models::knowledge::Knowledge],
+) -> Vec<serde_json::Value> {
+    items
+        .iter()
+        .filter_map(|k| {
+            let stale = is_knowledge_stale(k);
+            let mut v = serde_json::to_value(k).ok()?;
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert(
+                    "_staleness_warning".to_string(),
+                    serde_json::Value::Bool(stale),
+                );
+            }
+            Some(v)
+        })
+        .collect()
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddKnowledgeParams {
     pub title: String,
@@ -128,6 +170,14 @@ pub struct AddKnowledgeParams {
     pub cross_client_safe: Option<bool>,
     /// Skip duplicate detection check. Set to true if you've already seen the warning and want to create anyway.
     pub force: Option<bool>,
+    /// Your CC name — stamps provenance on this knowledge entry. Must be
+    /// one of: CC-Cloud, CC-Stealth, CC-HSR, CC-CPA. Required since v1.6.
+    /// Read your own name from your per-machine CLAUDE.md.
+    pub author_cc: String,
+    /// Optional incident that produced this knowledge entry (UUID string).
+    /// Links the gotcha back to the incident that taught us the gotcha.
+    /// Can be set here or added post-hoc via update_knowledge.
+    pub source_incident_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -149,6 +199,12 @@ pub struct SearchKnowledgeParams {
     pub compact: Option<bool>,
 }
 
+/// Update an existing knowledge entry.
+///
+/// Note: `author_cc` is intentionally NOT updatable via this tool. Provenance
+/// is immutable after creation — if you need to correct the author, do it
+/// via direct SQL. This prevents accidental (or deliberate) rewriting of
+/// history in the one cross-CC shared artifact.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateKnowledgeParams {
     /// Knowledge entry ID (UUID)
@@ -162,6 +218,10 @@ pub struct UpdateKnowledgeParams {
     /// Set to true to mark this entry as verified (confirms content is still accurate).
     /// Sets last_verified_at to now without requiring content changes.
     pub verified: Option<bool>,
+    /// Link (or re-link) the incident that produced this knowledge entry.
+    /// Use this to add provenance post-hoc when you didn't know the source
+    /// incident at create time. Pass the incident UUID as a string.
+    pub source_incident_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -181,10 +241,36 @@ pub struct ListKnowledgeParams {
 
 // ===== HANDLERS =====
 
-pub(crate) async fn handle_add_knowledge(
+pub async fn handle_add_knowledge(
     brain: &super::OpsBrain,
     p: AddKnowledgeParams,
 ) -> CallToolResult {
+    // v1.6: validate author_cc against CC_TEAM allowlist — fail fast
+    // before any DB work. Provenance is required on every new entry.
+    let author_cc = p.author_cc.trim();
+    if !super::cc_team::is_valid_cc_name(author_cc) {
+        return error_result(&format!(
+            "Invalid author_cc: '{author_cc}'. Must be one of: {}. \
+             Read your CC name from your per-machine CLAUDE.md.",
+            super::cc_team::cc_allowlist().join(", ")
+        ));
+    }
+
+    // v1.6: parse optional source_incident_id and verify the incident
+    // exists, so we fail with a clean error instead of a raw FK violation
+    // at INSERT time.
+    let source_incident_id = match p.source_incident_id.as_deref() {
+        Some(s) => match uuid::Uuid::parse_str(s) {
+            Ok(id) => match crate::repo::incident_repo::get_incident(&brain.pool, id).await {
+                Ok(Some(_)) => Some(id),
+                Ok(None) => return error_result(&format!("Incident not found: {id}")),
+                Err(e) => return error_result(&format!("Database error: {e}")),
+            },
+            Err(_) => return error_result(&format!("Invalid source_incident_id UUID: {s}")),
+        },
+        None => None,
+    };
+
     let tags = p.tags.unwrap_or_default();
     let cross_client_safe = p.cross_client_safe.unwrap_or(false);
     let force = p.force.unwrap_or(false);
@@ -244,6 +330,8 @@ pub(crate) async fn handle_add_knowledge(
         &tags,
         client_id,
         cross_client_safe,
+        Some(author_cc),
+        source_incident_id,
     )
     .await
     {
@@ -263,7 +351,7 @@ pub(crate) async fn handle_add_knowledge(
     }
 }
 
-pub(crate) async fn handle_update_knowledge(
+pub async fn handle_update_knowledge(
     brain: &super::OpsBrain,
     p: UpdateKnowledgeParams,
 ) -> CallToolResult {
@@ -277,6 +365,22 @@ pub(crate) async fn handle_update_knowledge(
         Ok(Some(_)) => {}
         Ok(None) => return not_found("Knowledge", &p.id),
         Err(e) => return error_result(&format!("Database error: {e}")),
+    };
+
+    // v1.6: parse optional source_incident_id and verify the incident
+    // exists before the UPDATE.
+    let source_incident_id = match p.source_incident_id.as_deref() {
+        Some(s) => match uuid::Uuid::parse_str(s) {
+            Ok(incident_id) => {
+                match crate::repo::incident_repo::get_incident(&brain.pool, incident_id).await {
+                    Ok(Some(_)) => Some(incident_id),
+                    Ok(None) => return error_result(&format!("Incident not found: {incident_id}")),
+                    Err(e) => return error_result(&format!("Database error: {e}")),
+                }
+            }
+            Err(_) => return error_result(&format!("Invalid source_incident_id UUID: {s}")),
+        },
+        None => None,
     };
 
     // Mark as verified if requested
@@ -295,6 +399,7 @@ pub(crate) async fn handle_update_knowledge(
         p.category.as_deref(),
         p.tags.as_deref(),
         p.cross_client_safe,
+        source_incident_id,
     )
     .await
     {
@@ -449,10 +554,7 @@ pub(crate) async fn handle_search_knowledge(
                 };
                 match search_result {
                     Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items
-                            .iter()
-                            .filter_map(|k| serde_json::to_value(k).ok())
-                            .collect();
+                        let json_items = knowledge_entries_to_json(&items);
                         let filtered = filter_cross_client(
                             json_items,
                             "knowledge",
@@ -723,7 +825,7 @@ async fn browse_recent_entries(
             "knowledge" => {
                 match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None, limit).await {
                     Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items.iter().filter_map(|k| serde_json::to_value(k).ok()).collect();
+                        let json_items = knowledge_entries_to_json(&items);
                         let filtered = filter_cross_client(json_items, "knowledge", requesting_client_id, acknowledge, &client_lookup);
                         let final_items = if compact { compact_search_results(&filtered.allowed, "knowledge") } else { filtered.allowed };
                         results.insert("knowledge".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
@@ -822,10 +924,7 @@ async fn search_knowledge_single(
     };
     match result {
         Ok(entries) => {
-            let items: Vec<serde_json::Value> = entries
-                .iter()
-                .filter_map(|k| serde_json::to_value(k).ok())
-                .collect();
+            let items = knowledge_entries_to_json(&entries);
             let client_lookup = build_client_lookup(&brain.pool).await;
             let filtered = filter_cross_client(
                 items,
@@ -859,7 +958,7 @@ async fn search_knowledge_single(
     }
 }
 
-pub(crate) async fn handle_list_knowledge(
+pub async fn handle_list_knowledge(
     brain: &super::OpsBrain,
     p: ListKnowledgeParams,
 ) -> CallToolResult {
@@ -882,7 +981,119 @@ pub(crate) async fn handle_list_knowledge(
     )
     .await
     {
-        Ok(entries) => json_result(&entries),
+        // v1.6: surface provenance + staleness warnings on list results.
+        Ok(entries) => json_result(&knowledge_entries_to_json(&entries)),
         Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pure-logic unit tests for knowledge provenance (v1.6). DB-backed
+    //! handler tests live in `tests/integration.rs`.
+
+    use super::*;
+    use chrono::{Duration, Utc};
+    use uuid::Uuid;
+
+    fn make_knowledge(
+        last_verified: Option<chrono::DateTime<Utc>>,
+        created: chrono::DateTime<Utc>,
+    ) -> crate::models::knowledge::Knowledge {
+        crate::models::knowledge::Knowledge {
+            id: Uuid::now_v7(),
+            title: "test".to_string(),
+            content: "test content".to_string(),
+            category: None,
+            tags: vec![],
+            client_id: None,
+            cross_client_safe: false,
+            last_verified_at: last_verified,
+            author_cc: Some("CC-Stealth".to_string()),
+            source_incident_id: None,
+            created_at: created,
+            updated_at: created,
+        }
+    }
+
+    #[test]
+    fn is_knowledge_stale_false_for_fresh_unverified_entry() {
+        // Created recently, never verified — NOT stale.
+        let k = make_knowledge(None, Utc::now() - Duration::days(10));
+        assert!(!is_knowledge_stale(&k));
+    }
+
+    #[test]
+    fn is_knowledge_stale_true_for_old_unverified_entry() {
+        // Created 100 days ago, never verified — STALE.
+        let k = make_knowledge(None, Utc::now() - Duration::days(100));
+        assert!(is_knowledge_stale(&k));
+    }
+
+    #[test]
+    fn is_knowledge_stale_false_for_recently_verified_entry() {
+        // Created 200 days ago, verified 30 days ago — NOT stale.
+        // The verification resets the clock.
+        let k = make_knowledge(
+            Some(Utc::now() - Duration::days(30)),
+            Utc::now() - Duration::days(200),
+        );
+        assert!(!is_knowledge_stale(&k));
+    }
+
+    #[test]
+    fn is_knowledge_stale_true_for_stale_verified_entry() {
+        // Created 200 days ago, verified 95 days ago — STALE.
+        // Verification aged out of the 90-day window.
+        let k = make_knowledge(
+            Some(Utc::now() - Duration::days(95)),
+            Utc::now() - Duration::days(200),
+        );
+        assert!(is_knowledge_stale(&k));
+    }
+
+    #[test]
+    fn is_knowledge_stale_false_exactly_at_threshold() {
+        // Exactly 90 days old — strictly `> 90 days` is the trigger,
+        // so 90d on the nose is NOT stale. This is an off-by-one guard.
+        // Use 89 days to avoid clock-skew races with `Utc::now()` inside
+        // the function itself (the function reads now fresh, so 90 days
+        // ago from the test's now might read as 90 days + epsilon).
+        let k = make_knowledge(None, Utc::now() - Duration::days(89));
+        assert!(!is_knowledge_stale(&k));
+    }
+
+    #[test]
+    fn knowledge_entries_to_json_injects_staleness_flag() {
+        let fresh = make_knowledge(None, Utc::now() - Duration::days(1));
+        let stale = make_knowledge(None, Utc::now() - Duration::days(120));
+        let json = knowledge_entries_to_json(&[fresh, stale]);
+        assert_eq!(json.len(), 2);
+        assert_eq!(
+            json[0].get("_staleness_warning"),
+            Some(&serde_json::Value::Bool(false)),
+            "fresh entry should not be stale"
+        );
+        assert_eq!(
+            json[1].get("_staleness_warning"),
+            Some(&serde_json::Value::Bool(true)),
+            "120-day-old entry should be stale"
+        );
+    }
+
+    #[test]
+    fn knowledge_entries_to_json_preserves_provenance_fields() {
+        let k = make_knowledge(None, Utc::now());
+        let json = knowledge_entries_to_json(&[k]);
+        let obj = json[0].as_object().expect("should be object");
+        assert_eq!(
+            obj.get("author_cc"),
+            Some(&serde_json::Value::String("CC-Stealth".to_string())),
+            "author_cc should survive serialization"
+        );
+        assert!(
+            obj.contains_key("source_incident_id"),
+            "source_incident_id field should be present even when null"
+        );
     }
 }
