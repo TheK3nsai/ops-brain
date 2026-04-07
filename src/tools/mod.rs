@@ -18,8 +18,6 @@ use rmcp::{
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
 };
 use sqlx::PgPool;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::embeddings::EmbeddingClient;
 use crate::metrics::UptimeKumaConfig;
@@ -31,10 +29,6 @@ pub struct OpsBrain {
     pub(crate) kuma_configs: Vec<UptimeKumaConfig>,
     pub(crate) embedding_client: Option<EmbeddingClient>,
     pub(crate) zammad_config: Option<ZammadConfig>,
-    /// Per-session identity. None until the CC calls `check_in`.
-    /// `StreamableHttpService` constructs a fresh `OpsBrain` per session,
-    /// so this `Arc<RwLock>` is per-session state, not server-global.
-    pub(crate) cc_name: Arc<RwLock<Option<String>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -51,7 +45,6 @@ impl OpsBrain {
             kuma_configs,
             embedding_client,
             zammad_config,
-            cc_name: Arc::new(RwLock::new(None)),
             tool_router: Self::tool_router(),
         }
     }
@@ -561,47 +554,23 @@ impl OpsBrain {
         Ok(coordination::handle_delete_handoff(self, params.0).await)
     }
 
-    #[tool(
-        name = "get_catchup",
-        description = "Changes since a timestamp: new/updated handoffs, incidents, knowledge, runbooks. \
-        Compact mode (default) returns summaries only."
-    )]
-    async fn get_catchup(
-        &self,
-        params: Parameters<coordination::GetCatchupParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_get_catchup(self, params.0).await)
-    }
-
-    // ===== CC TEAM: identity & check-in =====
+    // ===== CC TEAM: pending-work query =====
 
     #[tool(
         name = "check_in",
-        description = "Your first action of every session. Tells ops-brain who you are \
-        (one of CC-Cloud, CC-Stealth, CC-HSR, CC-CPA — your CLAUDE.md tells you yours) \
-        and returns a briefing: your self-authored scope, the team roster, your open \
-        handoffs, your open incidents. The whole morning ritual in one call. \
-        Idempotent — re-call any time to refresh."
+        description = "Optional pending-work query. Returns open handoffs targeted at \
+        your machine, recent notify-class handoffs (compact), and open incidents in \
+        your scope. Pass `my_name` (one of CC-Cloud, CC-Stealth, CC-HSR, CC-CPA — your \
+        CLAUDE.md tells you yours) so the query can scope to your machine and client. \
+        Call this when you want to know what's waiting from the rest of the team. It \
+        is NOT a startup ritual and NOT required for any other tool — local is the \
+        source of truth, ops-brain is the team bus."
     )]
     async fn check_in(
         &self,
         params: Parameters<cc_team::CheckInParams>,
     ) -> Result<CallToolResult, McpError> {
         Ok(cc_team::handle_check_in(self, params.0).await)
-    }
-
-    #[tool(
-        name = "set_my_identity",
-        description = "Write or update your own confident scope (20-2000 chars, markdown ok). \
-        Your peers see this on every check_in. Requires you to have called check_in first \
-        in this session. First write fans out a low-priority introduction handoff to the \
-        rest of the team."
-    )]
-    async fn set_my_identity(
-        &self,
-        params: Parameters<cc_team::SetMyIdentityParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(cc_team::handle_set_my_identity(self, params.0).await)
     }
 
     // ===== SEMANTIC SEARCH TOOLS =====
@@ -813,19 +782,6 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         Ok(inventory::handle_delete_vendor(self, params.0).await)
     }
-
-    // ===== PREFERENCE TOOLS =====
-
-    #[tool(
-        name = "set_preference",
-        description = "Set a global tool default. Keys: 'compact' (bool). Explicit params always override."
-    )]
-    async fn set_preference(
-        &self,
-        params: Parameters<coordination::SetPreferenceParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_set_preference(self, params.0).await)
-    }
 }
 
 #[tool_handler]
@@ -834,18 +790,14 @@ impl ServerHandler for OpsBrain {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ops-brain", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "You are part of a small, sharp team of Claude Code instances running a real MSP. \
-                 Each of you owns a domain. Your peers count on you. \
-                 \
-                 First action of every session: call `check_in` with your CC name \
-                 (your per-machine CLAUDE.md tells you yours). It returns who you are, \
-                 who your teammates are, and what's waiting for you — the whole morning \
-                 ritual in one call. \
-                 \
-                 Be decisive. Write the scope you own with `set_my_identity`. \
-                 Trust your peers. You're the expert on call. Default-deny across \
-                 clients — `search_knowledge 'CC Team Compliance'` before any \
-                 cross-client share.",
+                "ops-brain is the team bus for a small group of Claude Code instances running \
+                 a real MSP — local is the source of truth (your CLAUDE.md is your scope, your \
+                 filesystem is your state, your git history is your memory). Reach for ops-brain \
+                 only when you genuinely need the rest of the team: handoffs to other CCs, shared \
+                 incidents, cross-client knowledge with isolation rules, monitors, tickets that \
+                 span systems — if a question can be answered without ops-brain, it should be. \
+                 Default-deny across clients: cross-client knowledge requires \
+                 acknowledge_cross_client=true.",
             )
     }
 }

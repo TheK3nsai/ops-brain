@@ -14,7 +14,7 @@ get_situational_awareness(server_slug: "web-server-01")
 
 ## Key Features
 
-- **65 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
+- **64 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
 - **Hybrid search** — full-text (tsvector + websearch_to_tsquery) combined with semantic search (pgvector + nomic-embed-text) via Reciprocal Rank Fusion
 - **Multi-instance Uptime Kuma** — aggregate monitoring from multiple Kuma instances with partial failure tolerance
 - **Proactive monitoring** — background watchdog polls Uptime Kuma, auto-creates/resolves incidents with severity logic, flap suppression, and deduplication
@@ -103,7 +103,23 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 }
 ```
 
-## Tools (65)
+## Design Philosophy: Team Bus, Not a Brain
+
+ops-brain is designed for a small team of Claude Code instances collaborating across multiple machines. The core principle: **local is the source of truth, ops-brain is the team bus.**
+
+Each Claude Code instance already knows who it is from its own per-machine `CLAUDE.md`. It has its own filesystem, its own git history, its own memory files. Those are authoritative. ops-brain exists for things instances genuinely *cannot* do alone:
+
+- **Handoffs to other instances** (`create_handoff` / `check_in`)
+- **Shared incidents** across the team
+- **Cross-client knowledge** with isolation rules and audit logging
+- **Shared infrastructure observability** (Uptime Kuma, watchdog)
+- **Tickets that span systems** (Zammad)
+
+If a question can be answered without ops-brain — by reading a local file, running `git log`, or checking the filesystem — it should be. There is no startup ritual, no required "first call," no ops-brain-managed identity. Reach for ops-brain when you need the rest of the team; otherwise just do the work.
+
+This design emerged from the v1.5 walk-back of v1.4's "morning ritual" framing — see `CHANGELOG.md` for the post-mortem.
+
+## Tools (64)
 
 ### Inventory (23)
 | Tool | Description |
@@ -152,13 +168,13 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 | `search_incidents` | Search (mode: fts/semantic/hybrid) |
 | `link_incident` | Link servers, services, runbooks, and vendors |
 
-### Handoffs (7)
+### Handoffs & Coordination (7)
 | Tool | Description |
 |------|-------------|
-| `create_handoff` / `accept_handoff` / `complete_handoff` | Cross-machine task coordination. `category="action"` (default, persistent) or `"notify"` (ephemeral FYI) |
+| `create_handoff` / `accept_handoff` / `complete_handoff` | Cross-machine task coordination. `category="action"` (default, persistent) or `"notify"` (ephemeral FYI, auto-pruned after 7 days) |
 | `delete_handoff` | Permanently delete a handoff by ID (hard delete) |
 | `list_handoffs` / `search_handoffs` | Filter/search handoffs. Defaults to action-only; `include_notify=true` to include notifications. Compact mode (default) truncates bodies |
-| `get_catchup` | What changed since a timestamp — handoffs, incidents, knowledge, runbooks, stale runbook warnings |
+| `check_in` | Optional pending-work query for a CC. Returns open handoffs to your machine, recent notifications, and open incidents in your scope. NOT a startup ritual — call when you actually want to know what's pending |
 
 ### Monitoring (7)
 | Tool | Description |
@@ -182,10 +198,9 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 |------|-------------|
 | `generate_briefing` | Daily or weekly operational summary — monitoring, incidents, handoffs, tickets |
 
-### Other (2)
+### Other (1)
 | Tool | Description |
 |------|-------------|
-| `set_preference` | Global defaults (e.g. `compact=true`). Scoped: global, machine, or client |
 | `backfill_embeddings` | Generate embeddings for existing records (batch, with progress) |
 
 ## REST API

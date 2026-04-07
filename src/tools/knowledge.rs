@@ -6,9 +6,7 @@ use crate::validation::deserialize_flexible_i64;
 use super::helpers::{
     error_result, filter_cross_client, json_result, not_found, not_found_with_suggestions,
 };
-use super::shared::{
-    build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries, resolve_compact,
-};
+use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
 
 /// Compact a search result item: keep key metadata fields + a content snippet.
@@ -345,7 +343,7 @@ pub(crate) async fn handle_search_knowledge(
     let browse_mode = query_trimmed.is_empty() || query_trimmed == "*";
 
     if browse_mode {
-        let compact = resolve_compact(&brain.pool, p.compact, true).await;
+        let compact = p.compact.unwrap_or(true);
         return browse_recent_entries(
             brain,
             &tables,
@@ -390,7 +388,7 @@ pub(crate) async fn handle_search_knowledge(
     let limit = p.limit.unwrap_or(20);
 
     // Compact mode: default true for multi-table, false for single-table
-    let compact = resolve_compact(&brain.pool, p.compact, multi_table).await;
+    let compact = p.compact.unwrap_or(multi_table);
 
     // Single-table knowledge search (original behavior)
     if !multi_table {

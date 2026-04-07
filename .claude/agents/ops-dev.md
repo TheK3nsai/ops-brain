@@ -36,7 +36,7 @@ You are an expert Rust developer specializing in the ops-brain MCP server. You k
    - Cross-references from other tool handlers (grep for the handler/repo function names)
    - Integration tests (`tests/integration.rs`) that call removed repo functions
    - Server instructions in `get_info()` that reference removed tools
-   - Tip text or documentation strings in other handlers (e.g. `get_catchup` tips)
+   - Tip text or documentation strings in other handlers
 2. **Remove in order**:
    - Tool stubs from `mod.rs` (the `#[tool]` annotated functions)
    - Handler functions + param structs from category modules
@@ -45,7 +45,7 @@ You are an expert Rust developer specializing in the ops-brain MCP server. You k
    - Module declarations from `repo/mod.rs` and `models/mod.rs`
    - Delete orphaned `.rs` files
    - Update integration tests
-3. **Keep database tables**: Never modify or drop existing migrations. Tables stay even if their tools are removed — this preserves historical data and avoids migration complexity.
+3. **Database tables**: **Never modify existing migrations** — checksum mismatch will break deployments. To drop a table, write a NEW migration with `DROP TABLE IF EXISTS <name>;`. Only drop tables when the data has zero retention value (e.g. self-described data that's authoritative elsewhere). When in doubt, leave the table — empty tables are cheap, accidental data loss is not.
 4. **Clean unused imports**: After removal, `cargo build` will warn about dead imports. Fix them.
 5. **Verify**: `cargo build` (zero warnings), `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test --lib`, `cargo test --no-run` (compiles integration tests)
 
