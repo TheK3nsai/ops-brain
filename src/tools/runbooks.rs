@@ -294,8 +294,10 @@ pub(crate) async fn handle_create_runbook(
             )
             .await;
 
-            let mut value =
-                serde_json::to_value(&runbook).unwrap_or_else(|_| serde_json::json!({}));
+            let mut value = match serde_json::to_value(&runbook) {
+                Ok(v) => v,
+                Err(e) => return error_result(&format!("Serialization error: {e}")),
+            };
             if let Some(warning) = runbook_hygiene_warning(&p.content, p.source_url.as_deref()) {
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("warnings".to_string(), serde_json::json!([warning]));
@@ -349,8 +351,10 @@ pub(crate) async fn handle_update_runbook(
             // Hygiene check uses the *merged* state — caller may have only
             // updated content (leaving source_url as-is) or vice versa. The
             // returned runbook reflects what's now persisted.
-            let mut value =
-                serde_json::to_value(&updated).unwrap_or_else(|_| serde_json::json!({}));
+            let mut value = match serde_json::to_value(&updated) {
+                Ok(v) => v,
+                Err(e) => return error_result(&format!("Serialization error: {e}")),
+            };
             if let Some(warning) =
                 runbook_hygiene_warning(&updated.content, updated.source_url.as_deref())
             {
