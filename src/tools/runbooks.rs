@@ -76,6 +76,36 @@ pub struct UpdateRunbookParams {
     pub source_url: Option<String>,
 }
 
+// ===== HYGIENE =====
+
+/// Threshold above which a runbook body without `source_url` triggers an
+/// advisory. Per the KISS knowledge policy, large runbooks should live in a
+/// git-tracked file with `source_url` pointing to the canonical path; the
+/// ops-brain entry stays a summary + pointer.
+const RUNBOOK_INLINE_BODY_WARN_BYTES: usize = 2048;
+
+const RUNBOOK_HYGIENE_WARNING: &str =
+    "Runbook body is larger than 2KB but `source_url` is empty. Per the CC \
+     Team Contribution Standards (knowledge slug `cc-team-contribution-standards-session-protocol`), \
+     the canonical copy of a long runbook should live in a git-tracked file \
+     in the owning CC's working repo, with `source_url` set to that path. \
+     This ops-brain entry should be a summary (~300 words) plus the pointer, \
+     not the full procedure. The runbook was created/updated as requested — \
+     this is advisory only.";
+
+/// Returns the hygiene warning string if the runbook body is large and no
+/// `source_url` is set. Used by both `handle_create_runbook` and
+/// `handle_update_runbook` to surface drift inline rather than relying on
+/// session-end review.
+fn runbook_hygiene_warning(content: &str, source_url: Option<&str>) -> Option<&'static str> {
+    let has_source = source_url.map(|s| !s.trim().is_empty()).unwrap_or(false);
+    if content.len() > RUNBOOK_INLINE_BODY_WARN_BYTES && !has_source {
+        Some(RUNBOOK_HYGIENE_WARNING)
+    } else {
+        None
+    }
+}
+
 // ===== HANDLERS =====
 
 pub(crate) async fn handle_get_runbook(
@@ -263,7 +293,17 @@ pub(crate) async fn handle_create_runbook(
                 &text,
             )
             .await;
-            json_result(&runbook)
+
+            let mut value = match serde_json::to_value(&runbook) {
+                Ok(v) => v,
+                Err(e) => return error_result(&format!("Serialization error: {e}")),
+            };
+            if let Some(warning) = runbook_hygiene_warning(&p.content, p.source_url.as_deref()) {
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("warnings".to_string(), serde_json::json!([warning]));
+                }
+            }
+            json_result(&value)
         }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
@@ -307,8 +347,63 @@ pub(crate) async fn handle_update_runbook(
                 &text,
             )
             .await;
-            json_result(&updated)
+
+            // Hygiene check uses the *merged* state — caller may have only
+            // updated content (leaving source_url as-is) or vice versa. The
+            // returned runbook reflects what's now persisted.
+            let mut value = match serde_json::to_value(&updated) {
+                Ok(v) => v,
+                Err(e) => return error_result(&format!("Serialization error: {e}")),
+            };
+            if let Some(warning) =
+                runbook_hygiene_warning(&updated.content, updated.source_url.as_deref())
+            {
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("warnings".to_string(), serde_json::json!([warning]));
+                }
+            }
+            json_result(&value)
         }
         Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_body_no_warning_regardless_of_source_url() {
+        let body = "Step 1: do thing.";
+        assert!(runbook_hygiene_warning(body, None).is_none());
+        assert!(runbook_hygiene_warning(body, Some("repo/path.md")).is_none());
+    }
+
+    #[test]
+    fn body_at_threshold_no_warning() {
+        // Boundary: exactly RUNBOOK_INLINE_BODY_WARN_BYTES bytes is allowed.
+        let body = "x".repeat(RUNBOOK_INLINE_BODY_WARN_BYTES);
+        assert!(runbook_hygiene_warning(&body, None).is_none());
+    }
+
+    #[test]
+    fn large_body_with_source_url_no_warning() {
+        let body = "x".repeat(RUNBOOK_INLINE_BODY_WARN_BYTES + 1);
+        assert!(runbook_hygiene_warning(&body, Some("repo/path.md")).is_none());
+    }
+
+    #[test]
+    fn large_body_without_source_url_warns() {
+        let body = "x".repeat(RUNBOOK_INLINE_BODY_WARN_BYTES + 1);
+        assert!(runbook_hygiene_warning(&body, None).is_some());
+    }
+
+    #[test]
+    fn large_body_with_blank_source_url_warns() {
+        // Whitespace-only source_url is treated as missing — matches what a
+        // CC instance would intuitively expect, and prevents trivial bypass.
+        let body = "x".repeat(RUNBOOK_INLINE_BODY_WARN_BYTES + 1);
+        assert!(runbook_hygiene_warning(&body, Some("   ")).is_some());
+        assert!(runbook_hygiene_warning(&body, Some("")).is_some());
     }
 }
