@@ -1,11 +1,26 @@
-# ops-brain — Self-contained deployment for new users
-# Includes PostgreSQL with pgvector. Just run: docker compose up -d
-# Then configure Claude Code to connect via stdio or HTTP.
+# ops-brain — Self-contained development / new-user deployment
+# ============================================================================
+#  Spins up its own PostgreSQL (pgvector/pgvector:pg18). Just run:
+#    docker compose up -d
+#
+#  USE THIS FILE WHEN: you're trying ops-brain for the first time, you don't
+#  already have a PostgreSQL server, or you want a self-contained stack.
+#
+#  DO NOT USE THIS FILE WHEN: you're deploying alongside an existing
+#  PostgreSQL (e.g. shared-postgres on kensai-cloud) — use docker-compose.prod.yml
+#  with `docker compose -f docker-compose.prod.yml up -d` instead.
+#
+#  Container names are intentionally suffixed `-dev` and the project is named
+#  `ops-brain-dev` so this file cannot recreate or clobber a production
+#  `ops-brain` container, network, or volume if run by mistake.
+# ============================================================================
+
+name: ops-brain-dev
 
 services:
   postgres:
     image: pgvector/pgvector:pg18
-    container_name: ops-brain-db
+    container_name: ops-brain-dev-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ops_brain
@@ -26,7 +41,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ops-brain
+    container_name: ops-brain-dev
     restart: unless-stopped
     depends_on:
       postgres:
