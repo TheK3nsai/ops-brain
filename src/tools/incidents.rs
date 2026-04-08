@@ -4,10 +4,10 @@ use serde::Deserialize;
 use crate::validation::deserialize_flexible_i64;
 
 use super::helpers::{
-    error_result, json_result, not_found, not_found_vendor_with_suggestions,
+    error_result, filter_cross_client, json_result, not_found, not_found_vendor_with_suggestions,
     not_found_with_suggestions,
 };
-use super::shared::{embed_and_store, get_query_embedding};
+use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -28,6 +28,11 @@ pub struct CreateIncidentParams {
     pub service_slugs: Option<Vec<String>>,
     /// Mark as safe to surface in cross-client contexts (default: false)
     pub cross_client_safe: Option<bool>,
+    /// Release similar-incident matches from other clients in the response.
+    /// Default false. When false, cross-client matches are withheld and the
+    /// response includes a `_cross_client_withheld` notice. Re-call with
+    /// `acknowledge_cross_client: true` to release them (audit-logged).
+    pub acknowledge_cross_client: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -108,7 +113,7 @@ pub struct RunbookLink {
 
 // ===== HANDLERS =====
 
-pub(crate) async fn handle_create_incident(
+pub async fn handle_create_incident(
     brain: &super::OpsBrain,
     p: CreateIncidentParams,
 ) -> CallToolResult {
@@ -133,6 +138,8 @@ pub(crate) async fn handle_create_incident(
     };
 
     let cross_client_safe = p.cross_client_safe.unwrap_or(false);
+    let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
+
     let incident = match crate::repo::incident_repo::create_incident(
         &brain.pool,
         &p.title,
@@ -180,17 +187,123 @@ pub(crate) async fn handle_create_incident(
         }
     }
 
-    let text = crate::embeddings::prepare_incident_text(&incident);
-    embed_and_store(
-        &brain.pool,
-        &brain.embedding_client,
-        "incidents",
-        incident.id,
-        &text,
-    )
-    .await;
+    // Compute the embedding ONCE and use it for both:
+    //   1. similarity search against existing OPEN incidents
+    //   2. storage on this new incident (replaces the embed_and_store path,
+    //      which would re-call the embedding API a second time)
+    //
+    // Best-effort: if the embedding service is down, the incident still
+    // creates successfully — `_similar_incidents` is just empty and
+    // `embedding` stays NULL on the row (re-runs of the watchdog backfill
+    // will pick it up later).
+    let mut similar_incidents_json: Vec<serde_json::Value> = Vec::new();
+    let mut withheld_notices: Vec<serde_json::Value> = Vec::new();
 
-    json_result(&incident)
+    if let Some(ref embedding_client) = brain.embedding_client {
+        let text = crate::embeddings::prepare_incident_text(&incident);
+        match embedding_client.embed_text(&text).await {
+            Ok(embedding) => {
+                // Search for related open work — top 3, distance < 0.30 ≈ similarity > 70%.
+                // Threshold tuned looser than knowledge's 0.15 because the goal is
+                // "is this related to something already in flight?", not duplicate detection.
+                match crate::repo::embedding_repo::find_similar_open_incidents(
+                    &brain.pool,
+                    &embedding,
+                    incident.id,
+                    0.30,
+                    3,
+                )
+                .await
+                {
+                    Ok(similars) if !similars.is_empty() => {
+                        // Telemetry for retuning the 0.30 threshold from real data.
+                        // similars is ORDER BY distance ASC so [0] is the closest match.
+                        tracing::info!(
+                            new_incident = %incident.id,
+                            similar_count = similars.len(),
+                            min_distance = similars[0].distance,
+                            "create_incident: surfaced similar open incidents"
+                        );
+
+                        let candidates: Vec<serde_json::Value> = similars
+                            .iter()
+                            .map(|s| {
+                                serde_json::json!({
+                                    "id": s.id.to_string(),
+                                    "title": s.title,
+                                    "status": s.status,
+                                    "severity": s.severity,
+                                    "client_id": s.client_id.map(|c| c.to_string()),
+                                    "cross_client_safe": s.cross_client_safe,
+                                    "created_at": s.created_at,
+                                    "similarity": format!("{:.1}%", (1.0 - s.distance) * 100.0),
+                                })
+                            })
+                            .collect();
+
+                        let client_lookup = build_client_lookup(&brain.pool).await;
+                        let filtered = filter_cross_client(
+                            candidates,
+                            "incident",
+                            client_id,
+                            acknowledge,
+                            &client_lookup,
+                        );
+
+                        log_audit_entries(
+                            &brain.pool,
+                            "create_incident",
+                            client_id,
+                            "incident",
+                            &filtered.audit_entries,
+                        )
+                        .await;
+
+                        similar_incidents_json = filtered.allowed;
+                        withheld_notices = filtered.withheld_notices;
+                    }
+                    Ok(_) => {} // empty match list — leave similar_incidents_json as []
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed similarity search for new incident {}: {e}",
+                            incident.id
+                        );
+                    }
+                }
+
+                // Store the embedding directly (we already computed it above).
+                if let Err(e) = crate::repo::embedding_repo::store_incident_embedding(
+                    &brain.pool,
+                    incident.id,
+                    &embedding,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to store embedding for new incident {}: {e}",
+                        incident.id
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to generate embedding for new incident {}: {e}",
+                    incident.id
+                );
+            }
+        }
+    }
+
+    let mut response = serde_json::json!({
+        "incident": incident,
+        "_similar_incidents": similar_incidents_json,
+    });
+
+    if !withheld_notices.is_empty() {
+        response["_cross_client_withheld"] = serde_json::json!(withheld_notices);
+    }
+
+    json_result(&response)
 }
 
 pub(crate) async fn handle_update_incident(

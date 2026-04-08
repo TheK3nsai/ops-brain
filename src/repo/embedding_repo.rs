@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use pgvector::Vector;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -422,6 +423,63 @@ pub async fn vector_search_incidents(
         "SELECT * FROM incidents WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2",
     )
     .bind(vec)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Compact view of an open incident matched by semantic similarity. Returned
+/// by `find_similar_open_incidents` so `create_incident` can surface "this
+/// looks like work already in flight" without sending the full Incident row
+/// for every match.
+///
+/// `cross_client_safe` and `client_id` are included so the cross-client gate
+/// in the handler can decide which matches to release vs withhold.
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct SimilarIncident {
+    pub id: Uuid,
+    pub title: String,
+    pub status: String,
+    pub severity: String,
+    pub client_id: Option<Uuid>,
+    pub cross_client_safe: bool,
+    pub created_at: DateTime<Utc>,
+    pub distance: f64,
+}
+
+/// Find OPEN incidents semantically similar to the given embedding within a
+/// cosine distance threshold. Excludes `exclude_id` (the incident that just
+/// produced the query embedding, so a freshly-created row never matches itself).
+///
+/// Returns matches across ALL clients; the cross-client gate is applied at the
+/// handler layer (`tools::helpers::filter_cross_client`) so this function stays
+/// composable with the standard scoping pattern used elsewhere.
+///
+/// Used by `create_incident` to surface related work to the caller. Threshold
+/// 0.30 (≈70% similarity) is empirical — looser than knowledge's 0.15
+/// (duplicate detection) because the goal here is "related work" not "same thing".
+pub async fn find_similar_open_incidents(
+    pool: &PgPool,
+    query_embedding: &[f32],
+    exclude_id: Uuid,
+    max_distance: f64,
+    limit: i64,
+) -> Result<Vec<SimilarIncident>, sqlx::Error> {
+    let vec = Vector::from(query_embedding.to_vec());
+    sqlx::query_as::<_, SimilarIncident>(
+        "SELECT id, title, status, severity, client_id, cross_client_safe, created_at,
+                (embedding <=> $1)::float8 AS distance
+         FROM incidents
+         WHERE embedding IS NOT NULL
+           AND status = 'open'
+           AND id != $2
+           AND (embedding <=> $1) < $3
+         ORDER BY distance
+         LIMIT $4",
+    )
+    .bind(vec)
+    .bind(exclude_id)
+    .bind(max_distance)
     .bind(limit)
     .fetch_all(pool)
     .await

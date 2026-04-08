@@ -3,7 +3,7 @@ pub mod cc_team;
 mod context;
 mod coordination;
 mod helpers;
-mod incidents;
+pub mod incidents;
 mod inventory;
 pub mod knowledge;
 mod monitoring;

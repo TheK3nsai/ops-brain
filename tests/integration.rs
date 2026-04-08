@@ -1008,6 +1008,268 @@ mod incident_tests {
     }
 }
 
+// ===== Incident Similarity (raid #3) =====
+
+mod incident_similarity_tests {
+    use super::*;
+    use ops_brain::repo::embedding_repo;
+    use ops_brain::repo::incident_repo;
+
+    fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
+        ops_brain::tools::OpsBrain::new(pool, vec![], None, None)
+    }
+
+    fn extract_text(result: &rmcp::model::CallToolResult) -> String {
+        result
+            .content
+            .first()
+            .expect("result has at least one content item")
+            .as_text()
+            .expect("content is text")
+            .text
+            .clone()
+    }
+
+    /// Build a 768-dim test embedding with the given leading components,
+    /// rest zero. Cosine distance between two such vectors is determined
+    /// entirely by their non-zero components, so we can construct
+    /// deterministic "near" and "far" pairs without a real embedding service.
+    fn test_embedding(values: &[f32]) -> Vec<f32> {
+        let mut v = vec![0.0_f32; 768];
+        for (i, x) in values.iter().enumerate() {
+            v[i] = *x;
+        }
+        v
+    }
+
+    async fn cleanup_incidents(pool: &PgPool, ids: &[uuid::Uuid]) {
+        sqlx::query("DELETE FROM incidents WHERE id = ANY($1)")
+            .bind(ids.to_vec())
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn find_similar_open_incidents_returns_close_matches() {
+        let pool = pool().await;
+
+        // Two near-identical embeddings on the same dominant axis
+        let emb_existing = test_embedding(&[1.0, 0.0]);
+        let emb_query = test_embedding(&[0.99, 0.01]);
+
+        let existing = incident_repo::create_incident(
+            &pool,
+            "Database connection pool exhausted (similarity test)",
+            "high",
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        embedding_repo::store_incident_embedding(&pool, existing.id, &emb_existing)
+            .await
+            .unwrap();
+
+        // Probe with a different (synthetic) id — simulates the new incident
+        // querying against existing ones, excluding itself.
+        let probe_id = uuid::Uuid::now_v7();
+        let results =
+            embedding_repo::find_similar_open_incidents(&pool, &emb_query, probe_id, 0.30, 5)
+                .await
+                .unwrap();
+
+        assert!(
+            results.iter().any(|r| r.id == existing.id),
+            "expected existing incident to surface as similar; got {} results",
+            results.len()
+        );
+
+        cleanup_incidents(&pool, &[existing.id]).await;
+    }
+
+    #[tokio::test]
+    async fn find_similar_open_incidents_self_excludes() {
+        let pool = pool().await;
+        let emb = test_embedding(&[1.0, 0.0]);
+
+        let me = incident_repo::create_incident(
+            &pool,
+            "Self-exclusion test incident",
+            "low",
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        embedding_repo::store_incident_embedding(&pool, me.id, &emb)
+            .await
+            .unwrap();
+
+        // Query with my own embedding, exclude my own id
+        let results = embedding_repo::find_similar_open_incidents(&pool, &emb, me.id, 0.30, 10)
+            .await
+            .unwrap();
+
+        assert!(
+            !results.iter().any(|r| r.id == me.id),
+            "self-exclusion failed: an incident must not appear in its own similarity results"
+        );
+
+        cleanup_incidents(&pool, &[me.id]).await;
+    }
+
+    #[tokio::test]
+    async fn find_similar_open_incidents_excludes_resolved() {
+        let pool = pool().await;
+        let emb = test_embedding(&[1.0, 0.0]);
+
+        let to_be_resolved = incident_repo::create_incident(
+            &pool,
+            "Old fixed disk-full alert",
+            "low",
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        embedding_repo::store_incident_embedding(&pool, to_be_resolved.id, &emb)
+            .await
+            .unwrap();
+
+        // Mark it resolved
+        incident_repo::update_incident(
+            &pool,
+            to_be_resolved.id,
+            None,
+            Some("resolved"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let probe_id = uuid::Uuid::now_v7();
+        let results = embedding_repo::find_similar_open_incidents(&pool, &emb, probe_id, 0.30, 10)
+            .await
+            .unwrap();
+
+        assert!(
+            !results.iter().any(|r| r.id == to_be_resolved.id),
+            "resolved incidents must not surface in open-incidents similarity search"
+        );
+
+        cleanup_incidents(&pool, &[to_be_resolved.id]).await;
+    }
+
+    #[tokio::test]
+    async fn find_similar_open_incidents_respects_distance_threshold() {
+        let pool = pool().await;
+
+        // Orthogonal vectors → cosine distance ≈ 1.0, far above 0.30
+        let emb_x = test_embedding(&[1.0, 0.0]);
+        let emb_y = test_embedding(&[0.0, 1.0]);
+
+        let far_one = incident_repo::create_incident(
+            &pool,
+            "Unrelated billing question",
+            "low",
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        embedding_repo::store_incident_embedding(&pool, far_one.id, &emb_y)
+            .await
+            .unwrap();
+
+        let probe_id = uuid::Uuid::now_v7();
+        let results =
+            embedding_repo::find_similar_open_incidents(&pool, &emb_x, probe_id, 0.30, 10)
+                .await
+                .unwrap();
+
+        assert!(
+            !results.iter().any(|r| r.id == far_one.id),
+            "orthogonal embedding (distance ≈ 1.0) must not pass threshold 0.30"
+        );
+
+        cleanup_incidents(&pool, &[far_one.id]).await;
+    }
+
+    #[tokio::test]
+    async fn handler_create_incident_response_includes_similar_field() {
+        // build_brain passes None for embedding_client, so the similarity
+        // logic is skipped — but the response shape MUST still include
+        // `_similar_incidents` (as an empty array) so callers can rely on
+        // the field always being present. Guards against future regressions
+        // of the response contract.
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+
+        let result = ops_brain::tools::incidents::handle_create_incident(
+            &brain,
+            ops_brain::tools::incidents::CreateIncidentParams {
+                title: format!("Shape contract {}", uuid::Uuid::now_v7()),
+                severity: Some("low".to_string()),
+                client_slug: None,
+                symptoms: None,
+                notes: None,
+                server_slugs: None,
+                service_slugs: None,
+                cross_client_safe: None,
+                acknowledge_cross_client: None,
+            },
+        )
+        .await;
+
+        assert_eq!(result.is_error, Some(false));
+        let text = extract_text(&result);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).expect("response is valid JSON");
+
+        assert!(
+            parsed.get("incident").is_some(),
+            "response must wrap the new incident under `incident`"
+        );
+        assert!(
+            parsed.get("_similar_incidents").is_some(),
+            "response must always include `_similar_incidents` (empty when no embedding client)"
+        );
+        assert!(
+            parsed["_similar_incidents"].is_array(),
+            "_similar_incidents must be an array"
+        );
+        assert_eq!(
+            parsed["_similar_incidents"].as_array().unwrap().len(),
+            0,
+            "no embedding client + clean DB = empty similar list"
+        );
+        assert!(
+            parsed.get("_cross_client_withheld").is_none(),
+            "_cross_client_withheld should be absent when nothing was withheld"
+        );
+
+        // Cleanup
+        let id_str = parsed["incident"]["id"].as_str().unwrap();
+        let id = uuid::Uuid::parse_str(id_str).unwrap();
+        cleanup_incidents(&pool, &[id]).await;
+    }
+}
+
 // ===== Session & Handoff Repo =====
 
 mod coordination_tests {
