@@ -1211,6 +1211,71 @@ mod incident_similarity_tests {
     }
 
     #[tokio::test]
+    async fn nearest_open_incident_distance_returns_closest_even_over_threshold() {
+        // Telemetry path: when find_similar_open_incidents returns empty
+        // because nothing is below the 0.30 cutoff, nearest_open_incident_distance
+        // must still return the closest distance. Regression-proofs the
+        // miss-side telemetry for threshold retuning.
+        //
+        // The test database is shared across parallel tests, so we use
+        // high-dimension unique axes (100 and 101) that no other test touches
+        // — every other open incident in the db has embeddings along axes 0/1,
+        // making them all cosine-distance ≈ 1.0 from our probe.
+        let pool = pool().await;
+
+        let mut emb_existing = vec![0.0_f32; 768];
+        emb_existing[100] = 1.0;
+        let mut emb_query = vec![0.0_f32; 768];
+        emb_query[101] = 1.0;
+
+        let existing = incident_repo::create_incident(
+            &pool,
+            "Unrelated billing question (miss telemetry)",
+            "low",
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        embedding_repo::store_incident_embedding(&pool, existing.id, &emb_existing)
+            .await
+            .unwrap();
+
+        let probe_id = uuid::Uuid::now_v7();
+
+        // Confirm the threshold filter would return nothing at 0.30
+        let filtered =
+            embedding_repo::find_similar_open_incidents(&pool, &emb_query, probe_id, 0.30, 5)
+                .await
+                .unwrap();
+        assert!(
+            filtered.is_empty(),
+            "setup precondition: orthogonal vectors (axis 100 vs 101) must not pass 0.30 \
+             threshold, but got {} matches",
+            filtered.len()
+        );
+
+        // But the nearest-distance telemetry helper must still see something
+        let nearest = embedding_repo::nearest_open_incident_distance(&pool, &emb_query, probe_id)
+            .await
+            .unwrap();
+        assert!(
+            nearest.is_some(),
+            "nearest_open_incident_distance must return Some(d) when any open incident with \
+             an embedding exists, even when d is above the similarity threshold"
+        );
+        assert!(
+            nearest.unwrap() > 0.30,
+            "nearest distance for orthogonal vectors should be > 0.30 (got {:?})",
+            nearest
+        );
+
+        cleanup_incidents(&pool, &[existing.id]).await;
+    }
+
+    #[tokio::test]
     async fn handler_create_incident_response_includes_similar_field() {
         // build_brain passes None for embedding_client, so the similarity
         // logic is skipped — but the response shape MUST still include

@@ -485,6 +485,35 @@ pub async fn find_similar_open_incidents(
     .await
 }
 
+/// Telemetry helper: cosine distance to the nearest OPEN incident, regardless
+/// of threshold. Used by `create_incident` in the "no matches above threshold"
+/// branch to log the distance of the nearest-miss, so we can gather a real
+/// distribution of distances and retune the 0.30 threshold from data instead
+/// of guessing.
+///
+/// Returns `None` when there are no other open incidents with embeddings
+/// (cold start or freshly purged state).
+pub async fn nearest_open_incident_distance(
+    pool: &PgPool,
+    query_embedding: &[f32],
+    exclude_id: Uuid,
+) -> Result<Option<f64>, sqlx::Error> {
+    let vec = Vector::from(query_embedding.to_vec());
+    sqlx::query_scalar::<_, f64>(
+        "SELECT (embedding <=> $1)::float8 AS distance
+         FROM incidents
+         WHERE embedding IS NOT NULL
+           AND status = 'open'
+           AND id != $2
+         ORDER BY distance
+         LIMIT 1",
+    )
+    .bind(vec)
+    .bind(exclude_id)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn vector_search_handoffs(
     pool: &PgPool,
     query_embedding: &[f32],

@@ -262,7 +262,41 @@ pub async fn handle_create_incident(
                         similar_incidents_json = filtered.allowed;
                         withheld_notices = filtered.withheld_notices;
                     }
-                    Ok(_) => {} // empty match list — leave similar_incidents_json as []
+                    Ok(_) => {
+                        // Empty match list — leave similar_incidents_json as [].
+                        //
+                        // Log the nearest-neighbor distance regardless of threshold so we
+                        // gather a distribution of "nearest miss" distances. Combined with
+                        // the hit-side `min_distance` telemetry above, this gives a real
+                        // distance distribution for retuning the 0.30 threshold from data
+                        // rather than guessing (see v1.7 smoke test where two intuitively
+                        // related titles landed at 0.436 — well above the cutoff).
+                        match crate::repo::embedding_repo::nearest_open_incident_distance(
+                            &brain.pool,
+                            &embedding,
+                            incident.id,
+                        )
+                        .await
+                        {
+                            Ok(Some(nearest_distance)) => {
+                                tracing::info!(
+                                    new_incident = %incident.id,
+                                    nearest_distance,
+                                    threshold = 0.30,
+                                    "create_incident: no similar incidents above threshold"
+                                );
+                            }
+                            Ok(None) => {
+                                // No other open incidents to compare against — cold start.
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed nearest-distance telemetry for new incident {}: {e}",
+                                    incident.id
+                                );
+                            }
+                        }
+                    }
                     Err(e) => {
                         tracing::warn!(
                             "Failed similarity search for new incident {}: {e}",
