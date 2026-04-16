@@ -28,10 +28,7 @@ pub struct CreateIncidentParams {
     pub service_slugs: Option<Vec<String>>,
     /// Mark as safe to surface in cross-client contexts (default: false)
     pub cross_client_safe: Option<bool>,
-    /// Release similar-incident matches from other clients in the response.
-    /// Default false. When false, cross-client matches are withheld and the
-    /// response includes a `_cross_client_withheld` notice. Re-call with
-    /// `acknowledge_cross_client: true` to release them (audit-logged).
+    /// Release cross-client similar-incident matches withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
 }
 

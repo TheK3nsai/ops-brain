@@ -170,13 +170,10 @@ pub struct AddKnowledgeParams {
     pub cross_client_safe: Option<bool>,
     /// Skip duplicate detection check. Set to true if you've already seen the warning and want to create anyway.
     pub force: Option<bool>,
-    /// Your CC name — stamps provenance on this knowledge entry. Must be
-    /// one of: CC-Cloud, CC-Stealth, CC-HSR, CC-CPA. Required since v1.6.
-    /// Read your own name from your per-machine CLAUDE.md.
+    /// Your CC name. Must be one of: CC-Cloud, CC-Stealth, CC-HSR, CC-CPA.
     pub author_cc: String,
-    /// Optional incident that produced this knowledge entry (UUID string).
-    /// Links the gotcha back to the incident that taught us the gotcha.
-    /// Can be set here or added post-hoc via update_knowledge.
+    /// Optional incident (UUID) that produced this entry. Can also be added
+    /// later via update_knowledge.
     pub source_incident_id: Option<String>,
 }
 
@@ -250,8 +247,7 @@ pub async fn handle_add_knowledge(
     let author_cc = p.author_cc.trim();
     if !super::cc_team::is_valid_cc_name(author_cc) {
         return error_result(&format!(
-            "Invalid author_cc: '{author_cc}'. Must be one of: {}. \
-             Read your CC name from your per-machine CLAUDE.md.",
+            "Invalid author_cc: '{author_cc}'. Must be one of: {}.",
             super::cc_team::cc_allowlist().join(", ")
         ));
     }
