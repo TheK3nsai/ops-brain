@@ -61,9 +61,7 @@ pub(crate) fn cc_allowlist() -> Vec<&'static str> {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CheckInParams {
-    /// Your CC name on the team. Must be one of: CC-Cloud, CC-Stealth,
-    /// CC-HSR, CC-CPA. Each CC's per-machine CLAUDE.md tells it its own name.
-    /// Used to filter handoffs to your machine and incidents to your scope.
+    /// Your CC name. Must be one of: CC-Cloud, CC-Stealth, CC-HSR, CC-CPA.
     pub my_name: String,
 }
 

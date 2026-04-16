@@ -88,4 +88,6 @@ jobs:
       - name: Run cargo audit
         # RUSTSEC-2023-0071: rsa crate timing side-channel (Marvin Attack).
         # No fix available upstream. Transitive dep via sqlx-mysql (unused — we use PostgreSQL only).
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        # RUSTSEC-2026-0097: rand unsoundness with custom logger + rand::rng().
+        # Transitive via rmcp (rand 0.10) and reqwest/quinn (rand 0.9). Not reachable from ops-brain code paths.
+        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0097

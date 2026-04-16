@@ -214,7 +214,7 @@ impl OpsBrain {
 
     #[tool(
         name = "upsert_server",
-        description = "Create or update a server. On update, only provided fields are changed (COALESCE — omitted fields are preserved). On create, NOT NULL fields default to empty/false/active."
+        description = "Create or update a server. On update, only provided fields are changed; omitted fields are preserved."
     )]
     async fn upsert_server(
         &self,
@@ -328,7 +328,7 @@ impl OpsBrain {
 
     #[tool(
         name = "add_knowledge",
-        description = "Add a knowledge base entry (lesson, gotcha, tip). Requires author_cc — your CC name (read it from your CLAUDE.md)."
+        description = "Add a knowledge base entry (lesson, gotcha, tip). Requires author_cc."
     )]
     async fn add_knowledge(
         &self,
@@ -350,7 +350,7 @@ impl OpsBrain {
 
     #[tool(
         name = "delete_knowledge",
-        description = "Delete a knowledge base entry by ID. Use with caution — this is permanent."
+        description = "Delete a knowledge base entry by ID."
     )]
     async fn delete_knowledge(
         &self,
@@ -387,9 +387,9 @@ impl OpsBrain {
 
     #[tool(
         name = "get_situational_awareness",
-        description = "KEY TOOL: Comprehensive context for a server, service, or client. \
-        Gathers entities, incidents, handoffs, runbooks, vendors, knowledge, monitoring. \
-        compact=true reduces ~94K→~10K. sections param filters response."
+        description = "Comprehensive context bundle for a server, service, or client: \
+        entities, incidents, handoffs, runbooks, vendors, knowledge, monitoring. \
+        Use compact=true and sections to reduce response size."
     )]
     async fn get_situational_awareness(
         &self,
@@ -558,13 +558,9 @@ impl OpsBrain {
 
     #[tool(
         name = "check_in",
-        description = "Optional pending-work query. Returns open handoffs targeted at \
-        your machine, recent notify-class handoffs (compact), and open incidents in \
-        your scope. Pass `my_name` (one of CC-Cloud, CC-Stealth, CC-HSR, CC-CPA — your \
-        CLAUDE.md tells you yours) so the query can scope to your machine and client. \
-        Call this when you want to know what's waiting from the rest of the team. It \
-        is NOT a startup ritual and NOT required for any other tool — local is the \
-        source of truth, ops-brain is the team bus."
+        description = "Pending-work query: open handoffs for your machine, recent \
+        notify-class handoffs (compact), and open incidents in your scope. Pass \
+        `my_name` (your CC name) to scope results."
     )]
     async fn check_in(
         &self,
@@ -790,13 +786,10 @@ impl ServerHandler for OpsBrain {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ops-brain", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "ops-brain is the team bus for a small group of Claude Code instances running \
-                 a real MSP — local is the source of truth (your CLAUDE.md is your scope, your \
-                 filesystem is your state, your git history is your memory). Reach for ops-brain \
-                 only when you genuinely need the rest of the team: handoffs to other CCs, shared \
-                 incidents, cross-client knowledge with isolation rules, monitors, tickets that \
-                 span systems — if a question can be answered without ops-brain, it should be. \
-                 Default-deny across clients: cross-client knowledge requires \
+                "ops-brain is the team bus. Your CLAUDE.md, filesystem, and git history are the \
+                 source of truth — reach for ops-brain only when you need the rest of the team: \
+                 handoffs, shared incidents, cross-client knowledge, monitors, cross-system \
+                 tickets. Default-deny across clients: cross-client content requires \
                  acknowledge_cross_client=true.",
             )
     }
