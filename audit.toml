@@ -7,3 +7,18 @@
 #   No fix available upstream. Transitive dep via sqlx-mysql, which we don't use
 #   (PostgreSQL only). sqlx includes mysql/sqlite macro support unconditionally.
 #   Ignored in CI via --ignore flag.
+#
+# RUSTSEC-2026-0097 (rand) — Unsound with custom logger calling rand::rng()
+#   Published 2026-04-09. Severity: unsound (warning), not vulnerable. The
+#   issue is a correctness problem that manifests when the rand crate is used
+#   alongside a custom logger implementation that calls `rand::rng()` during
+#   its log path.
+#   Transitive deps: rand 0.9.2 (via reqwest → quinn → quinn-proto) and
+#   rand 0.10.0 (via rmcp). No patched upstream version yet — advisory is
+#   days old and rmcp/reqwest/quinn haven't rev'd.
+#   Not reachable from our code paths: ops-brain uses `tracing` for logging
+#   (not a custom `log` implementation that touches `rand::rng()`), and no
+#   dependency's logger integration hits the vulnerable combination.
+#   Threat model: MCP server behind Cloudflare + auth, 4-CC internal team.
+#   Revisit when rmcp/reqwest/quinn release updates that bump rand.
+#   Ignored in CI via --ignore flag.
