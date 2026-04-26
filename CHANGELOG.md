@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Handoff routing was silently dropping messages when sender and recipient used different name forms.** A CC writing `to_machine: "CC-Stealth"` (CC name) was invisible to a recipient running `check_in(my_name: "CC-Stealth")` because `check_in` queried by hostname (`stealth`) — and vice versa. The bug surfaced when CC-CPA sent a reply handoff with `to_machine: "CC-Stealth"` / `from_machine: "CC-CPA"` and the recipient's `check_in` returned 0. Fix: all handoff handlers now normalize machine-name inputs (CC name OR hostname OR mixed-case alias) to a single canonical CC-name form before write/query. Migration `20260426000002_normalize_handoff_machine_names.sql` backfills existing rows; idempotent, covers the five known hostname aliases (`stealth`, `kensai-cloud`, `HV-FS0`, `SMYT-SERVER`, legacy `CPA-SRV`).
+
+### Changed
+
+- **`CC_TEAM` table shape** in `src/tools/cc_team.rs` widened from `(cc_name, hostname, client_slug)` to `(cc_name, &[hostname_aliases], client_slug)`. CC-CPA's machine has been called both `SMYT-SERVER` and `CPA-SRV` across docs and history; both now resolve to `CC-CPA`. Adding more aliases is a one-line edit, not a schema change.
+- **`normalize_machine_name(input)` helper** added (case-insensitive, trims whitespace, returns canonical CC name with allowlist on error). Applied at `handle_create_handoff`, `handle_list_handoffs`, `handle_check_in`, and the `machine` filter in `handle_get_situational_awareness`.
+- **Tool param descriptions** updated on `CreateHandoffParams`, `ListHandoffsParams`, `CheckInParams`, `GetSituationalAwarenessParams.machine` to document the dual-form acceptance and CC-name canonical form.
+- **`is_valid_cc_name()` retained as a strict check** (case-sensitive, no hostnames) for `add_knowledge.author_cc` validation — provenance is immutable post-write, so loose normalization is the wrong tradeoff there.
+
 ## [1.8.0] — 2026-04-26
 
 **Runbooks killed.** The runbooks feature is gone — table, tools, junctions, embeddings, watchdog suggestions, every reference. Running theme of the v1.5/v1.6/v1.7 architecture is "ops-brain is the team bus, not a brain; local is the source of truth." Runbooks were the last surface still pulling against that principle: a centrally-stored procedural-doc store that drifted away from the systems it documented and required cross-CC maintenance to keep current. Per-system procedures now live where the systems live (each repo's CLAUDE.md, configs, and docs); cross-CC durable safety/compliance content stays in `knowledge` (which is what `knowledge` is for). Tool count: 64 → 59.

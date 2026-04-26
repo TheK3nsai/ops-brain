@@ -1315,6 +1315,136 @@ mod coordination_tests {
             .await
             .unwrap();
     }
+
+    /// Verifies migration `20260426000002_normalize_handoff_machine_names.sql`
+    /// is idempotent and covers every legacy hostname → canonical CC mapping.
+    /// Re-runs the migration's UPDATE on synthetic rows containing each known
+    /// hostname (mixed-case included) and confirms convergence to CC names.
+    /// Running it a second time must be a no-op.
+    #[tokio::test]
+    async fn handoff_machine_names_migration_is_idempotent() {
+        let pool = pool().await;
+
+        // Seed one row per known hostname, in mixed casing to verify LOWER()
+        // handling. Each row stores the same hostname in both from_ and to_
+        // so we exercise both columns at once.
+        let cases = [
+            ("stealth", "CC-Stealth"),
+            ("kensai-cloud", "CC-Cloud"),
+            ("HV-FS0", "CC-HSR"),
+            ("SMYT-SERVER", "CC-CPA"),
+            ("CPA-SRV", "CC-CPA"),
+            // Mixed case, should still normalize:
+            ("HV-fs0", "CC-HSR"),
+            ("smyt-server", "CC-CPA"),
+        ];
+        let mut ids = Vec::new();
+        for (hostname, _expected) in &cases {
+            let h = ops_brain::repo::handoff_repo::create_handoff(
+                &pool,
+                None,
+                hostname,
+                Some(hostname),
+                "normal",
+                "action",
+                "migration round-trip test",
+                "body",
+                None,
+            )
+            .await
+            .unwrap();
+            ids.push(h.id);
+        }
+
+        // Inline the migration's UPDATE so the test exercises the exact SQL
+        // that ships in the file. If you change the migration, mirror the
+        // change here.
+        let migration_sql = r#"
+            UPDATE handoffs
+            SET
+                from_machine = CASE LOWER(from_machine)
+                    WHEN 'stealth' THEN 'CC-Stealth'
+                    WHEN 'kensai-cloud' THEN 'CC-Cloud'
+                    WHEN 'hv-fs0' THEN 'CC-HSR'
+                    WHEN 'smyt-server' THEN 'CC-CPA'
+                    WHEN 'cpa-srv' THEN 'CC-CPA'
+                    ELSE from_machine
+                END,
+                to_machine = CASE LOWER(to_machine)
+                    WHEN 'stealth' THEN 'CC-Stealth'
+                    WHEN 'kensai-cloud' THEN 'CC-Cloud'
+                    WHEN 'hv-fs0' THEN 'CC-HSR'
+                    WHEN 'smyt-server' THEN 'CC-CPA'
+                    WHEN 'cpa-srv' THEN 'CC-CPA'
+                    ELSE to_machine
+                END
+            WHERE
+                LOWER(from_machine) IN ('stealth', 'kensai-cloud', 'hv-fs0', 'smyt-server', 'cpa-srv')
+                OR LOWER(to_machine) IN ('stealth', 'kensai-cloud', 'hv-fs0', 'smyt-server', 'cpa-srv')
+        "#;
+
+        let first_run = sqlx::query(migration_sql)
+            .execute(&pool)
+            .await
+            .unwrap()
+            .rows_affected();
+        assert!(
+            first_run >= ids.len() as u64,
+            "first migration pass should touch every seeded row (got {first_run}, seeded {})",
+            ids.len()
+        );
+
+        // Verify each row converged to its expected CC name.
+        for (id, (_hostname, expected_cc)) in ids.iter().zip(cases.iter()) {
+            let row: (String, Option<String>) =
+                sqlx::query_as("SELECT from_machine, to_machine FROM handoffs WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(row.0, *expected_cc, "from_machine for row {id}");
+            assert_eq!(
+                row.1.as_deref(),
+                Some(*expected_cc),
+                "to_machine for row {id}"
+            );
+        }
+
+        // Idempotency: rerunning must affect zero of our seeded rows
+        // (canonical CC names are NOT in the WHEN list).
+        let second_run = sqlx::query(migration_sql)
+            .execute(&pool)
+            .await
+            .unwrap()
+            .rows_affected();
+        // Other tests may have left non-canonical rows in the table; what we
+        // can guarantee is our seeded rows did not change.
+        let _ = second_run;
+        for (id, (_, expected_cc)) in ids.iter().zip(cases.iter()) {
+            let row: (String, Option<String>) =
+                sqlx::query_as("SELECT from_machine, to_machine FROM handoffs WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                row.0, *expected_cc,
+                "second pass changed from_machine for {id}"
+            );
+            assert_eq!(
+                row.1.as_deref(),
+                Some(*expected_cc),
+                "second pass changed to_machine for {id}"
+            );
+        }
+
+        // Cleanup
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }
 
 // ===== Audit Log Repo =====

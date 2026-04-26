@@ -11,9 +11,11 @@ use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateHandoffParams {
-    /// Machine this handoff is coming from
+    /// Sender CC. Use the canonical CC name (CC-Cloud, CC-Stealth, CC-HSR,
+    /// CC-CPA). Hostnames are accepted and normalized to the CC name on write.
     pub from_machine: String,
-    /// Target machine (optional — if omitted, any machine can pick it up)
+    /// Target CC (optional — if omitted, any CC can pick it up). Same form
+    /// as `from_machine`: CC name preferred, hostnames normalized.
     pub to_machine: Option<String>,
     /// Priority: low, normal, high, or critical
     pub priority: Option<String>,
@@ -42,9 +44,9 @@ pub struct UpdateHandoffStatusParams {
 pub struct ListHandoffsParams {
     /// Filter by status: pending, accepted, or completed
     pub status: Option<String>,
-    /// Filter by target machine
+    /// Filter by target CC (CC name or hostname; normalized before query).
     pub to_machine: Option<String>,
-    /// Filter by source machine
+    /// Filter by source CC (CC name or hostname; normalized before query).
     pub from_machine: Option<String>,
     /// Filter by category: "action" or "notify". Overrides include_notify
     /// when set. Omit to use the default action-only view.
@@ -109,11 +111,26 @@ pub(crate) async fn handle_create_handoff(
         None => None,
     };
 
+    // Normalize sender + target to canonical CC name. Either form (CC name
+    // or hostname) is accepted on input; the DB stores only the CC name so
+    // that `check_in` lookups don't depend on which form the writer used.
+    let from_machine = match super::cc_team::normalize_machine_name(&p.from_machine) {
+        Ok(n) => n,
+        Err(e) => return error_result(&format!("from_machine: {e}")),
+    };
+    let to_machine = match p.to_machine.as_deref() {
+        Some(raw) => match super::cc_team::normalize_machine_name(raw) {
+            Ok(n) => Some(n),
+            Err(e) => return error_result(&format!("to_machine: {e}")),
+        },
+        None => None,
+    };
+
     match crate::repo::handoff_repo::create_handoff(
         &brain.pool,
         from_session_id,
-        &p.from_machine,
-        p.to_machine.as_deref(),
+        from_machine,
+        to_machine,
         priority,
         category,
         &p.title,
@@ -211,11 +228,28 @@ pub(crate) async fn handle_list_handoffs(
         return error_result(&msg);
     }
 
+    // Normalize machine-name filters so callers can query by CC name or
+    // hostname interchangeably; rows are stored in canonical CC form.
+    let to_machine_filter = match p.to_machine.as_deref() {
+        Some(raw) => match super::cc_team::normalize_machine_name(raw) {
+            Ok(n) => Some(n),
+            Err(e) => return error_result(&format!("to_machine: {e}")),
+        },
+        None => None,
+    };
+    let from_machine_filter = match p.from_machine.as_deref() {
+        Some(raw) => match super::cc_team::normalize_machine_name(raw) {
+            Ok(n) => Some(n),
+            Err(e) => return error_result(&format!("from_machine: {e}")),
+        },
+        None => None,
+    };
+
     match crate::repo::handoff_repo::list_handoffs(
         &brain.pool,
         p.status.as_deref(),
-        p.to_machine.as_deref(),
-        p.from_machine.as_deref(),
+        to_machine_filter,
+        from_machine_filter,
         p.category.as_deref(),
         include_notify,
         limit,

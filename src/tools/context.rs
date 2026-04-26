@@ -18,7 +18,8 @@ pub struct GetSituationalAwarenessParams {
     pub service_slug: Option<String>,
     /// Client slug to get context for
     pub client_slug: Option<String>,
-    /// Machine hostname — filters handoffs to those addressed to you
+    /// Your CC (CC-Cloud, CC-Stealth, CC-HSR, CC-CPA) — filters handoffs
+    /// addressed to you. Hostnames also accepted and normalized.
     pub machine: Option<String>,
     /// Release cross-client results withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
@@ -331,20 +332,39 @@ pub(crate) async fn handle_get_situational_awareness(
         }
     }
 
-    // Get pending handoffs (scoped to machine if provided)
-    let handoff_result = if let Some(ref machine) = p.machine {
-        sqlx::query_as::<_, Handoff>(
+    // Get pending handoffs. If `machine` is provided, normalize it (CC name
+    // or hostname → canonical CC name) and filter. If normalization fails
+    // (unknown name), record a warning and skip the handoff section
+    // entirely — falling through to the unfiltered query would surprise the
+    // caller by returning every pending handoff in the system.
+    enum MachineFilter<'a> {
+        None,
+        Filter(&'a str),
+        Skip,
+    }
+    let machine_filter = match p.machine.as_deref() {
+        None => MachineFilter::None,
+        Some(raw) => match super::cc_team::normalize_machine_name(raw) {
+            Ok(n) => MachineFilter::Filter(n),
+            Err(e) => {
+                warnings.push(format!("machine filter ignored: {e}"));
+                MachineFilter::Skip
+            }
+        },
+    };
+    let handoff_result = match machine_filter {
+        MachineFilter::Filter(machine) => sqlx::query_as::<_, Handoff>(
             "SELECT * FROM handoffs WHERE status = 'pending' AND to_machine = $1 ORDER BY created_at DESC LIMIT 10",
         )
         .bind(machine)
         .fetch_all(&brain.pool)
-        .await
-    } else {
-        sqlx::query_as::<_, Handoff>(
+        .await,
+        MachineFilter::None => sqlx::query_as::<_, Handoff>(
             "SELECT * FROM handoffs WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10",
         )
         .fetch_all(&brain.pool)
-        .await
+        .await,
+        MachineFilter::Skip => Ok(Vec::new()),
     };
     match handoff_result {
         Ok(handoffs) => {
