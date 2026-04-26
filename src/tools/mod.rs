@@ -500,9 +500,9 @@ impl OpsBrain {
 
     #[tool(
         name = "check_in",
-        description = "Pending-work query: open handoffs for your machine, recent \
+        description = "Pending-work query: open handoffs addressed to your CC, recent \
         notify-class handoffs (compact), and open incidents in your scope. Pass \
-        `my_name` (your CC name) to scope results."
+        `my_name` (your CC name; hostname also accepted) to scope results."
     )]
     async fn check_in(
         &self,

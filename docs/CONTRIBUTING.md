@@ -135,4 +135,4 @@ Before opening a PR, verify:
 - [ ] No hardcoded credentials, URLs, or tokens
 - [ ] Migration files are idempotent (`IF NOT EXISTS`, etc.)
 - [ ] Cross-client safety considered: if the tool touches knowledge/incidents, does it need `client_slug` and `acknowledge_cross_client` params?
-- [ ] Handoff created to stealth for review/merge (PRs don't notify -- handoffs do)
+- [ ] Handoff created to CC-Stealth for review/merge (PRs don't notify -- handoffs do)
