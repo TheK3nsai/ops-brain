@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-04-26
+
+**Runbooks killed.** The runbooks feature is gone — table, tools, junctions, embeddings, watchdog suggestions, every reference. Running theme of the v1.5/v1.6/v1.7 architecture is "ops-brain is the team bus, not a brain; local is the source of truth." Runbooks were the last surface still pulling against that principle: a centrally-stored procedural-doc store that drifted away from the systems it documented and required cross-CC maintenance to keep current. Per-system procedures now live where the systems live (each repo's CLAUDE.md, configs, and docs); cross-CC durable safety/compliance content stays in `knowledge` (which is what `knowledge` is for). Tool count: 64 → 59.
+
+### Removed
+
+- **`runbooks` table + `incident_runbooks`, `runbook_executions`, `runbook_servers`, `runbook_services` junction tables** — single CASCADE drop migration (`20260426000001_drop_runbooks.sql`), no rollback path other than restoring from backup. Wipes any historical `runbook_executions` audit rows and `incident_runbooks` linkages on closed incidents — those weren't load-bearing; the incidents themselves remain.
+- **5 runbook MCP tools**: `get_runbook`, `list_runbooks`, `search_runbooks`, `create_runbook`, `update_runbook`. `link_incident.runbook_links` parameter also gone.
+- **Source files**: `src/models/runbook.rs`, `src/repo/runbook_repo.rs`, `src/tools/runbooks.rs` deleted.
+- **Watchdog `suggest_runbooks`** (semantic-search-on-incident-creation, auto-link with usage='not-applicable') — deleted. Watchdog still creates incidents and links server/service; just no longer suggests runbooks.
+- **Embedding pipeline runbook entries**: `store_runbook_embedding`, `hybrid_search_runbooks`, `vector_search_runbooks`, runbook columns on `MissingEmbeddingCounts`, runbook arm on `embed_and_store`, `prepare_runbook_text`, runbook table option on `backfill_embeddings`. Pipeline still serves knowledge, incidents, and handoffs.
+- **Search surface runbook entries**: `SearchResult.runbooks`, runbook branch on `search_inventory`, `search_runbooks` repo fn, runbook arm on `search_knowledge` multi-table mode.
+- **Context enrichment runbook arms**: `SituationalAwareness.relevant_runbooks` field + all population/filtering/compaction code in `tools/context.rs` (situational awareness *and* server context handlers). `get_situational_awareness` / `get_server_context` no longer fetch, semantically enrich, gate, or render runbooks.
+- **Validation**: `RUNBOOK_USAGES` const + test gone.
+- **Reference-counting**: `count_server_references` / `count_service_references` no longer count `runbook_servers` / `runbook_services` rows (those tables don't exist anymore).
+- **Slug suggestion whitelist**: `runbooks` removed from the `suggest_similar_slugs` allowlist; `Runbook` removed from `not_found_with_suggestions` entity-to-table map.
+- **Cross-client gate documentation** (CLAUDE.md, README.md, REFERENCE.md, CONTRIBUTING.md, ops-dev agent doc): all runbook references stripped. Cross-client gate now applies to `knowledge` and `incidents` only.
+
 ### Changed
 
 - **MCP surface drift-and-bloat sweep.** The surfaces every cold-booting CC reads on connect — the server `instructions` block, the 64 `#[tool(description=...)]` strings in `src/tools/mod.rs`, the param `/// ` doc-comments that schemars serializes into JSON Schema, and the runtime error messages — had accumulated repetition, editorial prefixes, implementation jargon, CLAUDE.md-pointing hand-holding, and defensive v1.4-ritual warnings that the v1.5 architecture already makes impossible. Trimmed with the goal that a fresh CC sees only what actually helps them pick the right tool.

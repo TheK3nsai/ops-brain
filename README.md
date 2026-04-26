@@ -4,21 +4,21 @@ Operational intelligence MCP server for IT infrastructure management. Built for 
 
 ## What It Does
 
-ops-brain is an [MCP](https://modelcontextprotocol.io/) server that models IT infrastructure as a first-class domain — servers, services, sites, clients, networks, vendors, runbooks, incidents, and knowledge — all linked together in a relational database. Instead of re-explaining your infrastructure every session, Claude Code queries ops-brain for instant situational awareness.
+ops-brain is an [MCP](https://modelcontextprotocol.io/) server that models IT infrastructure as a first-class domain — servers, services, sites, clients, networks, vendors, incidents, and knowledge — all linked together in a relational database. Instead of re-explaining your infrastructure every session, Claude Code queries ops-brain for instant situational awareness.
 
 **One tool call:**
 ```
 get_situational_awareness(server_slug: "web-server-01")
 ```
-**Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, relevant runbooks (including semantically related ones), vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
+**Returns:** Server details, site, client, all services (with ports), network config, recent incidents with resolutions, vendor contacts, pending handoffs, knowledge entries, and live monitoring status.
 
 ## Key Features
 
-- **64 MCP tools** covering inventory, runbooks, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
+- **59 MCP tools** covering inventory, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
 - **Hybrid search** — full-text (tsvector + websearch_to_tsquery) combined with semantic search (pgvector + nomic-embed-text) via Reciprocal Rank Fusion
 - **Multi-instance Uptime Kuma** — aggregate monitoring from multiple Kuma instances with partial failure tolerance
 - **Proactive monitoring** — background watchdog polls Uptime Kuma, auto-creates/resolves incidents with severity logic, flap suppression, and deduplication
-- **Staleness tracking** — tiered alerts for runbooks (30d), knowledge (60d), and services (90d) that haven't been verified
+- **Staleness tracking** — tiered alerts for knowledge (60d) and services (90d) that haven't been verified
 - **Cross-machine coordination** — sessions and handoffs let multiple Claude Code instances collaborate on shared infrastructure
 - **Client-scope safety** — default-deny cross-client data gate for multi-client environments with different compliance domains (e.g. HIPAA vs tax/accounting)
 - **Zammad integration** — ticket CRUD, search, and bi-directional linking to incidents/servers/services
@@ -138,19 +138,12 @@ This design emerged from the v1.5 walk-back of v1.4's "morning ritual" framing �
 | `link_server_service` | Associate a service with a server |
 | `delete_server` / `delete_service` / `delete_vendor` | Soft-delete with preview + confirm safety gate |
 
-### Runbooks (5)
-| Tool | Description |
-|------|-------------|
-| `get_runbook` / `list_runbooks` | Retrieve by slug or filter by category/service/server/tag/client |
-| `search_runbooks` | Search (mode: fts/semantic/hybrid). Supports `client_slug` scoping + cross-client gate |
-| `create_runbook` / `update_runbook` | CRUD with auto-versioning and client ownership |
-
 ### Knowledge (5)
 | Tool | Description |
 |------|-------------|
 | `add_knowledge` / `update_knowledge` | Store and update operational facts, gotchas, tips. Duplicate detection (cosine >85% warns, `force=true` bypasses) |
 | `delete_knowledge` | Permanently delete a knowledge entry by ID |
-| `search_knowledge` | Hybrid search across knowledge, runbooks, incidents, handoffs via `tables` param. Browse mode (empty query = recent entries). Cross-client gate |
+| `search_knowledge` | Hybrid search across knowledge, incidents, handoffs via `tables` param. Browse mode (empty query = recent entries). Cross-client gate |
 | `list_knowledge` | Filter by category or client |
 
 ### Context (3)
@@ -166,7 +159,7 @@ This design emerged from the v1.5 walk-back of v1.4's "morning ritual" framing �
 | `create_incident` / `update_incident` | Open/update incidents. Resolving auto-calculates TTR |
 | `get_incident` / `list_incidents` | Lookup and filter by client, status, severity |
 | `search_incidents` | Search (mode: fts/semantic/hybrid) |
-| `link_incident` | Link servers, services, runbooks, and vendors |
+| `link_incident` | Link servers, services, and vendors |
 
 ### Handoffs & Coordination (7)
 | Tool | Description |
@@ -236,11 +229,10 @@ curl -s -X POST http://localhost:3000/api/briefing \
 
 ```
 Client 1──N Site 1──N Server N──N Service
-                        │              │
-                        N              N
-                     Network        Runbook
-                                      │
-                                      N
+                        │
+                        N
+                     Network
+
 Vendor N──────────────────────── Incident
                                    │
 Session 1──N Handoff               N
@@ -259,7 +251,7 @@ TicketLink ── Zammad Ticket (external)
 
 ops-brain is designed for solo operators managing multiple clients with different compliance domains. Since there is no second pair of eyes, the system itself acts as the safety gate to prevent cross-client data leakage.
 
-- **Runbooks**, **knowledge entries**, and **incidents** can be assigned to a client via `client_slug`
+- **Knowledge entries** and **incidents** can be assigned to a client via `client_slug`
 - A `cross_client_safe` flag (default: false) controls whether content surfaces outside its owning client
 - When cross-client content is detected without acknowledgment, the **actual content is withheld** — only a notice is returned
 - Pass `acknowledge_cross_client: true` to release withheld content

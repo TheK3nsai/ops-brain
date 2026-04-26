@@ -8,7 +8,7 @@ pub async fn suggest_similar_slugs(pool: &PgPool, table: &str, attempted: &str) 
     // Whitelist table names to prevent SQL injection
     let column = "slug";
     let table = match table {
-        "servers" | "services" | "sites" | "clients" | "runbooks" => table,
+        "servers" | "services" | "sites" | "clients" => table,
         _ => return Vec::new(),
     };
 

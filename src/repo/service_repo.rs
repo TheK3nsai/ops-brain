@@ -52,11 +52,10 @@ pub async fn count_service_references(
     pool: &PgPool,
     service_id: Uuid,
 ) -> Result<Vec<(String, i64)>, sqlx::Error> {
-    let row: (i64, i64, i64, i64, i64) = sqlx::query_as(
+    let row: (i64, i64, i64, i64) = sqlx::query_as(
         "SELECT
             (SELECT COUNT(*) FROM server_services WHERE service_id = $1),
             (SELECT COUNT(*) FROM incident_services WHERE service_id = $1),
-            (SELECT COUNT(*) FROM runbook_services WHERE service_id = $1),
             (SELECT COUNT(*) FROM monitors WHERE service_id = $1),
             (SELECT COUNT(*) FROM ticket_links WHERE service_id = $1)",
     )
@@ -72,13 +71,10 @@ pub async fn count_service_references(
         refs.push(("incident links".to_string(), row.1));
     }
     if row.2 > 0 {
-        refs.push(("runbook links".to_string(), row.2));
+        refs.push(("monitor mappings".to_string(), row.2));
     }
     if row.3 > 0 {
-        refs.push(("monitor mappings".to_string(), row.3));
-    }
-    if row.4 > 0 {
-        refs.push(("ticket links".to_string(), row.4));
+        refs.push(("ticket links".to_string(), row.3));
     }
     Ok(refs)
 }

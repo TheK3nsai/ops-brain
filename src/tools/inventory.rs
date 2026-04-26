@@ -80,7 +80,7 @@ pub struct SearchInventoryParams {
     /// Max results per entity type (default 10)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
-    /// Client slug — when set, runbooks/knowledge/incidents from other clients are gated
+    /// Client slug — when set, knowledge/incidents from other clients are gated
     pub client_slug: Option<String>,
     /// Release cross-client results withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
@@ -485,27 +485,6 @@ pub(crate) async fn handle_search_inventory(
 
             let client_lookup = build_client_lookup(&brain.pool).await;
 
-            let runbook_values: Vec<serde_json::Value> = results
-                .runbooks
-                .iter()
-                .filter_map(|r| serde_json::to_value(r).ok())
-                .collect();
-            let rb_filtered = filter_cross_client(
-                runbook_values,
-                "runbook",
-                client_id,
-                acknowledge,
-                &client_lookup,
-            );
-            log_audit_entries(
-                &brain.pool,
-                "search_inventory",
-                client_id,
-                "runbook",
-                &rb_filtered.audit_entries,
-            )
-            .await;
-
             let knowledge_values: Vec<serde_json::Value> = results
                 .knowledge
                 .iter()
@@ -548,13 +527,11 @@ pub(crate) async fn handle_search_inventory(
             )
             .await;
 
-            output["runbooks"] = serde_json::to_value(&rb_filtered.allowed).unwrap_or_default();
             output["knowledge"] = serde_json::to_value(&kn_filtered.allowed).unwrap_or_default();
             output["incidents"] = serde_json::to_value(&inc_filtered.allowed).unwrap_or_default();
 
             // Collect withheld notices
             let mut withheld: Vec<serde_json::Value> = Vec::new();
-            withheld.extend(rb_filtered.withheld_notices);
             withheld.extend(kn_filtered.withheld_notices);
             withheld.extend(inc_filtered.withheld_notices);
             if !withheld.is_empty() {

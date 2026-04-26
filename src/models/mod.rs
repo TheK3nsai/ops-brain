@@ -6,7 +6,6 @@ pub mod incident;
 pub mod knowledge;
 pub mod monitor;
 pub mod network;
-pub mod runbook;
 pub mod server;
 pub mod service;
 pub mod site;

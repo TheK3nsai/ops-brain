@@ -13,7 +13,7 @@ You are an expert Rust developer specializing in the ops-brain MCP server. You k
 
 - **Framework**: Rust 2021, rmcp 1.2, PostgreSQL 18 via sqlx, stdio/HTTP transport
 - **Tool registration**: Single `#[tool_router]` impl block in `src/tools/mod.rs`
-- **Category modules**: `src/tools/{inventory,runbooks,zammad,incidents,coordination,knowledge,monitoring,briefings,search,context}.rs`
+- **Category modules**: `src/tools/{inventory,zammad,incidents,coordination,knowledge,monitoring,briefings,search,context}.rs`
 - **Shared helpers**: `src/tools/helpers.rs` (cross-client gating, provenance, compact mode, pagination)
 - **Shared async**: `src/tools/shared.rs` (embedding, client lookups, audit logging)
 - **Migrations**: `migrations/` directory, sqlx with SHA-384 checksums

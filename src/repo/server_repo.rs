@@ -82,11 +82,10 @@ pub async fn count_server_references(
     pool: &PgPool,
     server_id: Uuid,
 ) -> Result<Vec<(String, i64)>, sqlx::Error> {
-    let row: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+    let row: (i64, i64, i64, i64, i64) = sqlx::query_as(
         "SELECT
             (SELECT COUNT(*) FROM server_services WHERE server_id = $1),
             (SELECT COUNT(*) FROM incident_servers WHERE server_id = $1),
-            (SELECT COUNT(*) FROM runbook_servers WHERE server_id = $1),
             (SELECT COUNT(*) FROM monitors WHERE server_id = $1),
             (SELECT COUNT(*) FROM ticket_links WHERE server_id = $1),
             (SELECT COUNT(*) FROM servers WHERE hypervisor_id = $1)",
@@ -103,16 +102,13 @@ pub async fn count_server_references(
         refs.push(("incident links".to_string(), row.1));
     }
     if row.2 > 0 {
-        refs.push(("runbook links".to_string(), row.2));
+        refs.push(("monitor mappings".to_string(), row.2));
     }
     if row.3 > 0 {
-        refs.push(("monitor mappings".to_string(), row.3));
+        refs.push(("ticket links".to_string(), row.3));
     }
     if row.4 > 0 {
-        refs.push(("ticket links".to_string(), row.4));
-    }
-    if row.5 > 0 {
-        refs.push(("child VMs (hypervisor_id)".to_string(), row.5));
+        refs.push(("child VMs (hypervisor_id)".to_string(), row.4));
     }
     Ok(refs)
 }

@@ -117,174 +117,6 @@ mod client_tests {
     }
 }
 
-// ===== Runbook Repo =====
-
-mod runbook_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn create_and_get_runbook() {
-        let pool = pool().await;
-        let slug = format!("test-runbook-{}", Uuid::now_v7());
-
-        let runbook = ops_brain::repo::runbook_repo::create_runbook(
-            &pool,
-            "Test Runbook",
-            &slug,
-            Some("testing"),
-            "Step 1: Do things",
-            &["test".to_string(), "ci".to_string()],
-            Some(15),
-            false,
-            Some("Test notes"),
-            None,  // no client
-            false, // not cross_client_safe
-            None,  // no source_url
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(runbook.title, "Test Runbook");
-        assert_eq!(runbook.slug, slug);
-        assert_eq!(runbook.category.as_deref(), Some("testing"));
-        assert_eq!(runbook.tags, vec!["test", "ci"]);
-        assert_eq!(runbook.estimated_minutes, Some(15));
-        assert!(!runbook.requires_reboot);
-        assert!(!runbook.cross_client_safe);
-        assert!(runbook.client_id.is_none());
-
-        // Get by slug
-        let fetched = ops_brain::repo::runbook_repo::get_runbook_by_slug(&pool, &slug)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.id, runbook.id);
-
-        // Cleanup
-        sqlx::query("DELETE FROM runbooks WHERE id = $1")
-            .bind(runbook.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn create_client_scoped_runbook() {
-        let pool = pool().await;
-        let client_slug = format!("rb-client-{}", Uuid::now_v7());
-        let rb_slug = format!("scoped-rb-{}", Uuid::now_v7());
-
-        let client = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Test Client",
-            &client_slug,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        let runbook = ops_brain::repo::runbook_repo::create_runbook(
-            &pool,
-            "Client-Specific Runbook",
-            &rb_slug,
-            None,
-            "Content for this client only",
-            &[],
-            None,
-            false,
-            None,
-            Some(client.id),
-            false,
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(runbook.client_id, Some(client.id));
-        assert!(!runbook.cross_client_safe);
-
-        // list_runbooks with client filter should include this + global
-        let list = ops_brain::repo::runbook_repo::list_runbooks(
-            &pool,
-            None,
-            None,
-            None,
-            None,
-            Some(client.id),
-            50,
-        )
-        .await
-        .unwrap();
-
-        assert!(list.iter().any(|r| r.id == runbook.id));
-
-        // Cleanup
-        sqlx::query("DELETE FROM runbooks WHERE id = $1")
-            .bind(runbook.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM clients WHERE id = $1")
-            .bind(client.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn update_runbook_cross_client_safe() {
-        let pool = pool().await;
-        let slug = format!("update-safe-{}", Uuid::now_v7());
-
-        let runbook = ops_brain::repo::runbook_repo::create_runbook(
-            &pool,
-            "Runbook To Update",
-            &slug,
-            None,
-            "Original content",
-            &[],
-            None,
-            false,
-            None,
-            None,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
-        assert!(!runbook.cross_client_safe);
-
-        let updated = ops_brain::repo::runbook_repo::update_runbook(
-            &pool,
-            runbook.id,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(true),
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert!(updated.cross_client_safe);
-        assert_eq!(updated.version, 2); // version bumped
-
-        // Cleanup
-        sqlx::query("DELETE FROM runbooks WHERE id = $1")
-            .bind(runbook.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-}
-
 // ===== Knowledge Repo =====
 
 mod knowledge_tests {
@@ -1527,9 +1359,9 @@ mod audit_log_tests {
         // Should not error
         ops_brain::repo::audit_log_repo::log_access(
             &pool,
-            "search_runbooks",
+            "search_knowledge",
             Some(req_client.id),
-            "runbook",
+            "knowledge",
             entity_id,
             Some(own_client.id),
             "withheld",
@@ -1546,7 +1378,7 @@ mod audit_log_tests {
         .unwrap();
 
         let (tool, action) = row.unwrap();
-        assert_eq!(tool, "search_runbooks");
+        assert_eq!(tool, "search_knowledge");
         assert_eq!(action, "withheld");
 
         // Cleanup
@@ -2047,8 +1879,6 @@ mod suggest_tests {
         assert!(suggestions.is_empty());
     }
 }
-
-// ===== Runbook Execution Repo =====
 
 // ===== Vendor Dedup Tests =====
 

@@ -215,10 +215,8 @@ fn parse_prometheus_metrics(text: &str) -> Result<MetricsSummary, String> {
                     entry.status = value as i64;
                     entry.status_text = status_text(value as i64);
                 }
-                "monitor_response_time" => {
-                    if value >= 0.0 {
-                        entry.response_time_ms = Some(value);
-                    }
+                "monitor_response_time" if value >= 0.0 => {
+                    entry.response_time_ms = Some(value);
                 }
                 "monitor_cert_days_remaining" => {
                     entry.cert_days_remaining = Some(value);

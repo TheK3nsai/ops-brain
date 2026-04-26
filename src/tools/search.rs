@@ -8,7 +8,7 @@ use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BackfillEmbeddingsParams {
-    /// Specific table to backfill (runbooks, knowledge, incidents, handoffs). Default: all.
+    /// Specific table to backfill (knowledge, incidents, handoffs). Default: all.
     pub table: Option<String>,
     /// Records per batch (default 10)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
@@ -28,7 +28,7 @@ pub(crate) async fn handle_backfill_embeddings(
     let batch_size = p.batch_size.unwrap_or(10);
     let tables: Vec<&str> = match &p.table {
         Some(t) => vec![t.as_str()],
-        None => vec!["runbooks", "knowledge", "incidents", "handoffs"],
+        None => vec!["knowledge", "incidents", "handoffs"],
     };
 
     let mut summary = serde_json::Map::new();
@@ -38,43 +38,6 @@ pub(crate) async fn handle_backfill_embeddings(
         let mut failed = 0i64;
 
         match *table {
-            "runbooks" => {
-                if let Ok(rows) = crate::repo::embedding_repo::get_runbooks_without_embeddings(
-                    &brain.pool,
-                    batch_size,
-                )
-                .await
-                {
-                    let texts: Vec<String> = rows
-                        .iter()
-                        .map(crate::embeddings::prepare_runbook_text)
-                        .collect();
-                    match client.embed_texts(&texts).await {
-                        Ok(embeddings) => {
-                            for (row, emb) in rows.iter().zip(embeddings.iter()) {
-                                if crate::repo::embedding_repo::store_runbook_embedding(
-                                    &brain.pool,
-                                    row.id,
-                                    emb,
-                                )
-                                .await
-                                .is_ok()
-                                {
-                                    processed += 1;
-                                } else {
-                                    failed += 1;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            summary.insert(
-                                format!("{table}_error"),
-                                serde_json::Value::String(e.to_string()),
-                            );
-                        }
-                    }
-                }
-            }
             "knowledge" => {
                 if let Ok(rows) = crate::repo::embedding_repo::get_knowledge_without_embeddings(
                     &brain.pool,
@@ -207,10 +170,6 @@ pub(crate) async fn handle_backfill_embeddings(
 
     // Get remaining counts
     if let Ok(counts) = crate::repo::embedding_repo::count_missing_embeddings(&brain.pool).await {
-        summary.insert(
-            "remaining_runbooks".to_string(),
-            serde_json::Value::Number(counts.runbooks.into()),
-        );
         summary.insert(
             "remaining_knowledge".to_string(),
             serde_json::Value::Number(counts.knowledge.into()),

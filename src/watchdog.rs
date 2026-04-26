@@ -369,7 +369,7 @@ async fn process_monitors(
     }
 }
 
-/// Handle a monitor going DOWN: create incident, link server/service, find runbooks.
+/// Handle a monitor going DOWN: create incident, link server/service.
 async fn handle_down_transition(
     pool: &PgPool,
     embedding_client: &Option<EmbeddingClient>,
@@ -594,17 +594,6 @@ async fn handle_down_transition(
         let _ = crate::repo::incident_repo::link_incident_service(pool, incident.id, sid).await;
     }
 
-    // Find and log relevant runbooks via semantic search (client-scoped)
-    suggest_runbooks(
-        pool,
-        embedding_client,
-        &incident.id,
-        monitor_name,
-        &symptoms,
-        client_id,
-    )
-    .await;
-
     // Embed the incident (best-effort)
     if let Some(ref client) = embedding_client {
         let text = crate::embeddings::prepare_incident_text(&incident);
@@ -699,71 +688,6 @@ fn determine_severity(
     }
 
     "medium".to_string()
-}
-
-/// Use semantic search to find relevant runbooks and log them as suggestions.
-/// Only suggests runbooks from the same client or global (no client) — prevents cross-client leakage.
-async fn suggest_runbooks(
-    pool: &PgPool,
-    embedding_client: &Option<EmbeddingClient>,
-    incident_id: &Uuid,
-    monitor_name: &str,
-    symptoms: &str,
-    client_id: Option<Uuid>,
-) {
-    // Try semantic search first, fall back to FTS
-    let query_text = format!("{monitor_name} {symptoms}");
-
-    let embedding = if let Some(ref client) = embedding_client {
-        client.embed_text(&query_text).await.ok()
-    } else {
-        None
-    };
-
-    let all_runbooks = crate::repo::embedding_repo::hybrid_search_runbooks(
-        pool,
-        &query_text,
-        embedding.as_deref(),
-        10, // fetch more, then filter by client scope
-    )
-    .await
-    .unwrap_or_default();
-
-    // Filter to same-client or global runbooks only
-    let runbooks: Vec<_> = all_runbooks
-        .into_iter()
-        .filter(|r| match (client_id, r.client_id) {
-            (_, None) => true,                            // Global runbook — always OK
-            (Some(req), Some(own)) if req == own => true, // Same client
-            (Some(_), Some(_)) => r.cross_client_safe,    // Different client — only if marked safe
-            (None, Some(_)) => true,                      // No requesting client — allow all
-        })
-        .take(3)
-        .collect();
-
-    if !runbooks.is_empty() {
-        let suggestions: Vec<String> = runbooks
-            .iter()
-            .map(|r| format!("  - {} ({})", r.title, r.slug))
-            .collect();
-        tracing::info!(
-            monitor = %monitor_name,
-            incident_id = %incident_id,
-            "Suggested runbooks:\n{}",
-            suggestions.join("\n")
-        );
-
-        // Auto-link runbooks to the incident (usage: not-applicable until followed)
-        for runbook in &runbooks {
-            let _ = crate::repo::incident_repo::link_incident_runbook(
-                pool,
-                *incident_id,
-                runbook.id,
-                "not-applicable",
-            )
-            .await;
-        }
-    }
 }
 
 #[cfg(test)]

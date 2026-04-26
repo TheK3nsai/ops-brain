@@ -29,7 +29,6 @@ pub(crate) async fn not_found_with_suggestions(
         "Service" => "services",
         "Site" => "sites",
         "Client" => "clients",
-        "Runbook" => "runbooks",
         _ => return not_found(entity, key),
     };
     let suggestions = crate::repo::suggest_repo::suggest_similar_slugs(pool, table, key).await;
@@ -250,16 +249,6 @@ pub(crate) fn compact_keep_fields(entity_type: &str) -> &'static [&'static str] 
             "time_to_resolve_minutes",
             "source",
             "recurrence_count",
-            "cross_client_safe",
-            "_client_slug",
-            "_client_name",
-        ],
-        "runbook" => &[
-            "id",
-            "title",
-            "slug",
-            "category",
-            "client_id",
             "cross_client_safe",
             "_client_slug",
             "_client_name",
