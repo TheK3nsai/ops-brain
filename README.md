@@ -119,7 +119,7 @@ If a question can be answered without ops-brain — by reading a local file, run
 
 This design emerged from the v1.5 walk-back of v1.4's "morning ritual" framing — see `CHANGELOG.md` for the post-mortem.
 
-## Tools (64)
+## Tools (59)
 
 ### Inventory (23)
 | Tool | Description |
