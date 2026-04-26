@@ -2,7 +2,7 @@
 -- Last updated: 2026-03-28
 --
 -- WARNING: This file only seeds clients, sites, and networks.
--- All servers, services, knowledge, runbooks, vendors, and incidents
+-- All servers, services, knowledge, vendors, and incidents
 -- are populated via MCP tools from live CC sessions against real infrastructure.
 -- Do NOT add fictional/placeholder data here.
 

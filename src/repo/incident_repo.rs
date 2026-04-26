@@ -303,25 +303,6 @@ pub async fn link_incident_service(
     Ok(())
 }
 
-pub async fn link_incident_runbook(
-    pool: &PgPool,
-    incident_id: Uuid,
-    runbook_id: Uuid,
-    usage: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO incident_runbooks (incident_id, runbook_id, usage)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (incident_id, runbook_id) DO UPDATE SET usage = $3",
-    )
-    .bind(incident_id)
-    .bind(runbook_id)
-    .bind(usage)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 pub async fn link_incident_vendor(
     pool: &PgPool,
     incident_id: Uuid,

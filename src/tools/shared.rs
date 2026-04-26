@@ -17,9 +17,6 @@ pub(crate) async fn embed_and_store(
     match client.embed_text(text).await {
         Ok(embedding) => {
             let result = match table {
-                "runbooks" => {
-                    crate::repo::embedding_repo::store_runbook_embedding(pool, id, &embedding).await
-                }
                 "knowledge" => {
                     crate::repo::embedding_repo::store_knowledge_embedding(pool, id, &embedding)
                         .await

@@ -10,7 +10,7 @@ On-demand guide for adding tools, branch conventions, and PR workflow.
 
 Types: `feat/`, `fix/`, `refactor/`, `docs/`, `chore/`
 
-Examples: `feat/delete-server-tool`, `fix/vendor-dedup-slug`, `docs/runbook-template`
+Examples: `feat/delete-server-tool`, `fix/vendor-dedup-slug`, `docs/architecture-update`
 
 ## Commit Messages
 
@@ -134,5 +134,5 @@ Before opening a PR, verify:
 - [ ] README.md updated if tool count changed
 - [ ] No hardcoded credentials, URLs, or tokens
 - [ ] Migration files are idempotent (`IF NOT EXISTS`, etc.)
-- [ ] Cross-client safety considered: if the tool touches runbooks/knowledge, does it need `client_slug` and `acknowledge_cross_client` params?
+- [ ] Cross-client safety considered: if the tool touches knowledge/incidents, does it need `client_slug` and `acknowledge_cross_client` params?
 - [ ] Handoff created to stealth for review/merge (PRs don't notify -- handoffs do)

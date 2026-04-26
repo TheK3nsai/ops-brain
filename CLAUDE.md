@@ -8,7 +8,7 @@ For adding tools, branch/commit conventions, PR checklist: see `docs/CONTRIBUTIN
 ## Architecture Constraints
 
 - All `#[tool]` stubs MUST remain in the single `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs` -- rmcp macro requirement. Each stub delegates to a `handle_*` function in the appropriate category module.
-- Parameter structs and handler implementations live together in category modules (inventory.rs, runbooks.rs, zammad.rs, etc.)
+- Parameter structs and handler implementations live together in category modules (inventory.rs, knowledge.rs, zammad.rs, etc.)
 - Shared helpers in `tools/helpers.rs`; shared async functions in `tools/shared.rs`
 - OpsBrain fields are `pub(crate)` so category modules can access pool, kuma_config, embedding_client, zammad_config
 - Tool errors return `Ok(CallToolResult::error(...))`, never `Err(McpError)`
@@ -23,7 +23,7 @@ For adding tools, branch/commit conventions, PR checklist: see `docs/CONTRIBUTIN
 
 Multi-client data handling for a solo operator managing clients with different compliance domains (e.g. HIPAA healthcare vs tax/accounting). The system itself acts as the safety gate.
 
-1. **Default-deny cross-client surfacing**: `cross_client_safe` boolean (default: false) on runbooks, knowledge, and incidents. Content scoped to client A does NOT surface in client B context unless explicitly marked safe.
+1. **Default-deny cross-client surfacing**: `cross_client_safe` boolean (default: false) on knowledge and incidents. Content scoped to client A does NOT surface in client B context unless explicitly marked safe.
 
 2. **Withhold-by-default on scope mismatch**: When search/context tools would surface cross-client content, actual content is **withheld** and replaced with a scope mismatch notice. An explicit `acknowledge_cross_client: true` parameter on a second call releases the result. A gate, not a banner.
 
@@ -41,7 +41,7 @@ Multi-client data handling for a solo operator managing clients with different c
 
 ### Tools Affected by Cross-Client Gate
 
-`get_situational_awareness`, `get_server_context`, `search_inventory`, `search_runbooks`, `search_knowledge` (including multi-table mode), `list_runbooks`, `create_runbook`, `update_runbook`, `add_knowledge`, `update_knowledge`, `create_incident`, `update_incident`. Watchdog runbook suggestions are also client-scoped.
+`get_situational_awareness`, `get_server_context`, `search_inventory`, `search_knowledge` (including multi-table mode), `add_knowledge`, `update_knowledge`, `create_incident`, `update_incident`.
 
 ## Key Tool: get_situational_awareness
 

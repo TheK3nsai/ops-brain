@@ -7,7 +7,6 @@ pub mod incidents;
 mod inventory;
 pub mod knowledge;
 mod monitoring;
-mod runbooks;
 mod search;
 mod shared;
 mod zammad;
@@ -179,7 +178,7 @@ impl OpsBrain {
 
     #[tool(
         name = "search_inventory",
-        description = "Full-text search across all entity types (servers, services, runbooks, knowledge, etc.). When client_slug is set, runbooks/knowledge/incidents from other clients are withheld unless acknowledge_cross_client is true."
+        description = "Full-text search across all entity types (servers, services, knowledge, etc.). When client_slug is set, knowledge/incidents from other clients are withheld unless acknowledge_cross_client is true."
     )]
     async fn search_inventory(
         &self,
@@ -267,63 +266,6 @@ impl OpsBrain {
         Ok(inventory::handle_link_server_service(self, params.0).await)
     }
 
-    // ===== RUNBOOK TOOLS =====
-
-    #[tool(
-        name = "get_runbook",
-        description = "Get a runbook by its slug, including full content and metadata"
-    )]
-    async fn get_runbook(
-        &self,
-        params: Parameters<runbooks::GetRunbookParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(runbooks::handle_get_runbook(self, params.0).await)
-    }
-
-    #[tool(
-        name = "list_runbooks",
-        description = "List runbooks with optional filters by category, service, server, or tag"
-    )]
-    async fn list_runbooks(
-        &self,
-        params: Parameters<runbooks::ListRunbooksParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(runbooks::handle_list_runbooks(self, params.0).await)
-    }
-
-    #[tool(
-        name = "search_runbooks",
-        description = "Search runbook titles and content. Modes: fts (default), semantic, or hybrid (RRF)."
-    )]
-    async fn search_runbooks(
-        &self,
-        params: Parameters<runbooks::SearchRunbooksParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(runbooks::handle_search_runbooks(self, params.0).await)
-    }
-
-    #[tool(
-        name = "create_runbook",
-        description = "Create a new runbook with title, slug, content, tags, and metadata"
-    )]
-    async fn create_runbook(
-        &self,
-        params: Parameters<runbooks::CreateRunbookParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(runbooks::handle_create_runbook(self, params.0).await)
-    }
-
-    #[tool(
-        name = "update_runbook",
-        description = "Update an existing runbook by slug. Only provided fields are updated; version is auto-incremented."
-    )]
-    async fn update_runbook(
-        &self,
-        params: Parameters<runbooks::UpdateRunbookParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(runbooks::handle_update_runbook(self, params.0).await)
-    }
-
     // ===== KNOWLEDGE TOOLS =====
 
     #[tool(
@@ -361,7 +303,7 @@ impl OpsBrain {
 
     #[tool(
         name = "search_knowledge",
-        description = "Search knowledge, runbooks, incidents, and/or handoffs. \
+        description = "Search knowledge, incidents, and/or handoffs. \
         Set tables param for multi-table. Modes: fts/semantic/hybrid (default). \
         Empty query or '*' browses recent entries."
     )]
@@ -388,7 +330,7 @@ impl OpsBrain {
     #[tool(
         name = "get_situational_awareness",
         description = "Comprehensive context bundle for a server, service, or client: \
-        entities, incidents, handoffs, runbooks, vendors, knowledge, monitoring. \
+        entities, incidents, handoffs, vendors, knowledge, monitoring. \
         Use compact=true and sections to reduce response size."
     )]
     async fn get_situational_awareness(
@@ -411,7 +353,7 @@ impl OpsBrain {
 
     #[tool(
         name = "get_server_context",
-        description = "Full server context: details, services, site, networks, incidents, runbooks, vendors. \
+        description = "Full server context: details, services, site, networks, incidents, vendors. \
         Supports compact and sections params."
     )]
     async fn get_server_context(
@@ -447,7 +389,7 @@ impl OpsBrain {
 
     #[tool(
         name = "get_incident",
-        description = "Get full details of an incident by ID, including linked servers, services, runbooks, and vendors"
+        description = "Get full details of an incident by ID, including linked servers, services, and vendors"
     )]
     async fn get_incident(
         &self,
@@ -480,7 +422,7 @@ impl OpsBrain {
 
     #[tool(
         name = "link_incident",
-        description = "Link an incident to servers, services, runbooks, and/or vendors."
+        description = "Link an incident to servers, services, and/or vendors."
     )]
     async fn link_incident(
         &self,
@@ -832,7 +774,7 @@ mod tests {
             make_item(Uuid::now_v7(), None, false),
         ];
 
-        let result = filter_cross_client(items, "runbook", None, false, &lookup);
+        let result = filter_cross_client(items, "knowledge", None, false, &lookup);
 
         assert_eq!(result.allowed.len(), 2);
         assert!(result.withheld_notices.is_empty());
@@ -845,7 +787,7 @@ mod tests {
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, None, false)];
 
-        let result = filter_cross_client(items, "runbook", Some(alpha_id), false, &lookup);
+        let result = filter_cross_client(items, "knowledge", Some(alpha_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -860,7 +802,7 @@ mod tests {
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "runbook", Some(alpha_id), false, &lookup);
+        let result = filter_cross_client(items, "knowledge", Some(alpha_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -875,7 +817,7 @@ mod tests {
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, Some(alpha_id), true)];
 
-        let result = filter_cross_client(items, "runbook", Some(beta_id), false, &lookup);
+        let result = filter_cross_client(items, "knowledge", Some(beta_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -891,7 +833,7 @@ mod tests {
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "runbook", Some(beta_id), true, &lookup);
+        let result = filter_cross_client(items, "knowledge", Some(beta_id), true, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -905,13 +847,13 @@ mod tests {
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "runbook", Some(beta_id), false, &lookup);
+        let result = filter_cross_client(items, "knowledge", Some(beta_id), false, &lookup);
 
         assert!(result.allowed.is_empty());
         assert_eq!(result.withheld_notices.len(), 1);
         assert_eq!(result.withheld_notices[0]["count"], 1);
         assert_eq!(result.withheld_notices[0]["owning_client_slug"], "alpha");
-        assert_eq!(result.withheld_notices[0]["entity_type"], "runbook");
+        assert_eq!(result.withheld_notices[0]["entity_type"], "knowledge");
         assert_eq!(result.audit_entries.len(), 1);
         assert_eq!(result.audit_entries[0].2, "withheld");
     }
@@ -942,7 +884,7 @@ mod tests {
             make_item(Uuid::now_v7(), Some(alpha_id), false), // diff client, not safe → withheld
         ];
 
-        let result = filter_cross_client(items, "runbook", Some(beta_id), false, &lookup);
+        let result = filter_cross_client(items, "knowledge", Some(beta_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 3);
         assert_eq!(result.withheld_notices.len(), 1);
@@ -1041,29 +983,6 @@ mod tests {
     // ===== compact mode tests =====
 
     #[test]
-    fn compact_runbook_strips_content() {
-        let runbook = serde_json::json!({
-            "id": Uuid::now_v7().to_string(),
-            "title": "Reboot procedure",
-            "slug": "reboot",
-            "category": "ops",
-            "content": "Very long content that should be stripped in compact mode...",
-            "client_id": Uuid::now_v7().to_string(),
-            "cross_client_safe": false,
-            "created_at": "2026-03-26T00:00:00Z",
-            "updated_at": "2026-03-26T00:00:00Z",
-        });
-
-        let compacted = compact_value(&runbook, "runbook");
-        assert!(compacted.get("id").is_some());
-        assert!(compacted.get("title").is_some());
-        assert!(compacted.get("slug").is_some());
-        assert!(compacted.get("category").is_some());
-        assert!(compacted.get("content").is_none());
-        assert!(compacted.get("created_at").is_none());
-    }
-
-    #[test]
     fn compact_incident_keeps_key_fields() {
         let incident = serde_json::json!({
             "id": Uuid::now_v7().to_string(),
@@ -1120,7 +1039,7 @@ mod tests {
     #[test]
     fn compact_non_object_returns_clone() {
         let val = serde_json::json!("just a string");
-        let compacted = compact_value(&val, "runbook");
+        let compacted = compact_value(&val, "knowledge");
         assert_eq!(compacted, val);
     }
 
@@ -1136,6 +1055,6 @@ mod tests {
         assert!(section_included(&sections, "server"));
         assert!(section_included(&sections, "monitoring"));
         assert!(!section_included(&sections, "knowledge"));
-        assert!(!section_included(&sections, "runbooks"));
+        assert!(!section_included(&sections, "tickets"));
     }
 }

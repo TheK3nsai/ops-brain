@@ -33,19 +33,6 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
             "created_at",
             "updated_at",
         ],
-        "runbook" => &[
-            "id",
-            "title",
-            "slug",
-            "category",
-            "tags",
-            "client_id",
-            "cross_client_safe",
-            "_client_slug",
-            "_client_name",
-            "created_at",
-            "updated_at",
-        ],
         "incident" => &[
             "id",
             "title",
@@ -77,7 +64,6 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
     // Content field name varies by entity type
     let content_field = match entity_type {
         "knowledge" => "content",
-        "runbook" => "content",
         "incident" => "symptoms",
         "handoff" => "body",
         _ => "content",
@@ -183,7 +169,7 @@ pub struct SearchKnowledgeParams {
     pub query: Option<String>,
     /// fts (default single-table), semantic, or hybrid (default multi-table). Ignored for browse.
     pub mode: Option<String>,
-    /// Tables to search: knowledge (default), runbooks, incidents, handoffs
+    /// Tables to search: knowledge (default), incidents, handoffs
     pub tables: Option<Vec<String>>,
     /// Scope to client. Cross-client results withheld unless acknowledged.
     pub client_slug: Option<String>,
@@ -466,7 +452,7 @@ pub(crate) async fn handle_search_knowledge(
     }
 
     // Validate table names
-    let valid_tables = ["knowledge", "runbooks", "incidents", "handoffs"];
+    let valid_tables = ["knowledge", "incidents", "handoffs"];
     for t in &tables {
         if !valid_tables.contains(&t.as_str()) {
             return error_result(&format!(
@@ -580,70 +566,6 @@ pub(crate) async fn handle_search_knowledge(
                     Err(e) => {
                         results.insert(
                             "knowledge_error".to_string(),
-                            serde_json::Value::String(e.to_string()),
-                        );
-                    }
-                }
-            }
-            "runbooks" => {
-                let search_result = match mode {
-                    "semantic" => {
-                        crate::repo::embedding_repo::vector_search_runbooks(
-                            &brain.pool,
-                            emb_ref.unwrap(),
-                            limit,
-                        )
-                        .await
-                    }
-                    "hybrid" => {
-                        crate::repo::embedding_repo::hybrid_search_runbooks(
-                            &brain.pool,
-                            &raw_query,
-                            emb_ref,
-                            limit,
-                        )
-                        .await
-                    }
-                    _ => {
-                        crate::repo::search_repo::search_runbooks(&brain.pool, &raw_query, limit)
-                            .await
-                    }
-                };
-                match search_result {
-                    Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items
-                            .iter()
-                            .filter_map(|r| serde_json::to_value(r).ok())
-                            .collect();
-                        let filtered = filter_cross_client(
-                            json_items,
-                            "runbook",
-                            requesting_client_id,
-                            acknowledge,
-                            &client_lookup,
-                        );
-                        let final_items = if compact {
-                            compact_search_results(&filtered.allowed, "runbook")
-                        } else {
-                            filtered.allowed
-                        };
-                        results.insert(
-                            "runbooks".to_string(),
-                            serde_json::to_value(&final_items).unwrap_or_default(),
-                        );
-                        all_withheld.extend(filtered.withheld_notices);
-                        log_audit_entries(
-                            &brain.pool,
-                            "search_knowledge",
-                            requesting_client_id,
-                            "runbook",
-                            &filtered.audit_entries,
-                        )
-                        .await;
-                    }
-                    Err(e) => {
-                        results.insert(
-                            "runbooks_error".to_string(),
                             serde_json::Value::String(e.to_string()),
                         );
                     }
@@ -828,18 +750,6 @@ async fn browse_recent_entries(
                         all_withheld.extend(filtered.withheld_notices);
                     }
                     Err(e) => { results.insert("knowledge_error".to_string(), serde_json::Value::String(e.to_string())); }
-                }
-            }
-            "runbooks" => {
-                match crate::repo::runbook_repo::list_runbooks(&brain.pool, None, None, None, None, None, limit).await {
-                    Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items.iter().filter_map(|r| serde_json::to_value(r).ok()).collect();
-                        let filtered = filter_cross_client(json_items, "runbooks", requesting_client_id, acknowledge, &client_lookup);
-                        let final_items = if compact { compact_search_results(&filtered.allowed, "runbooks") } else { filtered.allowed };
-                        results.insert("runbooks".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
-                        all_withheld.extend(filtered.withheld_notices);
-                    }
-                    Err(e) => { results.insert("runbooks_error".to_string(), serde_json::Value::String(e.to_string())); }
                 }
             }
             "incidents" => {

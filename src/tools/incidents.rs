@@ -94,18 +94,8 @@ pub struct LinkIncidentParams {
     pub server_slugs: Option<Vec<String>>,
     /// Service slugs to link
     pub service_slugs: Option<Vec<String>>,
-    /// Runbook slugs to link, with usage type
-    pub runbook_links: Option<Vec<RunbookLink>>,
     /// Vendor names to link
     pub vendor_names: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct RunbookLink {
-    /// Runbook slug
-    pub slug: String,
-    /// Usage: followed, not-applicable, or not-followed
-    pub usage: Option<String>,
 }
 
 // ===== HANDLERS =====
@@ -572,42 +562,6 @@ pub(crate) async fn handle_link_incident(
                     linked.push(format!("service:{slug}"));
                 }
                 Ok(None) => return not_found_with_suggestions(&brain.pool, "Service", slug).await,
-                Err(e) => return error_result(&format!("Database error: {e}")),
-            }
-        }
-    }
-
-    // Link runbooks
-    if let Some(rb_links) = &p.runbook_links {
-        for rb_link in rb_links {
-            let usage = rb_link.usage.as_deref().unwrap_or("followed");
-            if let Err(msg) = crate::validation::validate_required(
-                usage,
-                "runbook usage",
-                crate::validation::RUNBOOK_USAGES,
-            ) {
-                return error_result(&msg);
-            }
-            match crate::repo::runbook_repo::get_runbook_by_slug(&brain.pool, &rb_link.slug).await {
-                Ok(Some(runbook)) => {
-                    if let Err(e) = crate::repo::incident_repo::link_incident_runbook(
-                        &brain.pool,
-                        incident_id,
-                        runbook.id,
-                        usage,
-                    )
-                    .await
-                    {
-                        return error_result(&format!(
-                            "Failed to link runbook '{}': {e}",
-                            rb_link.slug
-                        ));
-                    }
-                    linked.push(format!("runbook:{}", rb_link.slug));
-                }
-                Ok(None) => {
-                    return not_found_with_suggestions(&brain.pool, "Runbook", &rb_link.slug).await
-                }
                 Err(e) => return error_result(&format!("Database error: {e}")),
             }
         }

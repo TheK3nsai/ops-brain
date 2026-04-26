@@ -238,7 +238,7 @@ fn parse_ticket_search_response(body: serde_json::Value) -> Result<Vec<ZammadTic
                 }
             }
             // Sort by ID descending (newest first) since HashMap has no order
-            tickets.sort_by(|a, b| b.id.cmp(&a.id));
+            tickets.sort_by_key(|t| std::cmp::Reverse(t.id));
             return Ok(tickets);
         }
     }

@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use crate::models::handoff::Handoff;
 use crate::models::incident::Incident;
 use crate::models::knowledge::Knowledge;
-use crate::models::runbook::Runbook;
 
 #[derive(Clone, Debug)]
 pub struct EmbeddingClient {
@@ -97,15 +96,6 @@ fn truncate_for_embedding(text: String) -> String {
     truncated
 }
 
-pub fn prepare_runbook_text(r: &Runbook) -> String {
-    let mut text = format!("{}\n{}\n\n{}", r.title, r.title, r.content);
-    if let Some(notes) = &r.notes {
-        text.push_str("\n\n");
-        text.push_str(notes);
-    }
-    truncate_for_embedding(text)
-}
-
 pub fn prepare_knowledge_text(k: &Knowledge) -> String {
     truncate_for_embedding(format!("{}\n{}\n\n{}", k.title, k.title, k.content))
 }
@@ -140,58 +130,6 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
-
-    #[test]
-    fn prepare_runbook_text_with_notes() {
-        let runbook = Runbook {
-            id: Uuid::now_v7(),
-            title: "Reset AD Password".to_string(),
-            slug: "reset-ad-password".to_string(),
-            category: Some("active-directory".to_string()),
-            content: "Step 1: Open ADUC\nStep 2: Find user".to_string(),
-            version: 1,
-            tags: vec!["ad".to_string()],
-            estimated_minutes: Some(5),
-            requires_reboot: false,
-            notes: Some("Use RSAT tools on RDS server".to_string()),
-            client_id: None,
-            cross_client_safe: false,
-            source_url: None,
-            last_verified_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-
-        let text = prepare_runbook_text(&runbook);
-        assert!(text.starts_with("Reset AD Password"));
-        assert!(text.contains("Step 1: Open ADUC"));
-        assert!(text.contains("Use RSAT tools on RDS server"));
-    }
-
-    #[test]
-    fn prepare_runbook_text_without_notes() {
-        let runbook = Runbook {
-            id: Uuid::now_v7(),
-            title: "Title".to_string(),
-            slug: "title".to_string(),
-            category: None,
-            content: "Content".to_string(),
-            version: 1,
-            tags: vec![],
-            estimated_minutes: None,
-            requires_reboot: false,
-            notes: None,
-            client_id: None,
-            cross_client_safe: false,
-            source_url: None,
-            last_verified_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-
-        let text = prepare_runbook_text(&runbook);
-        assert_eq!(text, "Title\nTitle\n\nContent");
-    }
 
     #[test]
     fn prepare_knowledge_text_format() {

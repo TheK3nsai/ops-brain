@@ -19,7 +19,6 @@ src/
     helpers.rs       # Shared helpers: json_result, error_result, not_found_with_suggestions, filter_cross_client, compact_*, etc.
     shared.rs        # Shared async functions: embed_and_store, get_query_embedding, build_client_lookup, log_audit_entries
     inventory.rs     # Parameter structs + handler implementations for inventory tools (23 tools)
-    runbooks.rs      # Parameter structs + handler implementations for runbook tools
     knowledge.rs     # Parameter structs + handler implementations for knowledge tools
     context.rs       # Parameter/response structs + handler implementations for context tools
     incidents.rs     # Parameter structs + handler implementations for incident tools
@@ -86,13 +85,13 @@ just check          # fmt + clippy + test
 - **Search**: Hybrid RRF (Reciprocal Rank Fusion) combines FTS rank + vector similarity. Per-method candidate pool: 50 (FTS top 50 + vector top 50 -> RRF merge -> final limit).
 - **FTS query parsing**: `websearch_to_tsquery` (supports quoted phrases `"exact match"`, `or` keyword, `-exclusion`). When AND returns zero results and query has 2+ words, automatically retries with OR-joined terms via `to_tsquery` (`build_or_tsquery_text()` helper in `repo/mod.rs`). Applied to all FTS-only paths (standalone search + hybrid fallback branches). `search_inventory` uses websearch_to_tsquery but not OR fallback (broad discovery tool).
 - **Title boosting**: Embedding text preparation (`src/embeddings.rs`) repeats the title to give vector search stronger weight on title-matching queries. FTS already weights title as category A (highest) in stored tsvectors.
-- **Tables**: runbooks, knowledge, incidents, handoffs
+- **Tables**: knowledge, incidents, handoffs
 - **Auto-embed**: create/update tools generate embeddings best-effort (graceful on failure)
 - **Truncation**: `truncate_for_embedding()` caps text at 6K chars (~5200-6000 tokens). Real markdown/code tokenizes at ~1 char/token for nomic-embed-text -- do NOT increase this limit without empirical testing.
 - **Backfill**: `backfill_embeddings` tool for existing data without embeddings. Must run after title-boost change to regenerate vectors.
 - **Graceful degradation**: If embedding API unreachable, all FTS works unchanged. `search_knowledge` with hybrid mode falls back to FTS-only (with OR relaxation).
-- **`semantic_search` merged into `search_knowledge`**: Use `tables` param to search across multiple tables. Default is `["knowledge"]`; set `tables=["knowledge","runbooks","incidents","handoffs"]` for cross-table search. Mode defaults to `"hybrid"` for multi-table.
-- **Context enrichment**: `get_situational_awareness` and `get_server_context` use vector search to find related runbooks/knowledge beyond explicit links
+- **`semantic_search` merged into `search_knowledge`**: Use `tables` param to search across multiple tables. Default is `["knowledge"]`; set `tables=["knowledge","incidents","handoffs"]` for cross-table search. Mode defaults to `"hybrid"` for multi-table.
+- **Context enrichment**: `get_situational_awareness` and `get_server_context` use vector search to find related knowledge beyond explicit links
 - **pgvector crate**: `pgvector 0.4` with `sqlx` feature for `Vector` type
 
 ## Watchdog
@@ -102,7 +101,7 @@ just check          # fmt + clippy + test
 - **Instances**: Supports multiple Uptime Kuma instances via `UPTIME_KUMA_INSTANCES` JSON env var. Falls back to single `UPTIME_KUMA_URL` for backward compat.
 - **Multi-instance naming**: When >1 instance is configured, monitor names are prefixed with `instance_name/` (e.g. `linux-lab/DC Ping`). Single instance = no prefix (backward compat). All lookups are prefix-tolerant: try exact match first, then strip the `instance/` prefix as fallback.
 - **Interval**: `OPS_BRAIN_WATCHDOG_INTERVAL=60` (seconds, default 60)
-- **Behavior**: Polls all Kuma instances via `fetch_all_metrics()` every interval. Tracks states in memory. Detects UP->DOWN (auto-creates incident with severity from server roles, symptoms from monitor data, linked server/service, suggested runbooks). Detects DOWN->UP (auto-resolves with TTR). On startup, recovers state from open `[AUTO]` incidents.
+- **Behavior**: Polls all Kuma instances via `fetch_all_metrics()` every interval. Tracks states in memory. Detects UP->DOWN (auto-creates incident with severity from server roles, symptoms from monitor data, linked server/service). Detects DOWN->UP (auto-resolves with TTR). On startup, recovers state from open `[AUTO]` incidents.
 - **Noise reduction**: Grace period (CONFIRM_POLLS, default 3), Cooldown (COOLDOWN_SECS, default 1800), Deduplication (reopens recently resolved incidents within 24h instead of creating duplicates).
 - **Severity logic**: monitor `severity_override` (if set via `link_monitor`) -> server roles -> default "medium"
 

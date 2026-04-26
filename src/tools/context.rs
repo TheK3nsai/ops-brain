@@ -24,7 +24,7 @@ pub struct GetSituationalAwarenessParams {
     pub acknowledge_cross_client: Option<bool>,
     /// Strip content/body/notes fields (~94K→~10K). Default: false
     pub compact: Option<bool>,
-    /// Filter: server, site, client, services, networks, vendors, incidents, runbooks, handoffs, knowledge, monitoring, tickets
+    /// Filter: server, site, client, services, networks, vendors, incidents, handoffs, knowledge, monitoring, tickets
     pub sections: Option<Vec<String>>,
 }
 
@@ -40,7 +40,7 @@ pub struct GetServerContextParams {
     pub acknowledge_cross_client: Option<bool>,
     /// Strip content/body/notes fields. Default: false
     pub compact: Option<bool>,
-    /// Filter: server, site, client, services, networks, vendors, incidents, runbooks, knowledge, monitoring, tickets
+    /// Filter: server, site, client, services, networks, vendors, incidents, knowledge, monitoring, tickets
     pub sections: Option<Vec<String>>,
 }
 
@@ -54,7 +54,6 @@ pub struct SituationalAwareness {
     pub networks: Vec<serde_json::Value>,
     pub vendors: Vec<serde_json::Value>,
     pub recent_incidents: Vec<serde_json::Value>,
-    pub relevant_runbooks: Vec<serde_json::Value>,
     pub pending_handoffs: Vec<serde_json::Value>,
     pub knowledge: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -106,7 +105,6 @@ pub(crate) async fn handle_get_situational_awareness(
         networks: Vec::new(),
         vendors: Vec::new(),
         recent_incidents: Vec::new(),
-        relevant_runbooks: Vec::new(),
         pending_handoffs: Vec::new(),
         knowledge: Vec::new(),
         monitoring: Vec::new(),
@@ -166,24 +164,6 @@ pub(crate) async fn handle_get_situational_awareness(
                         .collect();
                 }
             }
-
-            // Get runbooks linked to this server
-            if let Ok(runbooks) = crate::repo::runbook_repo::list_runbooks(
-                &brain.pool,
-                None,
-                None,
-                Some(server.id),
-                None,
-                None,
-                200,
-            )
-            .await
-            {
-                awareness.relevant_runbooks = runbooks
-                    .iter()
-                    .filter_map(|r| serde_json::to_value(r).ok())
-                    .collect();
-            }
         } else {
             return not_found_with_suggestions(&brain.pool, "Server", slug).await;
         }
@@ -222,27 +202,6 @@ pub(crate) async fn handle_get_situational_awareness(
                         {
                             client_id = Some(site.client_id);
                             awareness.site = serde_json::to_value(&site).ok();
-                        }
-                    }
-                }
-            }
-
-            // Get runbooks linked to this service (merge with existing)
-            if let Ok(runbooks) = crate::repo::runbook_repo::list_runbooks(
-                &brain.pool,
-                None,
-                Some(svc.id),
-                None,
-                None,
-                None,
-                200,
-            )
-            .await
-            {
-                for rb in &runbooks {
-                    if let Ok(val) = serde_json::to_value(rb) {
-                        if !awareness.relevant_runbooks.contains(&val) {
-                            awareness.relevant_runbooks.push(val);
                         }
                     }
                 }
@@ -415,7 +374,7 @@ pub(crate) async fn handle_get_situational_awareness(
         Err(e) => warnings.push(format!("General knowledge lookup failed: {e}")),
     }
 
-    // Semantic enrichment: find related runbooks/knowledge beyond explicit links
+    // Semantic enrichment: find related knowledge beyond explicit links
     if brain.embedding_client.is_some() {
         // Build context string from resolved entities
         let mut context_parts = Vec::new();
@@ -441,22 +400,6 @@ pub(crate) async fn handle_get_situational_awareness(
         if !context_parts.is_empty() {
             let context_query = context_parts.join(" ");
             if let Some(emb) = get_query_embedding(&brain.embedding_client, &context_query).await {
-                // Find semantically related runbooks
-                if let Ok(related_runbooks) =
-                    crate::repo::embedding_repo::vector_search_runbooks(&brain.pool, &emb, 5).await
-                {
-                    for rb in &related_runbooks {
-                        if let Ok(val) = serde_json::to_value(rb) {
-                            if !awareness
-                                .relevant_runbooks
-                                .iter()
-                                .any(|existing| existing.get("id") == val.get("id"))
-                            {
-                                awareness.relevant_runbooks.push(val);
-                            }
-                        }
-                    }
-                }
                 // Find semantically related knowledge
                 if let Ok(related_knowledge) =
                     crate::repo::embedding_repo::vector_search_knowledge(&brain.pool, &emb, 5).await
@@ -477,29 +420,9 @@ pub(crate) async fn handle_get_situational_awareness(
         }
     }
 
-    // Cross-client scope gate for runbooks, knowledge, and incidents
+    // Cross-client scope gate for knowledge and incidents
     {
         let client_lookup = build_client_lookup(&brain.pool).await;
-
-        let rb_filtered = filter_cross_client(
-            std::mem::take(&mut awareness.relevant_runbooks),
-            "runbook",
-            client_id,
-            acknowledge,
-            &client_lookup,
-        );
-        awareness.relevant_runbooks = rb_filtered.allowed;
-        awareness
-            .cross_client_withheld
-            .extend(rb_filtered.withheld_notices);
-        log_audit_entries(
-            &brain.pool,
-            "get_situational_awareness",
-            client_id,
-            "runbook",
-            &rb_filtered.audit_entries,
-        )
-        .await;
 
         let kn_filtered = filter_cross_client(
             std::mem::take(&mut awareness.knowledge),
@@ -629,7 +552,6 @@ pub(crate) async fn handle_get_situational_awareness(
             awareness.networks = compact_vec(&awareness.networks, "network");
             awareness.vendors = compact_vec(&awareness.vendors, "vendor");
             awareness.recent_incidents = compact_vec(&awareness.recent_incidents, "incident");
-            awareness.relevant_runbooks = compact_vec(&awareness.relevant_runbooks, "runbook");
             awareness.pending_handoffs = compact_vec(&awareness.pending_handoffs, "handoff");
             awareness.knowledge = compact_vec(&awareness.knowledge, "knowledge");
             awareness.monitoring = compact_vec(&awareness.monitoring, "monitor");
@@ -656,9 +578,6 @@ pub(crate) async fn handle_get_situational_awareness(
             }
             if !section_included(&sections, "incidents") {
                 awareness.recent_incidents.clear();
-            }
-            if !section_included(&sections, "runbooks") {
-                awareness.relevant_runbooks.clear();
             }
             if !section_included(&sections, "handoffs") {
                 awareness.pending_handoffs.clear();
@@ -887,49 +806,6 @@ pub(crate) async fn handle_get_server_context(
             }
         };
 
-    // Get runbooks linked to this server
-    let runbooks = crate::repo::runbook_repo::list_runbooks(
-        &brain.pool,
-        None,
-        None,
-        Some(server.id),
-        None,
-        None,
-        200,
-    )
-    .await
-    .unwrap_or_default();
-
-    // Also get runbooks linked to any of this server's services
-    let mut all_runbooks: Vec<serde_json::Value> = runbooks
-        .iter()
-        .filter_map(|r| serde_json::to_value(r).ok())
-        .collect();
-    let mut seen_runbook_ids: std::collections::HashSet<uuid::Uuid> =
-        runbooks.iter().map(|r| r.id).collect();
-
-    for svc in &services {
-        if let Ok(svc_runbooks) = crate::repo::runbook_repo::list_runbooks(
-            &brain.pool,
-            None,
-            Some(svc.id),
-            None,
-            None,
-            None,
-            200,
-        )
-        .await
-        {
-            for rb in &svc_runbooks {
-                if seen_runbook_ids.insert(rb.id) {
-                    if let Ok(val) = serde_json::to_value(rb) {
-                        all_runbooks.push(val);
-                    }
-                }
-            }
-        }
-    }
-
     // Get knowledge entries for this client
     let mut all_knowledge: Vec<serde_json::Value> = if let Some(cid) = client_id {
         match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, Some(cid), 100).await {
@@ -954,7 +830,7 @@ pub(crate) async fn handle_get_server_context(
         })
         .collect();
 
-    // Semantic enrichment: find related runbooks/knowledge beyond explicit links
+    // Semantic enrichment: find related knowledge beyond explicit links
     if brain.embedding_client.is_some() {
         let mut context_parts = vec![server.hostname.clone()];
         if let Some(ref os) = server.os {
@@ -965,17 +841,6 @@ pub(crate) async fn handle_get_server_context(
         }
         let context_query = context_parts.join(" ");
         if let Some(emb) = get_query_embedding(&brain.embedding_client, &context_query).await {
-            if let Ok(related_runbooks) =
-                crate::repo::embedding_repo::vector_search_runbooks(&brain.pool, &emb, 5).await
-            {
-                for rb in &related_runbooks {
-                    if seen_runbook_ids.insert(rb.id) {
-                        if let Ok(val) = serde_json::to_value(rb) {
-                            all_runbooks.push(val);
-                        }
-                    }
-                }
-            }
             if let Ok(related_knowledge) =
                 crate::repo::embedding_repo::vector_search_knowledge(&brain.pool, &emb, 5).await
             {
@@ -990,28 +855,10 @@ pub(crate) async fn handle_get_server_context(
         }
     }
 
-    // Cross-client scope gate for runbooks, knowledge, and incidents
+    // Cross-client scope gate for knowledge and incidents
     let mut cross_client_withheld: Vec<serde_json::Value> = Vec::new();
     {
         let client_lookup = build_client_lookup(&brain.pool).await;
-
-        let rb_filtered = filter_cross_client(
-            std::mem::take(&mut all_runbooks),
-            "runbook",
-            client_id,
-            acknowledge,
-            &client_lookup,
-        );
-        all_runbooks = rb_filtered.allowed;
-        cross_client_withheld.extend(rb_filtered.withheld_notices);
-        log_audit_entries(
-            &brain.pool,
-            "get_server_context",
-            client_id,
-            "runbook",
-            &rb_filtered.audit_entries,
-        )
-        .await;
 
         let kn_filtered = filter_cross_client(
             std::mem::take(&mut all_knowledge),
@@ -1169,13 +1016,6 @@ pub(crate) async fn handle_get_server_context(
             serde_json::to_value(compact_vec(&all_incidents, "incident")).unwrap_or_default()
         } else {
             serde_json::to_value(&all_incidents).unwrap_or_default()
-        };
-    }
-    if section_included(&sections, "runbooks") {
-        result["runbooks"] = if compact {
-            serde_json::to_value(compact_vec(&all_runbooks, "runbook")).unwrap_or_default()
-        } else {
-            serde_json::to_value(&all_runbooks).unwrap_or_default()
         };
     }
     if section_included(&sections, "knowledge") {
