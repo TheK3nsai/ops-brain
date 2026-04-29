@@ -49,9 +49,8 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 
 ## Coordination
 
-**ops-brain is the team bus, not a brain.** Local is the source of truth — each CC's per-machine `CLAUDE.md` is its scope, the filesystem is its state, git history is its memory. Reach for ops-brain only when you genuinely need the rest of the team: handoffs to other CCs, shared incidents, cross-client knowledge with isolation rules, monitors, tickets that span systems. **If a question can be answered without ops-brain, it should be.**
+The team-bus principle and "no startup ritual" rules live in each CC's per-machine `CLAUDE.md`. Repo-specific coordination details:
 
-- **No startup ritual** -- there is no required "first call." If the user leads with a task, do the task. Call `check_in` when you actually want to know what's pending from the rest of the team; otherwise don't. (This replaces the old v1.4 "morning ritual" framing — see CHANGELOG v1.5.)
 - **Handoffs are the coordination layer** -- creating a handoff IS the notification mechanism. `action`-category for things the recipient must do; `notify`-category for FYI broadcasts (auto-pruned after 7 days).
 - **Knowledge policy** -- knowledge entries are for gotchas, safety warnings, compliance rules, and vendor behavior ONLY. Every entry costs tokens across all CC instances. If it would fit in your own CLAUDE.md, put it there instead. `add_knowledge` requires `author_cc` (your CC name from your per-machine CLAUDE.md) and accepts an optional `source_incident_id` to link the entry back to the incident that produced it — provenance is immutable via the tool surface once set.
 - **Default-deny across clients** -- cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
@@ -69,11 +68,11 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 - **upsert_vendor matches by name (case-insensitive)** -- ON CONFLICT on `LOWER(name)` for active vendors
 - **nomic-embed-text tokenization** -- real content tokenizes at ~1-1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` is 6,000. Do not increase without empirical testing.
 - **`link_monitor` names in multi-instance mode** -- all lookups are prefix-tolerant (try exact, then strip `instance/` prefix), so linking with unprefixed Kuma names works fine.
-- **Production deploys MUST use `-f docker-compose.prod.yml`** -- `~/ops-brain` on kensai.cloud has TWO compose files. The default `docker-compose.yml` is the dev/new-user file with bundled empty postgres; the real DB lives in `shared-postgres` and is only referenced by `docker-compose.prod.yml`. **As of PR #33 (2026-04-07) the dev file is project-namespaced as `ops-brain-dev`** with `container_name: ops-brain-dev` / `ops-brain-dev-db`, network `ops-brain-dev_default`, volume `ops-brain-dev_pgdata`, so a stray `docker compose up` from the wrong file spins up isolated `-dev` containers and **leaves the production `ops-brain` container untouched** -- but you still need `-f docker-compose.prod.yml` to actually talk to the prod stack. Cleanup of dev orphans on the prod host: `docker stop ops-brain-dev ops-brain-dev-db; docker rm ops-brain-dev ops-brain-dev-db; docker network rm ops-brain-dev_default; docker volume rm ops-brain-dev_pgdata`. History: CC-Stealth tripped on the (then-destructive) version during the PR #31 escape-hatch deploy (2026-04-06); the recovery + post-mortem produced PR #33.
+- **Production deploys MUST use `-f docker-compose.prod.yml`** -- prod uses `shared-postgres`, dev uses bundled postgres. Dev compose is project-namespaced as `ops-brain-dev` (PR #33) so a stray invocation can't clobber prod, but it can spin up isolated dev orphans. Full context, history, and orphan cleanup in `feedback_compose_file_footgun.md`.
 
 ## Development Workflow
 
-- **Before committing non-trivial changes**: run `/review` — spawns the project reviewer agent to catch logic and safety issues the pre-commit hook can't
+- **Before committing non-trivial changes**: run `/prereview` — spawns the project reviewer agent to catch logic and safety issues the pre-commit hook can't. (The built-in `/review` is for an already-open PR.)
 - **Pre-commit hook** catches fmt, clippy, and check automatically — no need to run these manually
 - **After merging to main**: hand off the deploy to **CC-Cloud** (the canonical ops-brain deployer — they live on kensai.cloud and know the layout). The `/deploy` skill creates the handoff for you. SSH escape hatch is reserved for cases where CC-Cloud is unavailable AND the change is genuinely urgent; even then, **always** pass `-f docker-compose.prod.yml` (see Gotchas).
 - **Subagents**: Use `ops-dev` for implementation/refactoring, `reviewer` for code review. Both are in `.claude/agents/`.
