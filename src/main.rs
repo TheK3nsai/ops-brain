@@ -163,7 +163,8 @@ async fn main() -> anyhow::Result<()> {
         }
         "http" => {
             use rmcp::transport::streamable_http_server::{
-                session::local::LocalSessionManager, tower::StreamableHttpService,
+                session::local::LocalSessionManager,
+                tower::{StreamableHttpServerConfig, StreamableHttpService},
             };
             use std::sync::Arc;
 
@@ -174,6 +175,31 @@ async fn main() -> anyhow::Result<()> {
                 kuma_configs: kuma_configs.clone(),
                 zammad_config: zammad_config.clone(),
             });
+
+            let mut http_config = StreamableHttpServerConfig::default();
+            let parsed_hosts: Vec<String> = config
+                .allowed_hosts
+                .as_deref()
+                .map(|h| {
+                    h.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !parsed_hosts.is_empty() {
+                tracing::info!("HTTP allowed_hosts: {:?}", parsed_hosts);
+                http_config = http_config.with_allowed_hosts(parsed_hosts);
+            } else if config.allowed_hosts.is_some() {
+                tracing::warn!(
+                    "OPS_BRAIN_ALLOWED_HOSTS set but empty/whitespace; using loopback default. \
+                     Empty allowlist disables DNS-rebind protection in rmcp — refusing."
+                );
+            } else {
+                tracing::info!(
+                    "HTTP allowed_hosts: loopback default (set OPS_BRAIN_ALLOWED_HOSTS for public deploy)"
+                );
+            }
 
             let kuma_configs_http = kuma_configs.clone();
             let embedding_client_http = embedding_client.clone();
@@ -188,13 +214,16 @@ async fn main() -> anyhow::Result<()> {
                     ))
                 },
                 session_manager,
-                Default::default(),
+                http_config,
             );
 
             let api_routes = axum::Router::new()
                 .route("/briefing", axum::routing::post(api::generate_briefing))
                 .with_state(api_state);
 
+            // Outer .layer wraps everything below — auth runs BEFORE rmcp's
+            // host check inside /mcp. Don't reorder: unauthenticated callers
+            // shouldn't be able to enumerate which Host values are accepted.
             let app = axum::Router::new()
                 .route("/health", axum::routing::get(|| async { "OK" }))
                 .nest("/api", api_routes)
