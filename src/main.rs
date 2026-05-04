@@ -221,6 +221,9 @@ async fn main() -> anyhow::Result<()> {
                 .route("/briefing", axum::routing::post(api::generate_briefing))
                 .with_state(api_state);
 
+            // Outer .layer wraps everything below — auth runs BEFORE rmcp's
+            // host check inside /mcp. Don't reorder: unauthenticated callers
+            // shouldn't be able to enumerate which Host values are accepted.
             let app = axum::Router::new()
                 .route("/health", axum::routing::get(|| async { "OK" }))
                 .nest("/api", api_routes)
