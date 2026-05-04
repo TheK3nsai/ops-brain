@@ -59,6 +59,7 @@ just check          # fmt + clippy + test
 | `OPS_BRAIN_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth |
+| `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` header values for HTTP transport (rmcp 1.4+ DNS-rebind mitigation). Public deploys behind a reverse proxy must set their hostname. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
 | `UPTIME_KUMA_URL` | (none) | Uptime Kuma base URL for /metrics scraping (single instance) |
 | `UPTIME_KUMA_USERNAME` | (none) | Basic auth username for /metrics (single instance) |

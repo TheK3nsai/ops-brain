@@ -19,6 +19,12 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_AUTH_TOKEN")]
     pub auth_token: Option<String>,
 
+    /// Comma-separated allowed Host header values for HTTP transport (DNS-rebind mitigation
+    /// added in rmcp 1.4). Defaults to loopback only — public deployments behind a reverse
+    /// proxy must list their public hostname (e.g. `ops.example.com,ops.example.com:443`).
+    #[arg(long, env = "OPS_BRAIN_ALLOWED_HOSTS")]
+    pub allowed_hosts: Option<String>,
+
     /// Run database migrations on startup
     #[arg(long, env = "OPS_BRAIN_MIGRATE", default_value = "true")]
     pub migrate: bool,

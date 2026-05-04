@@ -1,6 +1,6 @@
 # ops-brain
 
-Rust MCP server for IT operational intelligence. Rust 2021, rmcp 1.2, PostgreSQL 18 via sqlx, stdio/HTTP transport.
+Rust MCP server for IT operational intelligence. Rust 2021, rmcp 1.6, PostgreSQL 18 via sqlx, stdio/HTTP transport.
 
 For project layout, env vars, subsystem details: see `docs/REFERENCE.md`
 For adding tools, branch/commit conventions, PR checklist: see `docs/CONTRIBUTING.md`

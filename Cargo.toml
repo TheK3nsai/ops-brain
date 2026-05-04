@@ -8,7 +8,7 @@ repository = "https://github.com/TheK3nsai/ops-brain"
 
 [dependencies]
 # MCP SDK
-rmcp = { version = "1.2", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "1.5", features = ["server", "transport-io", "transport-streamable-http-server"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

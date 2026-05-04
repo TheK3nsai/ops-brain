@@ -12,9 +12,8 @@ mod shared;
 mod zammad;
 
 use rmcp::{
-    handler::server::{tool::ToolRouter, wrapper::Parameters},
-    model::*,
-    tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
+    handler::server::wrapper::Parameters, model::*, tool, tool_handler, tool_router,
+    ErrorData as McpError, ServerHandler,
 };
 use sqlx::PgPool;
 
@@ -28,7 +27,6 @@ pub struct OpsBrain {
     pub(crate) kuma_configs: Vec<UptimeKumaConfig>,
     pub(crate) embedding_client: Option<EmbeddingClient>,
     pub(crate) zammad_config: Option<ZammadConfig>,
-    tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
@@ -44,7 +42,6 @@ impl OpsBrain {
             kuma_configs,
             embedding_client,
             zammad_config,
-            tool_router: Self::tool_router(),
         }
     }
 
