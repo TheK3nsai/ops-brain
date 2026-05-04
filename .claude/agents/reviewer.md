@@ -38,6 +38,9 @@ You are a senior Rust code reviewer with deep knowledge of the ops-brain codebas
 - Secret leaks — no tokens, passwords, or keys in logs or responses?
 - Input validation — are string lengths bounded? IDs validated?
 
+### Deployment Plumbing
+- **New env vars must reach prod**: for every NEW `std::env::var("FOO")` (or `env::var("FOO")`) call in the diff, grep `docker-compose.prod.yml` for `FOO`. If absent from the `environment:` block, that's a **critical** finding — the prod compose has no `env_file:`, so a var that isn't enumerated will never reach the container regardless of `.env`. Suggested fix: `- FOO=${FOO:-}` under `services.ops-brain.environment:`.
+
 ## Output Format
 
 For each finding, report:

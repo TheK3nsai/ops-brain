@@ -69,6 +69,7 @@ The team-bus principle and "no startup ritual" rules live in each CC's per-machi
 - **nomic-embed-text tokenization** -- real content tokenizes at ~1-1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` is 6,000. Do not increase without empirical testing.
 - **`link_monitor` names in multi-instance mode** -- all lookups are prefix-tolerant (try exact, then strip `instance/` prefix), so linking with unprefixed Kuma names works fine.
 - **Production deploys MUST use `-f docker-compose.prod.yml`** -- prod uses `shared-postgres`, dev uses bundled postgres. Dev compose is project-namespaced as `ops-brain-dev` (PR #33) so a stray invocation can't clobber prod, but it can spin up isolated dev orphans. Full context, history, and orphan cleanup in `feedback_compose_file_footgun.md`.
+- **New env vars need BOTH `.env` AND `docker-compose.prod.yml`** -- prod compose enumerates every env var explicitly under `services.ops-brain.environment:` (no `env_file:`). Adding `FOO=...` to `.env` alone leaves the container booting without `FOO`. Always pair the binary's `std::env::var("FOO")` with a `- FOO=${FOO:-}` line in the prod compose. Caught at the rmcp 1.6 deploy (PR #47 → fix in #48); `/prereview` now greps for this.
 
 ## Development Workflow
 
