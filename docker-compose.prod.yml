@@ -21,6 +21,8 @@ services:
       - OPS_BRAIN_LISTEN=0.0.0.0:3000
       - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN}
       - OPS_BRAIN_MIGRATE=true
+      # rmcp 1.4+ Host header allowlist (DNS-rebind mitigation, default loopback-only)
+      - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}
       # Uptime Kuma monitoring (multi-instance JSON)
       - UPTIME_KUMA_INSTANCES=${UPTIME_KUMA_INSTANCES}
       # Embeddings (ollama on same Docker network)
