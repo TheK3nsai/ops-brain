@@ -134,5 +134,6 @@ Before opening a PR, verify:
 - [ ] README.md updated if tool count changed
 - [ ] No hardcoded credentials, URLs, or tokens
 - [ ] Migration files are idempotent (`IF NOT EXISTS`, etc.)
+- [ ] If you added an env var the binary reads: also added it to `docker-compose.prod.yml` under `environment:` (prod compose enumerates explicitly — no `env_file:`) and to `.env.example`
 - [ ] Cross-client safety considered: if the tool touches knowledge/incidents, does it need `client_slug` and `acknowledge_cross_client` params?
 - [ ] Handoff created to CC-Stealth for review/merge (PRs don't notify -- handoffs do)
