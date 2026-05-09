@@ -25,28 +25,11 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
             "cross_client_safe",
             "_client_slug",
             "_client_name",
-            // v1.6 provenance fields
             "author",
-            "source_incident_id",
             "last_verified_at",
             "_staleness_warning",
             "created_at",
             "updated_at",
-        ],
-        "incident" => &[
-            "id",
-            "title",
-            "severity",
-            "status",
-            "client_id",
-            "reported_at",
-            "resolved_at",
-            "time_to_resolve_minutes",
-            "recurrence_count",
-            "source",
-            "cross_client_safe",
-            "_client_slug",
-            "_client_name",
         ],
         "handoff" => &[
             "id",
@@ -61,10 +44,8 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
         _ => &["id", "title", "slug", "name"],
     };
 
-    // Content field name varies by entity type
     let content_field = match entity_type {
         "knowledge" => "content",
-        "incident" => "symptoms",
         "handoff" => "body",
         _ => "content",
     };
@@ -161,9 +142,6 @@ pub struct AddKnowledgeParams {
     /// once set — provenance cannot be rewritten via the tool surface.
     #[serde(alias = "author_cc")]
     pub author: String,
-    /// Optional incident (UUID) that produced this entry. Can also be added
-    /// later via update_knowledge.
-    pub source_incident_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -172,7 +150,7 @@ pub struct SearchKnowledgeParams {
     pub query: Option<String>,
     /// fts (default single-table), semantic, or hybrid (default multi-table). Ignored for browse.
     pub mode: Option<String>,
-    /// Tables to search: knowledge (default), incidents, handoffs
+    /// Tables to search: knowledge (default), handoffs
     pub tables: Option<Vec<String>>,
     /// Scope to client. Cross-client results withheld unless acknowledged.
     pub client_slug: Option<String>,
@@ -204,10 +182,6 @@ pub struct UpdateKnowledgeParams {
     /// Set to true to mark this entry as verified (confirms content is still accurate).
     /// Sets last_verified_at to now without requiring content changes.
     pub verified: Option<bool>,
-    /// Link (or re-link) the incident that produced this knowledge entry.
-    /// Use this to add provenance post-hoc when you didn't know the source
-    /// incident at create time. Pass the incident UUID as a string.
-    pub source_incident_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -237,21 +211,6 @@ pub async fn handle_add_knowledge(
     let author = match crate::validation::validate_agent_name(&p.author) {
         Ok(n) => n.to_string(),
         Err(e) => return error_result(&format!("author: {e}")),
-    };
-
-    // v1.6: parse optional source_incident_id and verify the incident
-    // exists, so we fail with a clean error instead of a raw FK violation
-    // at INSERT time.
-    let source_incident_id = match p.source_incident_id.as_deref() {
-        Some(s) => match uuid::Uuid::parse_str(s) {
-            Ok(id) => match crate::repo::incident_repo::get_incident(&brain.pool, id).await {
-                Ok(Some(_)) => Some(id),
-                Ok(None) => return error_result(&format!("Incident not found: {id}")),
-                Err(e) => return error_result(&format!("Database error: {e}")),
-            },
-            Err(_) => return error_result(&format!("Invalid source_incident_id UUID: {s}")),
-        },
-        None => None,
     };
 
     let tags = p.tags.unwrap_or_default();
@@ -314,7 +273,6 @@ pub async fn handle_add_knowledge(
         client_id,
         cross_client_safe,
         Some(&author),
-        source_incident_id,
     )
     .await
     {
@@ -350,22 +308,6 @@ pub async fn handle_update_knowledge(
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
 
-    // v1.6: parse optional source_incident_id and verify the incident
-    // exists before the UPDATE.
-    let source_incident_id = match p.source_incident_id.as_deref() {
-        Some(s) => match uuid::Uuid::parse_str(s) {
-            Ok(incident_id) => {
-                match crate::repo::incident_repo::get_incident(&brain.pool, incident_id).await {
-                    Ok(Some(_)) => Some(incident_id),
-                    Ok(None) => return error_result(&format!("Incident not found: {incident_id}")),
-                    Err(e) => return error_result(&format!("Database error: {e}")),
-                }
-            }
-            Err(_) => return error_result(&format!("Invalid source_incident_id UUID: {s}")),
-        },
-        None => None,
-    };
-
     // Mark as verified if requested
     if p.verified.unwrap_or(false) {
         if let Err(e) = crate::repo::knowledge_repo::update_last_verified_at(&brain.pool, id).await
@@ -382,7 +324,6 @@ pub async fn handle_update_knowledge(
         p.category.as_deref(),
         p.tags.as_deref(),
         p.cross_client_safe,
-        source_incident_id,
     )
     .await
     {
@@ -453,7 +394,7 @@ pub(crate) async fn handle_search_knowledge(
     }
 
     // Validate table names
-    let valid_tables = ["knowledge", "incidents", "handoffs"];
+    let valid_tables = ["knowledge", "handoffs"];
     for t in &tables {
         if !valid_tables.contains(&t.as_str()) {
             return error_result(&format!(
@@ -572,70 +513,6 @@ pub(crate) async fn handle_search_knowledge(
                     }
                 }
             }
-            "incidents" => {
-                let search_result = match mode {
-                    "semantic" => {
-                        crate::repo::embedding_repo::vector_search_incidents(
-                            &brain.pool,
-                            emb_ref.unwrap(),
-                            limit,
-                        )
-                        .await
-                    }
-                    "hybrid" => {
-                        crate::repo::embedding_repo::hybrid_search_incidents(
-                            &brain.pool,
-                            &raw_query,
-                            emb_ref,
-                            limit,
-                        )
-                        .await
-                    }
-                    _ => {
-                        crate::repo::incident_repo::search_incidents(&brain.pool, &raw_query, limit)
-                            .await
-                    }
-                };
-                match search_result {
-                    Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items
-                            .iter()
-                            .filter_map(|i| serde_json::to_value(i).ok())
-                            .collect();
-                        let filtered = filter_cross_client(
-                            json_items,
-                            "incident",
-                            requesting_client_id,
-                            acknowledge,
-                            &client_lookup,
-                        );
-                        let final_items = if compact {
-                            compact_search_results(&filtered.allowed, "incident")
-                        } else {
-                            filtered.allowed
-                        };
-                        results.insert(
-                            "incidents".to_string(),
-                            serde_json::to_value(&final_items).unwrap_or_default(),
-                        );
-                        all_withheld.extend(filtered.withheld_notices);
-                        log_audit_entries(
-                            &brain.pool,
-                            "search_knowledge",
-                            requesting_client_id,
-                            "incident",
-                            &filtered.audit_entries,
-                        )
-                        .await;
-                    }
-                    Err(e) => {
-                        results.insert(
-                            "incidents_error".to_string(),
-                            serde_json::Value::String(e.to_string()),
-                        );
-                    }
-                }
-            }
             "handoffs" => {
                 // Handoffs are NOT gated — no client_id on handoffs table
                 let search_result = match mode {
@@ -742,39 +619,70 @@ async fn browse_recent_entries(
     for table in tables {
         match table.as_str() {
             "knowledge" => {
-                match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None, limit).await {
+                match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None, limit)
+                    .await
+                {
                     Ok(items) => {
                         let json_items = knowledge_entries_to_json(&items);
-                        let filtered = filter_cross_client(json_items, "knowledge", requesting_client_id, acknowledge, &client_lookup);
-                        let final_items = if compact { compact_search_results(&filtered.allowed, "knowledge") } else { filtered.allowed };
-                        results.insert("knowledge".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
+                        let filtered = filter_cross_client(
+                            json_items,
+                            "knowledge",
+                            requesting_client_id,
+                            acknowledge,
+                            &client_lookup,
+                        );
+                        let final_items = if compact {
+                            compact_search_results(&filtered.allowed, "knowledge")
+                        } else {
+                            filtered.allowed
+                        };
+                        results.insert(
+                            "knowledge".to_string(),
+                            serde_json::to_value(&final_items).unwrap_or_default(),
+                        );
                         all_withheld.extend(filtered.withheld_notices);
                     }
-                    Err(e) => { results.insert("knowledge_error".to_string(), serde_json::Value::String(e.to_string())); }
-                }
-            }
-            "incidents" => {
-                match sqlx::query_as::<_, crate::models::incident::Incident>(
-                    "SELECT * FROM incidents WHERE status != 'deleted' ORDER BY created_at DESC LIMIT $1"
-                ).bind(limit).fetch_all(&brain.pool).await {
-                    Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items.iter().filter_map(|i| serde_json::to_value(i).ok()).collect();
-                        let filtered = filter_cross_client(json_items, "incidents", requesting_client_id, acknowledge, &client_lookup);
-                        let final_items = if compact { compact_search_results(&filtered.allowed, "incidents") } else { filtered.allowed };
-                        results.insert("incidents".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
-                        all_withheld.extend(filtered.withheld_notices);
+                    Err(e) => {
+                        results.insert(
+                            "knowledge_error".to_string(),
+                            serde_json::Value::String(e.to_string()),
+                        );
                     }
-                    Err(e) => { results.insert("incidents_error".to_string(), serde_json::Value::String(e.to_string())); }
                 }
             }
             "handoffs" => {
-                match crate::repo::handoff_repo::list_handoffs(&brain.pool, None, None, None, None, false, limit).await {
+                match crate::repo::handoff_repo::list_handoffs(
+                    &brain.pool,
+                    None,
+                    None,
+                    None,
+                    None,
+                    false,
+                    limit,
+                )
+                .await
+                {
                     Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items.iter().filter_map(|h| serde_json::to_value(h).ok()).collect();
-                        let final_items = if compact { compact_search_results(&json_items, "handoffs") } else { json_items };
-                        results.insert("handoffs".to_string(), serde_json::to_value(&final_items).unwrap_or_default());
+                        let json_items: Vec<serde_json::Value> = items
+                            .iter()
+                            .filter_map(|h| serde_json::to_value(h).ok())
+                            .collect();
+                        let final_items = if compact {
+                            compact_search_results(&json_items, "handoffs")
+                        } else {
+                            json_items
+                        };
+                        results.insert(
+                            "handoffs".to_string(),
+                            serde_json::to_value(&final_items).unwrap_or_default(),
+                        );
                     }
-                    Err(e) => { results.insert("handoffs_error".to_string(), serde_json::Value::String(e.to_string())); }
+                    Err(e) => {
+                        results.insert(
+                            "handoffs_error".to_string(),
+                            serde_json::Value::String(e.to_string()),
+                        );
+                    }
                 }
             }
             _ => {}
@@ -917,7 +825,6 @@ mod tests {
             cross_client_safe: false,
             last_verified_at: last_verified,
             author: Some("CC-Stealth".to_string()),
-            source_incident_id: None,
             created_at: created,
             updated_at: created,
         }
@@ -997,10 +904,6 @@ mod tests {
             obj.get("author"),
             Some(&serde_json::Value::String("CC-Stealth".to_string())),
             "author should survive serialization"
-        );
-        assert!(
-            obj.contains_key("source_incident_id"),
-            "source_incident_id field should be present even when null"
         );
     }
 

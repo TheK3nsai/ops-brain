@@ -13,12 +13,11 @@ pub async fn add_knowledge(
     client_id: Option<Uuid>,
     cross_client_safe: bool,
     author: Option<&str>,
-    source_incident_id: Option<Uuid>,
 ) -> Result<Knowledge, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Knowledge>(
-        "INSERT INTO knowledge (id, title, content, category, tags, client_id, cross_client_safe, author, source_incident_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "INSERT INTO knowledge (id, title, content, category, tags, client_id, cross_client_safe, author)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *",
     )
     .bind(id)
@@ -29,7 +28,6 @@ pub async fn add_knowledge(
     .bind(client_id)
     .bind(cross_client_safe)
     .bind(author)
-    .bind(source_incident_id)
     .fetch_one(pool)
     .await
 }
@@ -88,7 +86,6 @@ pub async fn update_knowledge(
     category: Option<&str>,
     tags: Option<&[String]>,
     cross_client_safe: Option<bool>,
-    source_incident_id: Option<Uuid>,
 ) -> Result<Knowledge, sqlx::Error> {
     // NOTE: `author` is intentionally NOT updatable — provenance is
     // immutable via the tool surface. Direct SQL is still possible for
@@ -101,7 +98,6 @@ pub async fn update_knowledge(
             category = COALESCE($4, category),
             tags = COALESCE($5, tags),
             cross_client_safe = COALESCE($6, cross_client_safe),
-            source_incident_id = COALESCE($7, source_incident_id),
             updated_at = NOW()
          WHERE id = $1 RETURNING *",
     )
@@ -111,7 +107,6 @@ pub async fn update_knowledge(
     .bind(category)
     .bind(tags)
     .bind(cross_client_safe)
-    .bind(source_incident_id)
     .fetch_one(pool)
     .await
 }

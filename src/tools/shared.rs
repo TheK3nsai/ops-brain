@@ -21,10 +21,7 @@ pub(crate) async fn embed_and_store(
                     crate::repo::embedding_repo::store_knowledge_embedding(pool, id, &embedding)
                         .await
                 }
-                "incidents" => {
-                    crate::repo::embedding_repo::store_incident_embedding(pool, id, &embedding)
-                        .await
-                }
+
                 "handoffs" => {
                     crate::repo::embedding_repo::store_handoff_embedding(pool, id, &embedding).await
                 }

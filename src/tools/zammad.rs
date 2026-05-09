@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::validation::deserialize_flexible_i64;
 
-use super::helpers::{error_result, json_result, not_found, not_found_with_suggestions};
+use super::helpers::{error_result, json_result, not_found_with_suggestions};
 use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -43,8 +43,6 @@ pub struct CreateTicketParams {
     pub time_unit: Option<f64>,
     /// Time accounting type: 1=Maintenance, 2=On-site, 3=Remote, 4=On-site/Remote
     pub time_accounting_type_id: Option<i64>,
-    /// Optionally link to an ops-brain incident by ID (UUID string)
-    pub incident_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -54,26 +52,6 @@ pub struct SearchTicketsParams {
     /// Maximum results (default: 20)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct LinkTicketParams {
-    /// Zammad ticket ID to link
-    pub zammad_ticket_id: i64,
-    /// Incident ID to link to (UUID string, optional)
-    pub incident_id: Option<String>,
-    /// Server slug to link to (optional)
-    pub server_slug: Option<String>,
-    /// Service slug to link to (optional)
-    pub service_slug: Option<String>,
-    /// Notes about this link (optional)
-    pub notes: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct UnlinkTicketParams {
-    /// Zammad ticket ID to unlink
-    pub zammad_ticket_id: i64,
 }
 
 // ===== HANDLERS =====
@@ -157,16 +135,9 @@ pub(crate) async fn handle_get_ticket(
         Err(e) => return error_result(&e),
     };
 
-    let link =
-        crate::repo::ticket_link_repo::get_link_by_ticket_id(&brain.pool, p.ticket_id as i32)
-            .await
-            .ok()
-            .flatten();
-
     let result = serde_json::json!({
         "ticket": ticket,
         "articles": articles,
-        "ops_brain_link": link,
     });
     json_result(&result)
 }
@@ -242,21 +213,6 @@ pub(crate) async fn handle_create_ticket(
         Err(e) => return error_result(&e),
     };
 
-    // Auto-link to incident if provided
-    if let Some(ref incident_id_str) = p.incident_id {
-        if let Ok(incident_id) = uuid::Uuid::parse_str(incident_id_str) {
-            let _ = crate::repo::ticket_link_repo::create_link(
-                &brain.pool,
-                ticket.id as i32,
-                Some(incident_id),
-                None,
-                None,
-                None,
-            )
-            .await;
-        }
-    }
-
     json_result(&ticket)
 }
 
@@ -280,82 +236,5 @@ pub(crate) async fn handle_search_tickets(
             json_result(&result)
         }
         Err(e) => error_result(&e),
-    }
-}
-
-pub(crate) async fn handle_link_ticket(
-    brain: &super::OpsBrain,
-    p: LinkTicketParams,
-) -> CallToolResult {
-    if p.incident_id.is_none() && p.server_slug.is_none() && p.service_slug.is_none() {
-        return error_result(
-            "At least one of incident_id, server_slug, or service_slug must be provided",
-        );
-    }
-
-    let incident_id = match &p.incident_id {
-        Some(id_str) => match uuid::Uuid::parse_str(id_str) {
-            Ok(id) => match crate::repo::incident_repo::get_incident(&brain.pool, id).await {
-                Ok(Some(_)) => Some(id),
-                Ok(None) => return not_found("Incident", id_str),
-                Err(e) => return error_result(&format!("Database error: {e}")),
-            },
-            Err(_) => return error_result(&format!("Invalid incident UUID: {}", id_str)),
-        },
-        None => None,
-    };
-
-    let server_id = match &p.server_slug {
-        Some(slug) => match crate::repo::server_repo::get_server_by_slug(&brain.pool, slug).await {
-            Ok(Some(s)) => Some(s.id),
-            Ok(None) => return not_found_with_suggestions(&brain.pool, "Server", slug).await,
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        },
-        None => None,
-    };
-
-    let service_id = match &p.service_slug {
-        Some(slug) => {
-            match crate::repo::service_repo::get_service_by_slug(&brain.pool, slug).await {
-                Ok(Some(s)) => Some(s.id),
-                Ok(None) => return not_found_with_suggestions(&brain.pool, "Service", slug).await,
-                Err(e) => return error_result(&format!("Database error: {e}")),
-            }
-        }
-        None => None,
-    };
-
-    match crate::repo::ticket_link_repo::create_link(
-        &brain.pool,
-        p.zammad_ticket_id as i32,
-        incident_id,
-        server_id,
-        service_id,
-        p.notes.as_deref(),
-    )
-    .await
-    {
-        Ok(link) => json_result(&link),
-        Err(e) => error_result(&format!("Database error: {e}")),
-    }
-}
-
-pub(crate) async fn handle_unlink_ticket(
-    brain: &super::OpsBrain,
-    p: UnlinkTicketParams,
-) -> CallToolResult {
-    match crate::repo::ticket_link_repo::delete_link(&brain.pool, p.zammad_ticket_id as i32).await {
-        Ok(true) => {
-            let result = serde_json::json!({
-                "status": "unlinked",
-                "zammad_ticket_id": p.zammad_ticket_id,
-            });
-            json_result(&result)
-        }
-        Ok(false) => error_result(&format!(
-            "No link found for Zammad ticket {}",
-            p.zammad_ticket_id
-        )),
-        Err(e) => error_result(&format!("Database error: {e}")),
     }
 }

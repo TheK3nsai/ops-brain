@@ -8,7 +8,7 @@ use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BackfillEmbeddingsParams {
-    /// Specific table to backfill (knowledge, incidents, handoffs). Default: all.
+    /// Specific table to backfill (knowledge, handoffs). Default: all.
     pub table: Option<String>,
     /// Records per batch (default 10)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
@@ -22,13 +22,15 @@ pub(crate) async fn handle_backfill_embeddings(
     p: BackfillEmbeddingsParams,
 ) -> CallToolResult {
     let Some(ref client) = brain.embedding_client else {
-        return error_result("OPENAI_API_KEY not set — cannot generate embeddings");
+        return error_result(
+            "Embedding client not configured — set OPS_BRAIN_EMBEDDING_URL or disable with OPS_BRAIN_EMBEDDINGS_ENABLED=false",
+        );
     };
 
     let batch_size = p.batch_size.unwrap_or(10);
     let tables: Vec<&str> = match &p.table {
         Some(t) => vec![t.as_str()],
-        None => vec!["knowledge", "incidents", "handoffs"],
+        None => vec!["knowledge", "handoffs"],
     };
 
     let mut summary = serde_json::Map::new();
@@ -53,43 +55,6 @@ pub(crate) async fn handle_backfill_embeddings(
                         Ok(embeddings) => {
                             for (row, emb) in rows.iter().zip(embeddings.iter()) {
                                 if crate::repo::embedding_repo::store_knowledge_embedding(
-                                    &brain.pool,
-                                    row.id,
-                                    emb,
-                                )
-                                .await
-                                .is_ok()
-                                {
-                                    processed += 1;
-                                } else {
-                                    failed += 1;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            summary.insert(
-                                format!("{table}_error"),
-                                serde_json::Value::String(e.to_string()),
-                            );
-                        }
-                    }
-                }
-            }
-            "incidents" => {
-                if let Ok(rows) = crate::repo::embedding_repo::get_incidents_without_embeddings(
-                    &brain.pool,
-                    batch_size,
-                )
-                .await
-                {
-                    let texts: Vec<String> = rows
-                        .iter()
-                        .map(crate::embeddings::prepare_incident_text)
-                        .collect();
-                    match client.embed_texts(&texts).await {
-                        Ok(embeddings) => {
-                            for (row, emb) in rows.iter().zip(embeddings.iter()) {
-                                if crate::repo::embedding_repo::store_incident_embedding(
                                     &brain.pool,
                                     row.id,
                                     emb,
@@ -174,10 +139,7 @@ pub(crate) async fn handle_backfill_embeddings(
             "remaining_knowledge".to_string(),
             serde_json::Value::Number(counts.knowledge.into()),
         );
-        summary.insert(
-            "remaining_incidents".to_string(),
-            serde_json::Value::Number(counts.incidents.into()),
-        );
+
         summary.insert(
             "remaining_handoffs".to_string(),
             serde_json::Value::Number(counts.handoffs.into()),

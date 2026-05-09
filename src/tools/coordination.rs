@@ -23,8 +23,8 @@ pub struct CreateHandoffParams {
     pub priority: Option<String>,
     /// Category: "action" (default — persistent until completed) or "notify"
     /// (ephemeral FYI, auto-pruned from operational queries after 7 days).
-    /// Use "notify" for introductions, watchdog drops, "I just shipped X"
-    /// announcements — anything the recipient doesn't need to act on.
+    /// Use "notify" for introductions, "I just shipped X" announcements —
+    /// anything the recipient doesn't need to act on.
     pub category: Option<String>,
     /// Short title for the handoff
     pub title: String,
@@ -306,7 +306,9 @@ pub(crate) async fn handle_search_handoffs(
     let result = match mode {
         "semantic" => {
             let Some(emb) = get_query_embedding(&brain.embedding_client, &p.query).await else {
-                return error_result("Semantic search unavailable (OPENAI_API_KEY not set)");
+                return error_result(
+                    "Semantic search unavailable (embedding client not configured)",
+                );
             };
             crate::repo::embedding_repo::vector_search_handoffs(&brain.pool, &emb, limit).await
         }
