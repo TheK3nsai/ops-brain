@@ -12,39 +12,16 @@ pub struct GenerateBriefingParams {
     pub client_slug: Option<String>,
 }
 
-/// Structured briefing data returned alongside the markdown content
+/// Structured briefing data returned alongside the markdown content.
 #[derive(Debug, Serialize)]
 pub struct BriefingData {
     pub briefing_type: String,
     pub client: Option<String>,
     pub generated_at: String,
-    pub monitoring: MonitoringSummaryData,
-    pub incidents: IncidentSummaryData,
     pub handoffs: HandoffSummaryData,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tickets: Option<TicketSummaryData>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub weekly_stats: Option<WeeklyStats>,
     pub content: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MonitoringSummaryData {
-    pub status: String,
-    pub total: usize,
-    pub up: usize,
-    pub down: usize,
-    pub pending: usize,
-    pub maintenance: usize,
-    pub down_monitors: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct IncidentSummaryData {
-    pub open_total: usize,
-    pub by_severity: std::collections::HashMap<String, usize>,
-    pub oldest_open: Option<String>,
-    pub watchdog_open: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,13 +35,6 @@ pub struct TicketSummaryData {
     pub open_count: usize,
     pub new_count: usize,
     pub by_priority: std::collections::HashMap<String, usize>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WeeklyStats {
-    pub resolved_count: usize,
-    pub avg_ttr_minutes: Option<f64>,
-    pub watchdog_resolved: usize,
 }
 
 // ===== HANDLERS =====
@@ -92,7 +62,6 @@ pub(crate) async fn handle_generate_briefing(
 
     match crate::api::generate_briefing_inner(
         &brain.pool,
-        &brain.kuma_configs,
         &brain.zammad_config,
         &p.briefing_type.to_lowercase(),
         client.as_ref(),

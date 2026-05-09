@@ -58,8 +58,6 @@ where
     }
 }
 
-pub const INCIDENT_SEVERITIES: &[&str] = &["low", "medium", "high", "critical"];
-pub const INCIDENT_STATUSES: &[&str] = &["open", "resolved"];
 pub const HANDOFF_STATUSES: &[&str] = &["pending", "accepted", "completed"];
 pub const HANDOFF_PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
 pub const HANDOFF_CATEGORIES: &[&str] = &["action", "notify"];
@@ -138,46 +136,46 @@ mod tests {
 
     #[test]
     fn validate_option_none_is_ok() {
-        assert!(validate_option(None, "severity", INCIDENT_SEVERITIES).is_ok());
+        assert!(validate_option(None, "priority", HANDOFF_PRIORITIES).is_ok());
     }
 
     #[test]
     fn validate_option_valid_value() {
-        assert!(validate_option(Some("high"), "severity", INCIDENT_SEVERITIES).is_ok());
+        assert!(validate_option(Some("high"), "priority", HANDOFF_PRIORITIES).is_ok());
     }
 
     #[test]
     fn validate_option_case_insensitive() {
-        assert!(validate_option(Some("HIGH"), "severity", INCIDENT_SEVERITIES).is_ok());
-        assert!(validate_option(Some("Critical"), "severity", INCIDENT_SEVERITIES).is_ok());
+        assert!(validate_option(Some("HIGH"), "priority", HANDOFF_PRIORITIES).is_ok());
+        assert!(validate_option(Some("Critical"), "priority", HANDOFF_PRIORITIES).is_ok());
     }
 
     #[test]
     fn validate_option_invalid_value() {
-        let result = validate_option(Some("extreme"), "severity", INCIDENT_SEVERITIES);
+        let result = validate_option(Some("extreme"), "priority", HANDOFF_PRIORITIES);
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("extreme"));
-        assert!(msg.contains("severity"));
-        assert!(msg.contains("low, medium, high, critical"));
+        assert!(msg.contains("priority"));
+        assert!(msg.contains("low, normal, high, critical"));
     }
 
     // validate_required
 
     #[test]
     fn validate_required_valid() {
-        assert!(validate_required("open", "status", INCIDENT_STATUSES).is_ok());
-        assert!(validate_required("resolved", "status", INCIDENT_STATUSES).is_ok());
+        assert!(validate_required("pending", "status", HANDOFF_STATUSES).is_ok());
+        assert!(validate_required("completed", "status", HANDOFF_STATUSES).is_ok());
     }
 
     #[test]
     fn validate_required_case_insensitive() {
-        assert!(validate_required("OPEN", "status", INCIDENT_STATUSES).is_ok());
+        assert!(validate_required("PENDING", "status", HANDOFF_STATUSES).is_ok());
     }
 
     #[test]
     fn validate_required_invalid() {
-        let result = validate_required("archived", "status", INCIDENT_STATUSES);
+        let result = validate_required("archived", "status", HANDOFF_STATUSES);
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("archived"));

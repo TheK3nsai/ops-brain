@@ -16,9 +16,6 @@ pub struct Knowledge {
     /// "codex-hsr"). NULL for rows created before v1.6. Required on new
     /// entries; immutable once set via the tool surface.
     pub author: Option<String>,
-    /// Incident that produced this knowledge entry, if any. NULL if
-    /// standalone or pre-dates v1.6. FK with ON DELETE SET NULL.
-    pub source_incident_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -38,16 +38,12 @@ pub async fn test_pool() -> PgPool {
 }
 
 /// Remove test artifacts older than 1 hour.
-/// Safe to call at any time — only deletes rows with UUID-based test slugs.
+/// Safe to call at any time — only deletes rows with `test-`-prefixed slugs.
 #[allow(dead_code)]
 pub async fn cleanup_stale_test_data(pool: &PgPool) {
-    // Test slugs contain UUIDs, so they're much longer than real slugs.
-    // Clean up anything with a test-pattern slug older than 1 hour.
-    let tables_with_slugs = ["clients", "sites", "servers", "services"];
-    for table in tables_with_slugs {
-        let query = format!(
-            "DELETE FROM {table} WHERE slug LIKE 'test-%' AND created_at < NOW() - INTERVAL '1 hour'"
-        );
-        let _ = sqlx::query(&query).execute(pool).await;
-    }
+    let _ = sqlx::query(
+        "DELETE FROM clients WHERE slug LIKE 'test-%' AND created_at < NOW() - INTERVAL '1 hour'",
+    )
+    .execute(pool)
+    .await;
 }

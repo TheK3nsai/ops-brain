@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0] — 2026-05-09
+
+### Removed (the de-bloat)
+
+ops-brain v3 is the team bus, full stop. Subsystems that duplicated local sources of truth are gone — configuration management owns inventory, Zammad owns tickets/incidents, Uptime Kuma owns monitoring. Tool count: **59 → 18**. LOC delta: **~ -10k**.
+
+#### Tools removed (41)
+
+`check_health`, `create_incident`, `delete_server`, `delete_service`, `delete_vendor`, `get_client`, `get_client_overview`, `get_incident`, `get_monitor_status`, `get_monitoring_summary`, `get_network`, `get_server`, `get_server_context`, `get_service`, `get_site`, `get_situational_awareness`, `get_vendor`, `link_incident`, `link_monitor`, `link_server_service`, `link_ticket`, `list_clients`, `list_incidents`, `list_monitors`, `list_networks`, `list_servers`, `list_services`, `list_sites`, `list_vendors`, `list_watchdog_incidents`, `search_incidents`, `search_inventory`, `unlink_monitor`, `unlink_ticket`, `update_incident`, `upsert_client`, `upsert_network`, `upsert_server`, `upsert_service`, `upsert_site`, `upsert_vendor`.
+
+#### Tools surviving (18)
+
+Knowledge (5): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`. Handoffs (6): `create_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `search_handoffs`, `delete_handoff`. Team bus (1): `check_in`. Search (1): `backfill_embeddings`. Zammad (4): `list_tickets`, `get_ticket`, `create_ticket`, `search_tickets`. Briefings (1): `generate_briefing`.
+
+#### Schema breaks
+
+Migration `20260509122935_drop_inventory_and_incidents.sql` drops 13 tables CASCADE: `incidents`, `incident_servers`, `incident_services`, `incident_vendors`, `monitors`, `ticket_links`, `vendor_clients`, `vendors`, `networks`, `server_services`, `servers`, `services`, `sites`. Also drops `knowledge.source_incident_id` (provenance now lives entirely in `author`).
+
+**Production data loss is intentional** — operators MUST export anything they want to keep before applying this migration. ops-brain will not own that data again.
+
+#### Surviving param schema changes
+
+- `add_knowledge`: removed `source_incident_id`.
+- `update_knowledge`: removed `source_incident_id` (no field-level change; the column is gone from the row).
+- `search_knowledge.tables`: accepted values shrink from `[knowledge, incidents, handoffs]` to `[knowledge, handoffs]`. Passing `"incidents"` now errors.
+- `backfill_embeddings.table`: accepted values shrink to `[knowledge, handoffs]`.
+- `check_in`: removed unused `client_slug` field.
+- `create_ticket`: removed unused `incident_id` field.
+
+All other surviving param structs are byte-identical to v2.x.
+
+#### Config / env removed
+
+- `UPTIME_KUMA_URL`, `UPTIME_KUMA_USERNAME`, `UPTIME_KUMA_PASSWORD`, `UPTIME_KUMA_INSTANCES`
+- `OPS_BRAIN_WATCHDOG_ENABLED`, `OPS_BRAIN_WATCHDOG_INTERVAL`, `OPS_BRAIN_WATCHDOG_CONFIRM_POLLS`, `OPS_BRAIN_WATCHDOG_COOLDOWN_SECS`, `OPS_BRAIN_WATCHDOG_FLAP_THRESHOLD`
+
+Cleaned from `.env.example`, `docker-compose.yml`, `docker-compose.prod.yml`, and `src/config.rs`.
+
+#### Files removed
+
+`src/watchdog.rs`, `src/metrics.rs`, `src/tools/inventory.rs`, `src/tools/monitoring.rs`, `src/tools/incidents.rs`, `src/tools/context.rs`, `src/models/{server,service,site,network,vendor,monitor,ticket_link,incident}.rs`, `src/repo/{server,service,site,network,vendor,monitor,ticket_link,incident,search}_repo.rs`, `docs/REFERENCE.md`, `docs/CONTRIBUTING.md`.
+
+### Changed
+
+- README + CLAUDE.md rewritten for the v3 surface.
+- Doctrine codified in CLAUDE.md (commit `369a6d0`) and broadcast in the MCP server `instructions` payload at handshake.
+- New `GOTCHAS.md` (load-bearing footguns) and `TODO.md` (work tracker).
+
 ## [Unreleased]
 
 ### Changed (v2.0 — agent-agnostic)

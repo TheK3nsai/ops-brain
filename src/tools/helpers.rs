@@ -25,9 +25,6 @@ pub(crate) async fn not_found_with_suggestions(
     key: &str,
 ) -> CallToolResult {
     let table = match entity {
-        "Server" | "Hypervisor server" => "servers",
-        "Service" => "services",
-        "Site" => "sites",
         "Client" => "clients",
         _ => return not_found(entity, key),
     };
@@ -37,22 +34,6 @@ pub(crate) async fn not_found_with_suggestions(
     } else {
         CallToolResult::error(vec![Content::text(format!(
             "{entity} not found: {key}. Did you mean: {}?",
-            suggestions.join(", ")
-        ))])
-    }
-}
-
-/// Like `not_found`, but queries pg_trgm for similar vendor names.
-pub(crate) async fn not_found_vendor_with_suggestions(
-    pool: &sqlx::PgPool,
-    key: &str,
-) -> CallToolResult {
-    let suggestions = crate::repo::suggest_repo::suggest_similar_vendor_names(pool, key).await;
-    if suggestions.is_empty() {
-        not_found("Vendor", key)
-    } else {
-        CallToolResult::error(vec![Content::text(format!(
-            "Vendor not found: {key}. Did you mean: {}?",
             suggestions.join(", ")
         ))])
     }
@@ -216,97 +197,5 @@ pub(crate) fn inject_provenance(
                 );
             }
         }
-    }
-}
-
-/// Fields to keep per entity type in compact mode. Everything else is stripped.
-pub(crate) fn compact_keep_fields(entity_type: &str) -> &'static [&'static str] {
-    match entity_type {
-        "server" => &[
-            "id",
-            "hostname",
-            "slug",
-            "os",
-            "ip_address",
-            "status",
-            "roles",
-            "site_id",
-        ],
-        "site" => &["id", "name", "slug", "address", "client_id"],
-        "client" => &["id", "name", "slug"],
-        "service" => &["id", "name", "slug", "port", "protocol", "criticality"],
-        "network" => &["id", "name", "cidr", "vlan_id"],
-        "vendor" => &["id", "name", "category"],
-        "incident" => &[
-            "id",
-            "title",
-            "severity",
-            "status",
-            "client_id",
-            "reported_at",
-            "resolved_at",
-            "updated_at",
-            "time_to_resolve_minutes",
-            "source",
-            "recurrence_count",
-            "cross_client_safe",
-            "_client_slug",
-            "_client_name",
-        ],
-        "handoff" => &[
-            "id",
-            "title",
-            "status",
-            "priority",
-            "from_agent",
-            "to_agent",
-            "created_at",
-            "updated_at",
-        ],
-        "knowledge" => &[
-            "id",
-            "title",
-            "category",
-            "client_id",
-            "cross_client_safe",
-            "_client_slug",
-            "_client_name",
-        ],
-        "monitor" => &["name", "status_text", "monitor_type"],
-        "ticket" => &["ticket_id", "title", "state", "priority", "created_at"],
-        _ => &["id", "title", "slug", "name"],
-    }
-}
-
-/// Strip a JSON value down to only the fields allowed for its entity type.
-pub(crate) fn compact_value(val: &serde_json::Value, entity_type: &str) -> serde_json::Value {
-    let Some(obj) = val.as_object() else {
-        return val.clone();
-    };
-    let keep = compact_keep_fields(entity_type);
-    let compacted: serde_json::Map<String, serde_json::Value> = obj
-        .iter()
-        .filter(|(k, _)| keep.contains(&k.as_str()))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    serde_json::Value::Object(compacted)
-}
-
-/// Apply compact mode to a Vec of JSON values.
-pub(crate) fn compact_vec(
-    items: &[serde_json::Value],
-    entity_type: &str,
-) -> Vec<serde_json::Value> {
-    items
-        .iter()
-        .map(|v| compact_value(v, entity_type))
-        .collect()
-}
-
-/// Check if a section is included (None means all sections included).
-pub(crate) fn section_included(sections: &Option<Vec<String>>, name: &str) -> bool {
-    match sections {
-        None => true,
-        Some(list) => list.iter().any(|s| s == name),
     }
 }

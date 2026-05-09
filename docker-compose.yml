@@ -58,19 +58,12 @@ services:
       - OPS_BRAIN_EMBEDDINGS_ENABLED=${OPS_BRAIN_EMBEDDINGS_ENABLED:-false}
       - OPS_BRAIN_EMBEDDING_URL=${OPS_BRAIN_EMBEDDING_URL:-http://localhost:11434/v1/embeddings}
       - OPS_BRAIN_EMBEDDING_MODEL=${OPS_BRAIN_EMBEDDING_MODEL:-nomic-embed-text}
-      # Uptime Kuma monitoring (optional)
-      - UPTIME_KUMA_URL=${UPTIME_KUMA_URL:-}
-      - UPTIME_KUMA_USERNAME=${UPTIME_KUMA_USERNAME:-}
-      - UPTIME_KUMA_PASSWORD=${UPTIME_KUMA_PASSWORD:-}
       # Zammad ticketing (optional)
       - ZAMMAD_URL=${ZAMMAD_URL:-}
       - ZAMMAD_API_TOKEN=${ZAMMAD_API_TOKEN:-}
       # ZAMMAD_DEFAULT_OWNER_ID — only set if you have a numeric Zammad user ID
       # (empty string crashes clap's i64 parser)
       # - ZAMMAD_DEFAULT_OWNER_ID=${ZAMMAD_DEFAULT_OWNER_ID}
-      # Watchdog (optional — requires UPTIME_KUMA_URL)
-      - OPS_BRAIN_WATCHDOG_ENABLED=${OPS_BRAIN_WATCHDOG_ENABLED:-false}
-      - OPS_BRAIN_WATCHDOG_INTERVAL=${OPS_BRAIN_WATCHDOG_INTERVAL:-60}
       - RUST_LOG=${RUST_LOG:-ops_brain=info}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
