@@ -56,15 +56,17 @@ pub async fn list_incidents(
     q.fetch_all(pool).await
 }
 
-/// List open incidents in the scope a single CC owns.
+/// List open incidents in a single agent's scope.
 ///
 /// Semantics differ from `list_incidents` in one important way: when
 /// `client_id = None`, this returns ONLY rows where `client_id IS NULL`
 /// (global infrastructure incidents) — NOT every incident across every
-/// client. This is the correct shape for the cc_team briefing, where
-/// CC-Cloud and CC-Stealth own the global infra and must not see
-/// hospice or CPA incidents in their morning briefing.
-pub async fn list_open_incidents_for_cc(
+/// client. This is the correct shape for the `check_in` briefing: an
+/// agent with no `client_slug` sees global infra only and must not see
+/// any client's incidents by default. Agents that own a client (e.g.
+/// CC-HSR scoped to `hsr`) pass that slug to see their client's
+/// incidents.
+pub async fn list_open_incidents_in_scope(
     pool: &PgPool,
     client_id: Option<Uuid>,
     limit: i64,

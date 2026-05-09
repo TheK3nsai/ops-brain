@@ -18,9 +18,10 @@ pub struct GetSituationalAwarenessParams {
     pub service_slug: Option<String>,
     /// Client slug to get context for
     pub client_slug: Option<String>,
-    /// Your CC (CC-Cloud, CC-Stealth, CC-HSR, CC-CPA) — filters handoffs
-    /// addressed to you. Hostnames also accepted and normalized.
-    pub machine: Option<String>,
+    /// Your agent identifier (free-form slug, e.g. "CC-Stealth", "codex-hsr")
+    /// — filters handoffs addressed to you. Exact match against stored value.
+    #[serde(alias = "machine")]
+    pub agent_name: Option<String>,
     /// Release cross-client results withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
     /// Strip content/body/notes fields (~94K→~10K). Default: false
@@ -332,39 +333,39 @@ pub(crate) async fn handle_get_situational_awareness(
         }
     }
 
-    // Get pending handoffs. If `machine` is provided, normalize it (CC name
-    // or hostname → canonical CC name) and filter. If normalization fails
-    // (unknown name), record a warning and skip the handoff section
-    // entirely — falling through to the unfiltered query would surprise the
-    // caller by returning every pending handoff in the system.
-    enum MachineFilter<'a> {
+    // Get pending handoffs. If `agent_name` is provided, validate it as a
+    // free-form slug and filter. Validation failure records a warning and
+    // skips the handoff section entirely — falling through to the
+    // unfiltered query would surprise the caller by returning every pending
+    // handoff in the system.
+    enum AgentFilter {
         None,
-        Filter(&'a str),
+        Filter(String),
         Skip,
     }
-    let machine_filter = match p.machine.as_deref() {
-        None => MachineFilter::None,
-        Some(raw) => match super::cc_team::normalize_machine_name(raw) {
-            Ok(n) => MachineFilter::Filter(n),
+    let agent_filter = match p.agent_name.as_deref() {
+        None => AgentFilter::None,
+        Some(raw) => match crate::validation::validate_agent_name(raw) {
+            Ok(n) => AgentFilter::Filter(n.to_string()),
             Err(e) => {
-                warnings.push(format!("machine filter ignored: {e}"));
-                MachineFilter::Skip
+                warnings.push(format!("agent_name filter ignored: {e}"));
+                AgentFilter::Skip
             }
         },
     };
-    let handoff_result = match machine_filter {
-        MachineFilter::Filter(machine) => sqlx::query_as::<_, Handoff>(
-            "SELECT * FROM handoffs WHERE status = 'pending' AND to_machine = $1 ORDER BY created_at DESC LIMIT 10",
+    let handoff_result = match &agent_filter {
+        AgentFilter::Filter(agent) => sqlx::query_as::<_, Handoff>(
+            "SELECT * FROM handoffs WHERE status = 'pending' AND to_agent = $1 ORDER BY created_at DESC LIMIT 10",
         )
-        .bind(machine)
+        .bind(agent.as_str())
         .fetch_all(&brain.pool)
         .await,
-        MachineFilter::None => sqlx::query_as::<_, Handoff>(
+        AgentFilter::None => sqlx::query_as::<_, Handoff>(
             "SELECT * FROM handoffs WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10",
         )
         .fetch_all(&brain.pool)
         .await,
-        MachineFilter::Skip => Ok(Vec::new()),
+        AgentFilter::Skip => Ok(Vec::new()),
     };
     match handoff_result {
         Ok(handoffs) => {
@@ -1067,4 +1068,19 @@ pub(crate) async fn handle_get_server_context(
     }
 
     json_result(&result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn situational_awareness_accepts_legacy_machine_alias() {
+        let params: GetSituationalAwarenessParams = serde_json::from_value(serde_json::json!({
+            "client_slug": "hsr",
+            "machine": "CC-HSR"
+        }))
+        .unwrap();
+        assert_eq!(params.agent_name.as_deref(), Some("CC-HSR"));
+    }
 }

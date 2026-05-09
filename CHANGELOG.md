@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (v2.0 — agent-agnostic)
+
+ops-brain is no longer specific to a fixed fleet of four "Claude Code" instances. Any MCP-capable client (Codex CLI, Gemini CLI, Cline, OpenCode, future agents on other infrastructures) can use it as a team bus by sending its own free-form `agent_name`. Existing CC instances continue to work — their identifiers (`CC-Stealth`, `CC-Cloud`, `CC-HSR`, `CC-CPA`) are valid free-form agent names and existing rows are preserved unchanged.
+
+#### Renames (with serde aliases for soft cutover on input)
+
+Param renames are **deserialize-compatible**: every renamed tool param accepts both the old and new name on input via `#[serde(alias = "old_name")]`. The new name is canonical in the JSON Schema published to MCP clients and in serialized responses; old payloads continue to deserialize cleanly during the transition. This means callers using `from_machine`/`to_machine`/`author_cc`/`my_name`/`machine` keep working until they pick up the new schema. **Result keys are new names only** — consumers parsing the response by key need to switch.
+
+- **Handoff sender/recipient**: `from_machine` → `from_agent`, `to_machine` → `to_agent` (table columns + tool params on `create_handoff`, `list_handoffs`).
+- **Knowledge author**: `author_cc` → `author` (table column + `add_knowledge` tool param). Field stays nullable for legacy rows; required on new entries; immutable via tool surface.
+- **`check_in` params**: `my_name` → `agent_name`; new optional `client_slug` parameter scopes incidents (replacing the v1.x hardcoded `CC-HSR → hsr` / `CC-CPA → cpa` mapping).
+- **`get_situational_awareness` param**: `machine` → `agent_name`.
+- **Compact JSON result keys**: `from_machine`/`to_machine`/`author_cc` → `from_agent`/`to_agent`/`author` everywhere they're surfaced in tool responses.
+- **Migrations**: `20260508000001_rename_handoff_machine_to_agent.sql`, `20260508000002_rename_knowledge_author_cc_to_author.sql` — pure column/index renames; existing data preserved as-is.
+
+#### Removed
+
+- **`CC_TEAM` const + helpers** (`src/tools/cc_team.rs`) — gone. The static four-CC allowlist, the `normalize_machine_name` hostname↔CC-name converter, the `is_valid_cc_name` strict check, the `cc_allowlist`, and the `client_slug_for` mapping are all retired. The file itself is deleted; the lone surviving handler (`handle_check_in`) moved to `src/tools/check_in.rs`.
+- **Hostname normalization at write time** — agents identify themselves with whatever string they want; ops-brain stores it exactly as written. Existing normalized rows from the v1.9 cleanup remain valid (`CC-Stealth`, `CC-Cloud`, etc. are now just particular free-form values).
+- **Hardcoded agent → client_slug mapping** — replaced by the optional `client_slug` parameter on `check_in`. Agents declare their incident scope per call instead of inheriting it from a Rust const.
+
+#### Added
+
+- **`validate_agent_name`** in `src/validation.rs` — single, thin validator for agent identifiers. Free-form slug, 1–80 chars, `[a-zA-Z0-9._-]`. Replaces the four CC-allowlist helpers.
+- **`incident_repo::list_open_incidents_in_scope`** — renamed from `list_open_incidents_for_cc`. Same `client_id IS NULL` semantics; generalised name and doc-comment.
+- **Recommended agent-naming convention (documented, not enforced)**: `<kind>-<host>` for new agents — `codex-hsr`, `gemini-stealth`, `gemini-cloud`. Existing CCs stay `CC-Stealth` etc.
+
+#### Trust model — unchanged
+
+ops-brain still trusts the transport (Caddy + Cloudflare for HTTP, stdio for local). No protocol-level auth, no agent registration, no `clientInfo.name` plumbing. The MCP spec's emerging `clientId`/`clientAuth` proposals are not yet standardized and were deliberately not adopted; we'll revisit when they settle.
+
 ### Fixed
 
 - **Handoff routing was silently dropping messages when sender and recipient used different name forms.** A CC writing `to_machine: "CC-Stealth"` (CC name) was invisible to a recipient running `check_in(my_name: "CC-Stealth")` because `check_in` queried by hostname (`stealth`) — and vice versa. The bug surfaced when CC-CPA sent a reply handoff with `to_machine: "CC-Stealth"` / `from_machine: "CC-CPA"` and the recipient's `check_in` returned 0. Fix: all handoff handlers now normalize machine-name inputs (CC name OR hostname OR mixed-case alias) to a single canonical CC-name form before write/query. Migration `20260426000002_normalize_handoff_machine_names.sql` backfills existing rows; idempotent, covers the five known hostname aliases (`stealth`, `kensai-cloud`, `HV-FS0`, `SMYT-SERVER`, legacy `CPA-SRV`).

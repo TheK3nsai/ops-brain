@@ -49,10 +49,10 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 
 ## Coordination
 
-The team-bus principle and "no startup ritual" rules live in each CC's per-machine `CLAUDE.md`. Repo-specific coordination details:
+The team-bus principle and "no startup ritual" rules live in each agent's local instructions. Repo-specific coordination details:
 
 - **Handoffs are the coordination layer** -- creating a handoff IS the notification mechanism. `action`-category for things the recipient must do; `notify`-category for FYI broadcasts (auto-pruned after 7 days).
-- **Knowledge policy** -- knowledge entries are for gotchas, safety warnings, compliance rules, and vendor behavior ONLY. Every entry costs tokens across all CC instances. If it would fit in your own CLAUDE.md, put it there instead. `add_knowledge` requires `author_cc` (your CC name from your per-machine CLAUDE.md) and accepts an optional `source_incident_id` to link the entry back to the incident that produced it — provenance is immutable via the tool surface once set.
+- **Knowledge policy** -- knowledge entries are for gotchas, safety warnings, compliance rules, and vendor behavior ONLY. Every entry costs tokens across all agents. If it would fit in your own local instructions, put it there instead. `add_knowledge` requires `author` (your agent slug, e.g. `CC-Stealth` or `codex-hsr`) and accepts an optional `source_incident_id` to link the entry back to the incident that produced it — provenance is immutable via the tool surface once set.
 - **Default-deny across clients** -- cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
 
 ## Gotchas

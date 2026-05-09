@@ -1,10 +1,10 @@
 # ops-brain
 
-Operational intelligence MCP server for IT infrastructure management. Built for solo IT admins and small MSPs who use Claude Code across multiple machines.
+Operational intelligence MCP server for IT infrastructure management. Built for solo IT admins and small MSPs who use MCP-capable agents across shared infrastructure.
 
 ## What It Does
 
-ops-brain is an [MCP](https://modelcontextprotocol.io/) server that models IT infrastructure as a first-class domain — servers, services, sites, clients, networks, vendors, incidents, and knowledge — all linked together in a relational database. Instead of re-explaining your infrastructure every session, Claude Code queries ops-brain for instant situational awareness.
+ops-brain is an [MCP](https://modelcontextprotocol.io/) server that models IT infrastructure as a first-class domain — servers, services, sites, clients, networks, vendors, incidents, and knowledge — all linked together in a relational database. Instead of re-explaining your infrastructure every session, your agent queries ops-brain for instant situational awareness.
 
 **One tool call:**
 ```
@@ -14,12 +14,12 @@ get_situational_awareness(server_slug: "web-server-01")
 
 ## Key Features
 
-- **59 MCP tools** covering inventory, incidents, knowledge, monitoring, ticketing, briefings, and cross-machine coordination
+- **59 MCP tools** covering inventory, incidents, knowledge, monitoring, ticketing, briefings, and cross-agent coordination
 - **Hybrid search** — full-text (tsvector + websearch_to_tsquery) combined with semantic search (pgvector + nomic-embed-text) via Reciprocal Rank Fusion
 - **Multi-instance Uptime Kuma** — aggregate monitoring from multiple Kuma instances with partial failure tolerance
 - **Proactive monitoring** — background watchdog polls Uptime Kuma, auto-creates/resolves incidents with severity logic, flap suppression, and deduplication
 - **Staleness tracking** — tiered alerts for knowledge (60d) and services (90d) that haven't been verified
-- **Cross-machine coordination** — sessions and handoffs let multiple Claude Code instances collaborate on shared infrastructure
+- **Cross-agent coordination** — sessions and handoffs let multiple MCP clients collaborate on shared infrastructure
 - **Client-scope safety** — default-deny cross-client data gate for multi-client environments with different compliance domains (e.g. HIPAA vs tax/accounting)
 - **Zammad integration** — ticket CRUD, search, and bi-directional linking to incidents/servers/services
 - **Scheduled briefings** — daily/weekly operational summaries via MCP tool or REST API
@@ -43,7 +43,7 @@ Verify it's running:
 curl http://localhost:3000/health   # → OK
 ```
 
-Then connect Claude Code — add to `~/.claude.json`:
+Then connect an MCP client. For Claude Code, add to `~/.claude.json`:
 ```json
 {
   "mcpServers": {
@@ -88,7 +88,7 @@ cargo run
 psql -U ops_brain -d ops_brain -f seed/seed.sql
 ```
 
-For stdio transport (local Claude Code), add to `~/.claude.json`:
+For stdio transport with Claude Code, add to `~/.claude.json`:
 ```json
 {
   "mcpServers": {
@@ -105,9 +105,9 @@ For stdio transport (local Claude Code), add to `~/.claude.json`:
 
 ## Design Philosophy: Team Bus, Not a Brain
 
-ops-brain is designed for a small team of Claude Code instances collaborating across multiple machines. The core principle: **local is the source of truth, ops-brain is the team bus.**
+ops-brain is designed for a small team of MCP-capable agents collaborating across shared infrastructure. The core principle: **local is the source of truth, ops-brain is the team bus.**
 
-Each Claude Code instance already knows who it is from its own per-machine `CLAUDE.md`. It has its own filesystem, its own git history, its own memory files. Those are authoritative. ops-brain exists for things instances genuinely *cannot* do alone:
+Each agent already knows who it is from its own local instructions, filesystem, git history, and memory files. Those are authoritative. ops-brain exists for things agents genuinely *cannot* do alone:
 
 - **Handoffs to other instances** (`create_handoff` / `check_in`)
 - **Shared incidents** across the team
@@ -149,7 +149,7 @@ This design emerged from the v1.5 walk-back of v1.4's "morning ritual" framing �
 ### Context (3)
 | Tool | Description |
 |------|-------------|
-| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. `compact=true` (~94K to ~10K), `sections` filtering, `machine` param scopes handoffs |
+| `get_situational_awareness` | **The key tool** — comprehensive briefing for any server, service, or client. `compact=true` (~94K to ~10K), `sections` filtering, `agent_name` param scopes handoffs |
 | `get_client_overview` | Full client briefing with all related data |
 | `get_server_context` | Everything about a specific server with cross-client gating |
 
@@ -164,10 +164,10 @@ This design emerged from the v1.5 walk-back of v1.4's "morning ritual" framing �
 ### Handoffs & Coordination (7)
 | Tool | Description |
 |------|-------------|
-| `create_handoff` / `accept_handoff` / `complete_handoff` | Cross-machine task coordination. `category="action"` (default, persistent) or `"notify"` (ephemeral FYI, auto-pruned after 7 days) |
+| `create_handoff` / `accept_handoff` / `complete_handoff` | Cross-agent task coordination. `category="action"` (default, persistent) or `"notify"` (ephemeral FYI, auto-pruned after 7 days) |
 | `delete_handoff` | Permanently delete a handoff by ID (hard delete) |
 | `list_handoffs` / `search_handoffs` | Filter/search handoffs. Defaults to action-only; `include_notify=true` to include notifications. Compact mode (default) truncates bodies |
-| `check_in` | Optional pending-work query for a CC. Returns open handoffs to your machine, recent notifications, and open incidents in your scope. NOT a startup ritual — call when you actually want to know what's pending |
+| `check_in` | Optional pending-work query for an agent. Returns open handoffs to your `agent_name`, recent notifications, and open incidents in your optional `client_slug` scope. NOT a startup ritual — call when you actually want to know what's pending |
 
 ### Monitoring (7)
 | Tool | Description |

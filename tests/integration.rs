@@ -142,7 +142,7 @@ mod knowledge_tests {
 
         assert_eq!(k.title, "Test Knowledge Entry");
         assert!(!k.cross_client_safe);
-        assert_eq!(k.author_cc.as_deref(), Some("CC-Stealth"));
+        assert_eq!(k.author.as_deref(), Some("CC-Stealth"));
         assert_eq!(k.source_incident_id, None);
 
         let fetched = ops_brain::repo::knowledge_repo::get_knowledge(&pool, k.id)
@@ -191,9 +191,9 @@ mod knowledge_tests {
 // ===== Knowledge Provenance (v1.6) =====
 //
 // Handler-level end-to-end tests for the provenance feature:
-//   - author_cc allowlist validation (fail loudly on invalid names)
+//   - author allowlist validation (fail loudly on invalid names)
 //   - source_incident_id FK resolution (exist-check before INSERT)
-//   - author_cc immutability across updates (enforced at type level)
+//   - author immutability across updates (enforced at type level)
 //   - source_incident_id updatable post-hoc
 //   - staleness flag surfaced in list_knowledge results
 //
@@ -243,7 +243,7 @@ mod knowledge_provenance_tests {
     }
 
     #[tokio::test]
-    async fn handler_add_knowledge_rejects_invalid_author_cc() {
+    async fn handler_add_knowledge_rejects_invalid_author() {
         let brain = build_brain(pool().await);
         let result = ops_brain::tools::knowledge::handle_add_knowledge(
             &brain,
@@ -255,22 +255,22 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-NotReal".to_string(),
+                author: "bad author".to_string(),
                 source_incident_id: None,
             },
         )
         .await;
         assert_eq!(result.is_error, Some(true));
         let text = extract_text(&result);
+        assert!(text.contains("author:"), "error should name the field");
         assert!(
-            text.contains("Invalid author_cc"),
-            "error should name the field"
+            text.contains("invalid characters"),
+            "error should explain slug validation"
         );
-        assert!(text.contains("CC-Stealth"), "error should list valid names");
     }
 
     #[tokio::test]
-    async fn handler_add_knowledge_stores_author_cc() {
+    async fn handler_add_knowledge_stores_author() {
         let pool = pool().await;
         let brain = build_brain(pool.clone());
         let result = ops_brain::tools::knowledge::handle_add_knowledge(
@@ -283,7 +283,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-Stealth".to_string(),
+                author: "CC-Stealth".to_string(),
                 source_incident_id: None,
             },
         )
@@ -291,7 +291,7 @@ mod knowledge_provenance_tests {
         assert_eq!(result.is_error, Some(false));
         let text = extract_text(&result);
         let compact = no_ws(&text);
-        assert!(compact.contains("\"author_cc\":\"CC-Stealth\""));
+        assert!(compact.contains("\"author\":\"CC-Stealth\""));
         assert!(compact.contains("\"source_incident_id\":null"));
 
         // Cleanup: extract id from the JSON and delete.
@@ -320,7 +320,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-Stealth".to_string(),
+                author: "CC-Stealth".to_string(),
                 source_incident_id: Some(incident_id.to_string()),
             },
         )
@@ -362,7 +362,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-Stealth".to_string(),
+                author: "CC-Stealth".to_string(),
                 source_incident_id: Some(ghost_id.to_string()),
             },
         )
@@ -388,7 +388,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-Stealth".to_string(),
+                author: "CC-Stealth".to_string(),
                 source_incident_id: Some("obviously-not-a-uuid".to_string()),
             },
         )
@@ -414,7 +414,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-Stealth".to_string(),
+                author: "CC-Stealth".to_string(),
                 source_incident_id: None,
             },
         )
@@ -444,8 +444,8 @@ mod knowledge_provenance_tests {
         let updated_compact = no_ws(&updated_text);
         assert!(updated_compact.contains(&format!("\"source_incident_id\":\"{incident_id}\"")));
         assert!(
-            updated_compact.contains("\"author_cc\":\"CC-Stealth\""),
-            "author_cc should be preserved across update"
+            updated_compact.contains("\"author\":\"CC-Stealth\""),
+            "author should be preserved across update"
         );
 
         // Cleanup
@@ -462,11 +462,11 @@ mod knowledge_provenance_tests {
     }
 
     #[tokio::test]
-    async fn handler_update_knowledge_cannot_mutate_author_cc() {
-        // Structural test: UpdateKnowledgeParams has no `author_cc` field,
+    async fn handler_update_knowledge_cannot_mutate_author() {
+        // Structural test: UpdateKnowledgeParams has no `author` field,
         // so the compiler itself guarantees this invariant. This test
         // documents the guarantee via a positive assertion: after an
-        // update, author_cc is unchanged from the original value.
+        // update, author is unchanged from the original value.
         let pool = pool().await;
         let brain = build_brain(pool.clone());
 
@@ -480,7 +480,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-HSR".to_string(),
+                author: "CC-HSR".to_string(),
                 source_incident_id: None,
             },
         )
@@ -488,9 +488,9 @@ mod knowledge_provenance_tests {
         let text = extract_text(&add_result);
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         let knowledge_id = v.get("id").and_then(|x| x.as_str()).unwrap().to_string();
-        assert!(no_ws(&text).contains("\"author_cc\":\"CC-HSR\""));
+        assert!(no_ws(&text).contains("\"author\":\"CC-HSR\""));
 
-        // Update unrelated field (content) — author_cc must still be CC-HSR.
+        // Update unrelated field (content) — author must still be CC-HSR.
         let update_result = ops_brain::tools::knowledge::handle_update_knowledge(
             &brain,
             ops_brain::tools::knowledge::UpdateKnowledgeParams {
@@ -508,8 +508,8 @@ mod knowledge_provenance_tests {
         assert_eq!(update_result.is_error, Some(false));
         let updated_text = extract_text(&update_result);
         assert!(
-            no_ws(&updated_text).contains("\"author_cc\":\"CC-HSR\""),
-            "author_cc must be preserved across updates — provenance is immutable"
+            no_ws(&updated_text).contains("\"author\":\"CC-HSR\""),
+            "author must be preserved across updates — provenance is immutable"
         );
 
         // Cleanup
@@ -537,7 +537,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-Stealth".to_string(),
+                author: "CC-Stealth".to_string(),
                 source_incident_id: None,
             },
         )
@@ -583,7 +583,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-Stealth".to_string(),
+                author: "CC-Stealth".to_string(),
                 source_incident_id: None,
             },
         )
@@ -646,7 +646,7 @@ mod knowledge_provenance_tests {
                 client_slug: None,
                 cross_client_safe: None,
                 force: Some(true),
-                author_cc: "CC-Stealth".to_string(),
+                author: "CC-Stealth".to_string(),
                 source_incident_id: Some(incident_id.to_string()),
             },
         )
@@ -680,9 +680,9 @@ mod knowledge_provenance_tests {
             "FK cascade must be SET NULL, not CASCADE — incident cleanup should never delete learned lessons"
         );
         assert_eq!(
-            fetched.author_cc.as_deref(),
+            fetched.author.as_deref(),
             Some("CC-Stealth"),
-            "author_cc must survive cascade unchanged"
+            "author must survive cascade unchanged"
         );
 
         // Cleanup
@@ -1192,8 +1192,8 @@ mod coordination_tests {
 
         assert_eq!(handoff.status, "pending");
         assert_eq!(handoff.category, "action");
-        assert_eq!(handoff.from_machine, "dev-laptop");
-        assert_eq!(handoff.to_machine.as_deref(), Some("prod-server"));
+        assert_eq!(handoff.from_agent, "dev-laptop");
+        assert_eq!(handoff.to_agent.as_deref(), Some("prod-server"));
 
         // Accept
         let accepted =
@@ -1316,38 +1316,28 @@ mod coordination_tests {
             .unwrap();
     }
 
-    /// Verifies migration `20260426000002_normalize_handoff_machine_names.sql`
-    /// is idempotent and covers every legacy hostname → canonical CC mapping.
-    /// Re-runs the migration's UPDATE on synthetic rows containing each known
-    /// hostname (mixed-case included) and confirms convergence to CC names.
-    /// Running it a second time must be a no-op.
+    /// v2.0 keeps handoff routing agent-agnostic: values are stored exactly
+    /// as provided after validation. Legacy CC names remain valid, but there
+    /// is no hostname-to-CC normalization on new writes.
     #[tokio::test]
-    async fn handoff_machine_names_migration_is_idempotent() {
+    async fn handoff_agent_names_are_preserved_exactly() {
         let pool = pool().await;
 
-        // Seed one row per known hostname, in mixed casing to verify LOWER()
-        // handling. Each row stores the same hostname in both from_ and to_
-        // so we exercise both columns at once.
         let cases = [
-            ("stealth", "CC-Stealth"),
-            ("kensai-cloud", "CC-Cloud"),
-            ("HV-FS0", "CC-HSR"),
-            ("SMYT-SERVER", "CC-CPA"),
-            ("CPA-SRV", "CC-CPA"),
-            // Mixed case, should still normalize:
-            ("HV-fs0", "CC-HSR"),
-            ("smyt-server", "CC-CPA"),
+            ("CC-Stealth", Some("CC-Cloud")),
+            ("codex-hsr", Some("gemini-hsr")),
+            ("opencode.local", None),
         ];
         let mut ids = Vec::new();
-        for (hostname, _expected) in &cases {
+        for (from_agent, to_agent) in &cases {
             let h = ops_brain::repo::handoff_repo::create_handoff(
                 &pool,
                 None,
-                hostname,
-                Some(hostname),
+                from_agent,
+                *to_agent,
                 "normal",
                 "action",
-                "migration round-trip test",
+                "agent preservation test",
                 "body",
                 None,
             )
@@ -1356,86 +1346,15 @@ mod coordination_tests {
             ids.push(h.id);
         }
 
-        // Inline the migration's UPDATE so the test exercises the exact SQL
-        // that ships in the file. If you change the migration, mirror the
-        // change here.
-        let migration_sql = r#"
-            UPDATE handoffs
-            SET
-                from_machine = CASE LOWER(from_machine)
-                    WHEN 'stealth' THEN 'CC-Stealth'
-                    WHEN 'kensai-cloud' THEN 'CC-Cloud'
-                    WHEN 'hv-fs0' THEN 'CC-HSR'
-                    WHEN 'smyt-server' THEN 'CC-CPA'
-                    WHEN 'cpa-srv' THEN 'CC-CPA'
-                    ELSE from_machine
-                END,
-                to_machine = CASE LOWER(to_machine)
-                    WHEN 'stealth' THEN 'CC-Stealth'
-                    WHEN 'kensai-cloud' THEN 'CC-Cloud'
-                    WHEN 'hv-fs0' THEN 'CC-HSR'
-                    WHEN 'smyt-server' THEN 'CC-CPA'
-                    WHEN 'cpa-srv' THEN 'CC-CPA'
-                    ELSE to_machine
-                END
-            WHERE
-                LOWER(from_machine) IN ('stealth', 'kensai-cloud', 'hv-fs0', 'smyt-server', 'cpa-srv')
-                OR LOWER(to_machine) IN ('stealth', 'kensai-cloud', 'hv-fs0', 'smyt-server', 'cpa-srv')
-        "#;
-
-        let first_run = sqlx::query(migration_sql)
-            .execute(&pool)
-            .await
-            .unwrap()
-            .rows_affected();
-        assert!(
-            first_run >= ids.len() as u64,
-            "first migration pass should touch every seeded row (got {first_run}, seeded {})",
-            ids.len()
-        );
-
-        // Verify each row converged to its expected CC name.
-        for (id, (_hostname, expected_cc)) in ids.iter().zip(cases.iter()) {
+        for (id, (expected_from, expected_to)) in ids.iter().zip(cases.iter()) {
             let row: (String, Option<String>) =
-                sqlx::query_as("SELECT from_machine, to_machine FROM handoffs WHERE id = $1")
+                sqlx::query_as("SELECT from_agent, to_agent FROM handoffs WHERE id = $1")
                     .bind(id)
                     .fetch_one(&pool)
                     .await
                     .unwrap();
-            assert_eq!(row.0, *expected_cc, "from_machine for row {id}");
-            assert_eq!(
-                row.1.as_deref(),
-                Some(*expected_cc),
-                "to_machine for row {id}"
-            );
-        }
-
-        // Idempotency: rerunning must affect zero of our seeded rows
-        // (canonical CC names are NOT in the WHEN list).
-        let second_run = sqlx::query(migration_sql)
-            .execute(&pool)
-            .await
-            .unwrap()
-            .rows_affected();
-        // Other tests may have left non-canonical rows in the table; what we
-        // can guarantee is our seeded rows did not change.
-        let _ = second_run;
-        for (id, (_, expected_cc)) in ids.iter().zip(cases.iter()) {
-            let row: (String, Option<String>) =
-                sqlx::query_as("SELECT from_machine, to_machine FROM handoffs WHERE id = $1")
-                    .bind(id)
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
-            assert_eq!(
-                row.0, *expected_cc,
-                "second pass changed from_machine for {id}"
-            );
-            assert_eq!(
-                row.1.as_deref(),
-                Some(*expected_cc),
-                "second pass changed to_machine for {id}"
-            );
+            assert_eq!(row.0, *expected_from, "from_agent for row {id}");
+            assert_eq!(row.1.as_deref(), *expected_to, "to_agent for row {id}");
         }
 
         // Cleanup
@@ -2369,8 +2288,8 @@ mod server_partial_update_tests {
 // ===== check_in handler =====
 //
 // check_in is now a stateless pending-work query (open handoffs to your
-// machine, recent notify-class handoffs, open incidents in your scope). The
-// CC_TEAM allowlist is unit-tested in `src/tools/cc_team.rs`; this integration
+// agent, recent notify-class handoffs, open incidents in your scope). Agent
+// slug validation is unit-tested in `src/validation.rs`; this integration
 // test covers the handler's invalid-name rejection because that's the one
 // branch that needs an OpsBrain to exercise the error path end-to-end.
 
@@ -2395,42 +2314,43 @@ mod check_in_tests {
     #[tokio::test]
     async fn handler_check_in_rejects_invalid_name() {
         let brain = build_brain(pool().await);
-        let result = ops_brain::tools::cc_team::handle_check_in(
+        let result = ops_brain::tools::check_in::handle_check_in(
             &brain,
-            ops_brain::tools::cc_team::CheckInParams {
-                my_name: "CC-NotReal".to_string(),
+            ops_brain::tools::check_in::CheckInParams {
+                agent_name: "bad agent".to_string(),
+                client_slug: None,
             },
         )
         .await;
         assert_eq!(result.is_error, Some(true));
         let text = extract_text(&result);
-        assert!(text.contains("Invalid CC name"));
-        assert!(text.contains("CC-Cloud"), "error should list valid names");
+        assert!(text.contains("invalid characters"));
     }
 
     #[tokio::test]
     async fn handler_check_in_accepts_valid_name() {
         let brain = build_brain(pool().await);
-        let result = ops_brain::tools::cc_team::handle_check_in(
+        let result = ops_brain::tools::check_in::handle_check_in(
             &brain,
-            ops_brain::tools::cc_team::CheckInParams {
-                my_name: "CC-Stealth".to_string(),
+            ops_brain::tools::check_in::CheckInParams {
+                agent_name: "CC-Stealth".to_string(),
+                client_slug: None,
             },
         )
         .await;
         assert_eq!(result.is_error, Some(false));
         let text = extract_text(&result);
-        // The three things a sovereign CC needs from the bus.
+        // The three things an agent needs from the bus.
         assert!(text.contains("open_handoffs_to_you"));
         assert!(text.contains("recent_notifications"));
         assert!(text.contains("open_incidents_in_your_scope"));
         // v1.5 regression guards: identity echo must NOT be in the response.
-        // Local is the source of truth — the CC already knows its own name
-        // and hostname; echoing them back was the last trace of the v1.4
+        // Local is the source of truth — the agent already knows its own name;
+        // echoing identity back was the last trace of the v1.4
         // "tell me who I am" framing.
         assert!(
             !text.contains("\"you\":"),
-            "v1.5: `you` field must not echo CC name back — identity is local"
+            "v1.5: `you` field must not echo agent name back — identity is local"
         );
         assert!(
             !text.contains("\"hostname\":"),

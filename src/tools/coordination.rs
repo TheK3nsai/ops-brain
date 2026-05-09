@@ -11,12 +11,14 @@ use rmcp::model::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateHandoffParams {
-    /// Sender CC. Use the canonical CC name (CC-Cloud, CC-Stealth, CC-HSR,
-    /// CC-CPA). Hostnames are accepted and normalized to the CC name on write.
-    pub from_machine: String,
-    /// Target CC (optional — if omitted, any CC can pick it up). Same form
-    /// as `from_machine`: CC name preferred, hostnames normalized.
-    pub to_machine: Option<String>,
+    /// Sender agent (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
+    /// Examples: "CC-Stealth", "codex-hsr", "gemini-stealth".
+    #[serde(alias = "from_machine")]
+    pub from_agent: String,
+    /// Target agent (optional — if omitted, any agent can pick it up).
+    /// Same form as `from_agent`: free-form slug.
+    #[serde(alias = "to_machine")]
+    pub to_agent: Option<String>,
     /// Priority: low, normal, high, or critical
     pub priority: Option<String>,
     /// Category: "action" (default — persistent until completed) or "notify"
@@ -44,10 +46,12 @@ pub struct UpdateHandoffStatusParams {
 pub struct ListHandoffsParams {
     /// Filter by status: pending, accepted, or completed
     pub status: Option<String>,
-    /// Filter by target CC (CC name or hostname; normalized before query).
-    pub to_machine: Option<String>,
-    /// Filter by source CC (CC name or hostname; normalized before query).
-    pub from_machine: Option<String>,
+    /// Filter by target agent (free-form slug; exact match).
+    #[serde(alias = "to_machine")]
+    pub to_agent: Option<String>,
+    /// Filter by source agent (free-form slug; exact match).
+    #[serde(alias = "from_machine")]
+    pub from_agent: Option<String>,
     /// Filter by category: "action" or "notify". Overrides include_notify
     /// when set. Omit to use the default action-only view.
     pub category: Option<String>,
@@ -111,17 +115,18 @@ pub(crate) async fn handle_create_handoff(
         None => None,
     };
 
-    // Normalize sender + target to canonical CC name. Either form (CC name
-    // or hostname) is accepted on input; the DB stores only the CC name so
-    // that `check_in` lookups don't depend on which form the writer used.
-    let from_machine = match super::cc_team::normalize_machine_name(&p.from_machine) {
-        Ok(n) => n,
-        Err(e) => return error_result(&format!("from_machine: {e}")),
+    // Validate sender + target as free-form agent slugs. v2.0 dropped the
+    // CC-fleet allowlist; whatever the caller says it is, it is. Stored
+    // values are exact-match for `check_in` lookups, so writers and
+    // readers must converge on the same string per agent.
+    let from_agent = match crate::validation::validate_agent_name(&p.from_agent) {
+        Ok(n) => n.to_string(),
+        Err(e) => return error_result(&format!("from_agent: {e}")),
     };
-    let to_machine = match p.to_machine.as_deref() {
-        Some(raw) => match super::cc_team::normalize_machine_name(raw) {
-            Ok(n) => Some(n),
-            Err(e) => return error_result(&format!("to_machine: {e}")),
+    let to_agent = match p.to_agent.as_deref() {
+        Some(raw) => match crate::validation::validate_agent_name(raw) {
+            Ok(n) => Some(n.to_string()),
+            Err(e) => return error_result(&format!("to_agent: {e}")),
         },
         None => None,
     };
@@ -129,8 +134,8 @@ pub(crate) async fn handle_create_handoff(
     match crate::repo::handoff_repo::create_handoff(
         &brain.pool,
         from_session_id,
-        from_machine,
-        to_machine,
+        &from_agent,
+        to_agent.as_deref(),
         priority,
         category,
         &p.title,
@@ -228,19 +233,19 @@ pub(crate) async fn handle_list_handoffs(
         return error_result(&msg);
     }
 
-    // Normalize machine-name filters so callers can query by CC name or
-    // hostname interchangeably; rows are stored in canonical CC form.
-    let to_machine_filter = match p.to_machine.as_deref() {
-        Some(raw) => match super::cc_team::normalize_machine_name(raw) {
-            Ok(n) => Some(n),
-            Err(e) => return error_result(&format!("to_machine: {e}")),
+    // Validate agent-name filters as free-form slugs (no normalization).
+    // Rows are stored exactly as written; callers must match the stored form.
+    let to_agent_filter = match p.to_agent.as_deref() {
+        Some(raw) => match crate::validation::validate_agent_name(raw) {
+            Ok(n) => Some(n.to_string()),
+            Err(e) => return error_result(&format!("to_agent: {e}")),
         },
         None => None,
     };
-    let from_machine_filter = match p.from_machine.as_deref() {
-        Some(raw) => match super::cc_team::normalize_machine_name(raw) {
-            Ok(n) => Some(n),
-            Err(e) => return error_result(&format!("from_machine: {e}")),
+    let from_agent_filter = match p.from_agent.as_deref() {
+        Some(raw) => match crate::validation::validate_agent_name(raw) {
+            Ok(n) => Some(n.to_string()),
+            Err(e) => return error_result(&format!("from_agent: {e}")),
         },
         None => None,
     };
@@ -248,8 +253,8 @@ pub(crate) async fn handle_list_handoffs(
     match crate::repo::handoff_repo::list_handoffs(
         &brain.pool,
         p.status.as_deref(),
-        to_machine_filter,
-        from_machine_filter,
+        to_agent_filter.as_deref(),
+        from_agent_filter.as_deref(),
         p.category.as_deref(),
         include_notify,
         limit,
@@ -336,5 +341,34 @@ pub(crate) async fn handle_delete_handoff(
         Ok(true) => json_result(&serde_json::json!({"deleted": true, "id": p.handoff_id})),
         Ok(false) => not_found("Handoff", &p.handoff_id),
         Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_handoff_accepts_legacy_machine_aliases() {
+        let params: CreateHandoffParams = serde_json::from_value(serde_json::json!({
+            "from_machine": "CC-Stealth",
+            "to_machine": "codex-hsr",
+            "title": "handoff",
+            "body": "body"
+        }))
+        .unwrap();
+        assert_eq!(params.from_agent, "CC-Stealth");
+        assert_eq!(params.to_agent.as_deref(), Some("codex-hsr"));
+    }
+
+    #[test]
+    fn list_handoffs_accepts_legacy_machine_aliases() {
+        let params: ListHandoffsParams = serde_json::from_value(serde_json::json!({
+            "from_machine": "CC-Stealth",
+            "to_machine": "codex-hsr"
+        }))
+        .unwrap();
+        assert_eq!(params.from_agent.as_deref(), Some("CC-Stealth"));
+        assert_eq!(params.to_agent.as_deref(), Some("codex-hsr"));
     }
 }

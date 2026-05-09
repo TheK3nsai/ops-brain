@@ -1,5 +1,5 @@
 pub mod briefings;
-pub mod cc_team;
+pub mod check_in;
 mod context;
 mod coordination;
 mod helpers;
@@ -267,7 +267,7 @@ impl OpsBrain {
 
     #[tool(
         name = "add_knowledge",
-        description = "Add a knowledge base entry (lesson, gotcha, tip). Requires author_cc."
+        description = "Add a knowledge base entry (lesson, gotcha, tip). Requires author (your agent name)."
     )]
     async fn add_knowledge(
         &self,
@@ -432,7 +432,7 @@ impl OpsBrain {
 
     #[tool(
         name = "create_handoff",
-        description = "Create a handoff task for another machine/session to continue."
+        description = "Create a handoff task for another agent/session to continue."
     )]
     async fn create_handoff(
         &self,
@@ -443,7 +443,7 @@ impl OpsBrain {
 
     #[tool(
         name = "accept_handoff",
-        description = "Accept a pending handoff, marking it as in-progress on your machine"
+        description = "Accept a pending handoff, marking it as accepted by you"
     )]
     async fn accept_handoff(
         &self,
@@ -493,19 +493,20 @@ impl OpsBrain {
         Ok(coordination::handle_delete_handoff(self, params.0).await)
     }
 
-    // ===== CC TEAM: pending-work query =====
+    // ===== TEAM BUS: pending-work query =====
 
     #[tool(
         name = "check_in",
-        description = "Pending-work query: open handoffs addressed to your CC, recent \
+        description = "Pending-work query: open handoffs addressed to you, recent \
         notify-class handoffs (compact), and open incidents in your scope. Pass \
-        `my_name` (your CC name; hostname also accepted) to scope results."
+        `agent_name` (your free-form agent slug — e.g. 'CC-Stealth', 'codex-hsr') \
+        and optional `client_slug` to filter incidents to a specific client."
     )]
     async fn check_in(
         &self,
-        params: Parameters<cc_team::CheckInParams>,
+        params: Parameters<check_in::CheckInParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(cc_team::handle_check_in(self, params.0).await)
+        Ok(check_in::handle_check_in(self, params.0).await)
     }
 
     // ===== SEMANTIC SEARCH TOOLS =====
@@ -725,11 +726,12 @@ impl ServerHandler for OpsBrain {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ops-brain", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "ops-brain is the team bus. Your CLAUDE.md, filesystem, and git history are the \
-                 source of truth — reach for ops-brain only when you need the rest of the team: \
-                 handoffs, shared incidents, cross-client knowledge, monitors, cross-system \
-                 tickets. Default-deny across clients: cross-client content requires \
-                 acknowledge_cross_client=true.",
+                "ops-brain is the team bus. Your local instructions, filesystem, and git \
+                 history are the source of truth — reach for ops-brain only when you need \
+                 the rest of the team: handoffs, shared incidents, cross-client knowledge, \
+                 monitors, cross-system tickets. Identify yourself with a free-form \
+                 `agent_name` (slug, e.g. 'CC-Stealth', 'codex-hsr'). Default-deny across \
+                 clients: cross-client content requires acknowledge_cross_client=true.",
             )
     }
 }
