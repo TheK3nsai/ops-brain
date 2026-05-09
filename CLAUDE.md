@@ -52,7 +52,8 @@ The most important tool. Accepts `server_slug`, `service_slug`, or `client_slug`
 The team-bus principle and "no startup ritual" rules live in each agent's local instructions. Repo-specific coordination details:
 
 - **Handoffs are the coordination layer** -- creating a handoff IS the notification mechanism. `action`-category for things the recipient must do; `notify`-category for FYI broadcasts (auto-pruned after 7 days).
-- **Knowledge policy** -- knowledge entries are for gotchas, safety warnings, compliance rules, and vendor behavior ONLY. Every entry costs tokens across all agents. If it would fit in your own local instructions, put it there instead. `add_knowledge` requires `author` (your agent slug, e.g. `CC-Stealth` or `codex-hsr`) and accepts an optional `source_incident_id` to link the entry back to the incident that produced it — provenance is immutable via the tool surface once set.
+- **Product bar** -- only build features that solve observed field pain, reduce missed/duplicate work across agents, make the next natural action clearer, and have a lifecycle. Reject ceremony, duplicate truth, generic wiki behavior, and scheduling/orchestration features that belong to cron/systemd/Task Scheduler/CI. Durable doctrine: ops-brain knowledge `019e0d79-3a7f-7902-86cc-db4a573c1071`.
+- **Knowledge policy** -- knowledge entries are for cross-agent gotchas, safety warnings, compliance rules, verified patterns, and vendor behavior ONLY. Every entry costs tokens across all agents. If it would fit in your own local instructions, put it there instead. If local docs are canonical, write a pointer/provenance entry, not a duplicate. `add_knowledge` requires `author` (your agent slug, e.g. `CC-Stealth` or `codex-hsr`) and accepts an optional `source_incident_id` to link the entry back to the incident that produced it — provenance is immutable via the tool surface once set.
 - **Default-deny across clients** -- cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
 
 ## Gotchas
@@ -86,3 +87,4 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 - **Don't write to stdout** -- it's the MCP stdio transport. Use `tracing::info!()` (stderr)
 - **Don't add fictional/placeholder data to seed.sql**
 - **Don't merge without CI green**
+- **Don't add ops-brain features that duplicate local truth or create startup/session ceremony**

@@ -29,6 +29,8 @@ Examples:
 
 ## How to Add a New Tool (End-to-End Recipe)
 
+Before writing code, apply the product bar. New tools should solve observed field pain, reduce missed or duplicate work across agents, make the next natural action clearer, respect client scope, and have a clear lifecycle. Do not add tools for generic wiki behavior, local preferences, session ceremony, or scheduling/orchestration that belongs to cron, systemd, Task Scheduler, Ansible, CI, or a runbook tool.
+
 Follow these steps in order:
 
 **1. Migration (if schema changes needed)**
@@ -136,4 +138,5 @@ Before opening a PR, verify:
 - [ ] Migration files are idempotent (`IF NOT EXISTS`, etc.)
 - [ ] If you added an env var the binary reads: also added it to `docker-compose.prod.yml` under `environment:` (prod compose enumerates explicitly — no `env_file:`) and to `.env.example`
 - [ ] Cross-client safety considered: if the tool touches knowledge/incidents, does it need `client_slug` and `acknowledge_cross_client` params?
+- [ ] Product bar considered: does this solve observed field pain without duplicating local truth or adding ceremony?
 - [ ] Handoff created to the ops-brain repo maintainer (currently routed to `CC-Stealth`) for review/merge (PRs don't notify -- handoffs do)

@@ -4,7 +4,7 @@ Operational intelligence MCP server for IT infrastructure management. Built for 
 
 ## What It Does
 
-ops-brain is an [MCP](https://modelcontextprotocol.io/) server that models IT infrastructure as a first-class domain — servers, services, sites, clients, networks, vendors, incidents, and knowledge — all linked together in a relational database. Instead of re-explaining your infrastructure every session, your agent queries ops-brain for instant situational awareness.
+ops-brain is an [MCP](https://modelcontextprotocol.io/) server that models IT infrastructure as a first-class domain — servers, services, sites, clients, networks, vendors, incidents, and knowledge — all linked together in a relational database. It gives MCP-capable agents a shared operational bus for the state that must cross sessions, machines, clients, or agent vendors.
 
 **One tool call:**
 ```
@@ -19,7 +19,7 @@ get_situational_awareness(server_slug: "web-server-01")
 - **Multi-instance Uptime Kuma** — aggregate monitoring from multiple Kuma instances with partial failure tolerance
 - **Proactive monitoring** — background watchdog polls Uptime Kuma, auto-creates/resolves incidents with severity logic, flap suppression, and deduplication
 - **Staleness tracking** — tiered alerts for knowledge (60d) and services (90d) that haven't been verified
-- **Cross-agent coordination** — sessions and handoffs let multiple MCP clients collaborate on shared infrastructure
+- **Cross-agent coordination** — action/notify handoffs let Claude, Codex, Gemini, and other MCP clients collaborate without sharing local memory
 - **Client-scope safety** — default-deny cross-client data gate for multi-client environments with different compliance domains (e.g. HIPAA vs tax/accounting)
 - **Zammad integration** — ticket CRUD, search, and bi-directional linking to incidents/servers/services
 - **Scheduled briefings** — daily/weekly operational summaries via MCP tool or REST API
@@ -119,6 +119,19 @@ If a question can be answered without ops-brain — by reading a local file, run
 
 This design emerged from the v1.5 walk-back of v1.4's "morning ritual" framing — see `CHANGELOG.md` for the post-mortem.
 
+### Product Doctrine: Killer Features Only
+
+ops-brain should grow only where it improves real cross-agent operational workflow. A new feature should pass this bar before it is built:
+
+- It solves a problem already observed in field work
+- It reduces missed work or duplicate work across agents
+- It makes the next natural action clearer
+- It does not add ceremony before direct work
+- It respects client scope and default-deny cross-client safety
+- It has an obvious lifecycle: created, consumed, completed, resolved, verified, or expired
+
+If a feature mostly adds another place to store information, reject it or make it a pointer/provenance layer over the canonical source. The durable doctrine is also stored in ops-brain knowledge entry `019e0d79-3a7f-7902-86cc-db4a573c1071`.
+
 ## Tools (59)
 
 ### Inventory (23)
@@ -215,7 +228,7 @@ curl -s -X POST http://localhost:3000/api/briefing \
 | Component | Choice |
 |-----------|--------|
 | Language | Rust |
-| MCP SDK | [rmcp](https://github.com/modelcontextprotocol/rust-sdk) 1.2 |
+| MCP SDK | [rmcp](https://github.com/modelcontextprotocol/rust-sdk) 1.6 |
 | Database | PostgreSQL 18 |
 | SQL | sqlx (async, runtime queries) |
 | Async | tokio |
@@ -274,6 +287,7 @@ ops-brain is designed for solo operators managing multiple clients with differen
 | `OPS_BRAIN_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth |
+| `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` header values for HTTP transport (rmcp DNS-rebind mitigation). Public deploys behind a reverse proxy must set their hostname. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
 | `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | Set `false` to disable embeddings |
 | `OPS_BRAIN_EMBEDDING_URL` | `http://localhost:11434/v1/embeddings` | OpenAI-compatible embedding API |
