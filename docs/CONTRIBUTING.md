@@ -88,7 +88,7 @@ pub(crate) async fn handle_delete_thing(brain: &super::OpsBrain, params: DeleteT
 }
 ```
 
-**Visibility note:** Use `pub(crate)` by default. If you want to write *handler-level* integration tests that call the handler directly (not just the repo layer), promote the handler to `pub` **and** promote the module declaration in `src/tools/mod.rs` from `mod foo` to `pub mod foo` — integration tests live in a separate crate and cannot reach `pub(crate)` items. See `src/tools/cc_team.rs` + `src/tools/knowledge.rs` for the established pattern, and `tests/integration.rs::check_in_tests` / `knowledge_provenance_tests` for example handler-level test modules.
+**Visibility note:** Use `pub(crate)` by default. If you want to write *handler-level* integration tests that call the handler directly (not just the repo layer), promote the handler to `pub` **and** promote the module declaration in `src/tools/mod.rs` from `mod foo` to `pub mod foo` — integration tests live in a separate crate and cannot reach `pub(crate)` items. See `src/tools/check_in.rs` + `src/tools/knowledge.rs` for the established pattern, and `tests/integration.rs::check_in_tests` / `knowledge_provenance_tests` for example handler-level test modules.
 
 **6. Tool stub**
 
@@ -136,4 +136,4 @@ Before opening a PR, verify:
 - [ ] Migration files are idempotent (`IF NOT EXISTS`, etc.)
 - [ ] If you added an env var the binary reads: also added it to `docker-compose.prod.yml` under `environment:` (prod compose enumerates explicitly — no `env_file:`) and to `.env.example`
 - [ ] Cross-client safety considered: if the tool touches knowledge/incidents, does it need `client_slug` and `acknowledge_cross_client` params?
-- [ ] Handoff created to CC-Stealth for review/merge (PRs don't notify -- handoffs do)
+- [ ] Handoff created to the ops-brain repo maintainer (currently routed to `CC-Stealth`) for review/merge (PRs don't notify -- handoffs do)

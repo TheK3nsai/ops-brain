@@ -26,7 +26,7 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
             "_client_slug",
             "_client_name",
             // v1.6 provenance fields
-            "author_cc",
+            "author",
             "source_incident_id",
             "last_verified_at",
             "_staleness_warning",
@@ -53,8 +53,8 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
             "title",
             "status",
             "priority",
-            "from_machine",
-            "to_machine",
+            "from_agent",
+            "to_agent",
             "created_at",
             "updated_at",
         ],
@@ -156,8 +156,11 @@ pub struct AddKnowledgeParams {
     pub cross_client_safe: Option<bool>,
     /// Skip duplicate detection check. Set to true if you've already seen the warning and want to create anyway.
     pub force: Option<bool>,
-    /// Your CC name. Must be one of: CC-Cloud, CC-Stealth, CC-HSR, CC-CPA.
-    pub author_cc: String,
+    /// Your agent identifier (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
+    /// Examples: "CC-Stealth", "codex-hsr", "gemini-stealth". Immutable
+    /// once set — provenance cannot be rewritten via the tool surface.
+    #[serde(alias = "author_cc")]
+    pub author: String,
     /// Optional incident (UUID) that produced this entry. Can also be added
     /// later via update_knowledge.
     pub source_incident_id: Option<String>,
@@ -184,10 +187,10 @@ pub struct SearchKnowledgeParams {
 
 /// Update an existing knowledge entry.
 ///
-/// Note: `author_cc` is intentionally NOT updatable via this tool. Provenance
+/// Note: `author` is intentionally NOT updatable via this tool. Provenance
 /// is immutable after creation — if you need to correct the author, do it
 /// via direct SQL. This prevents accidental (or deliberate) rewriting of
-/// history in the one cross-CC shared artifact.
+/// history in the one shared cross-agent artifact.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateKnowledgeParams {
     /// Knowledge entry ID (UUID)
@@ -228,15 +231,13 @@ pub async fn handle_add_knowledge(
     brain: &super::OpsBrain,
     p: AddKnowledgeParams,
 ) -> CallToolResult {
-    // v1.6: validate author_cc against CC_TEAM allowlist — fail fast
-    // before any DB work. Provenance is required on every new entry.
-    let author_cc = p.author_cc.trim();
-    if !super::cc_team::is_valid_cc_name(author_cc) {
-        return error_result(&format!(
-            "Invalid author_cc: '{author_cc}'. Must be one of: {}.",
-            super::cc_team::cc_allowlist().join(", ")
-        ));
-    }
+    // v2.0: free-form agent identifier replaces the v1.x CC-fleet allowlist.
+    // Provenance is still required on every new entry, but agents are
+    // self-identified — whatever the caller says it is, it is.
+    let author = match crate::validation::validate_agent_name(&p.author) {
+        Ok(n) => n.to_string(),
+        Err(e) => return error_result(&format!("author: {e}")),
+    };
 
     // v1.6: parse optional source_incident_id and verify the incident
     // exists, so we fail with a clean error instead of a raw FK violation
@@ -312,7 +313,7 @@ pub async fn handle_add_knowledge(
         &tags,
         client_id,
         cross_client_safe,
-        Some(author_cc),
+        Some(&author),
         source_incident_id,
     )
     .await
@@ -915,7 +916,7 @@ mod tests {
             client_id: None,
             cross_client_safe: false,
             last_verified_at: last_verified,
-            author_cc: Some("CC-Stealth".to_string()),
+            author: Some("CC-Stealth".to_string()),
             source_incident_id: None,
             created_at: created,
             updated_at: created,
@@ -993,13 +994,24 @@ mod tests {
         let json = knowledge_entries_to_json(&[k]);
         let obj = json[0].as_object().expect("should be object");
         assert_eq!(
-            obj.get("author_cc"),
+            obj.get("author"),
             Some(&serde_json::Value::String("CC-Stealth".to_string())),
-            "author_cc should survive serialization"
+            "author should survive serialization"
         );
         assert!(
             obj.contains_key("source_incident_id"),
             "source_incident_id field should be present even when null"
         );
+    }
+
+    #[test]
+    fn add_knowledge_accepts_legacy_author_cc_alias() {
+        let params: AddKnowledgeParams = serde_json::from_value(serde_json::json!({
+            "title": "legacy alias",
+            "content": "body",
+            "author_cc": "CC-Stealth"
+        }))
+        .unwrap();
+        assert_eq!(params.author, "CC-Stealth");
     }
 }

@@ -99,6 +99,37 @@ pub fn validate_required(value: &str, field_name: &str, allowed: &[&str]) -> Res
     Ok(())
 }
 
+/// Validate an agent identifier. Free-form slug, 1–80 chars, ASCII alphanumeric
+/// plus `-`, `_`, `.`. No allowlist, no normalization, no case folding —
+/// whatever the caller says it is, it is. Trims surrounding whitespace.
+///
+/// v2.0 replacement for the v1.x CC-fleet allowlist (CC_TEAM, normalize_machine_name,
+/// is_valid_cc_name). Existing values like `CC-Stealth`, `CC-Cloud`, `codex-hsr`,
+/// `gemini.stealth` all pass cleanly. Recommended convention is `<kind>-<host>`
+/// (`codex-hsr`, `gemini-stealth`) but this is documentation, not enforcement.
+pub fn validate_agent_name(input: &str) -> Result<&str, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("agent_name cannot be empty".to_string());
+    }
+    if trimmed.len() > 80 {
+        return Err(format!(
+            "agent_name too long ({} chars, max 80)",
+            trimmed.len()
+        ));
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(format!(
+            "agent_name '{trimmed}' contains invalid characters \
+             (allowed: a-zA-Z0-9 . - _)"
+        ));
+    }
+    Ok(trimmed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +256,65 @@ mod tests {
     fn flexible_i64_invalid_string() {
         let result: Result<TestLimit, _> = serde_json::from_str(r#"{"limit": "abc"}"#);
         assert!(result.is_err());
+    }
+
+    // validate_agent_name
+
+    #[test]
+    fn agent_name_accepts_legacy_cc_values() {
+        assert_eq!(validate_agent_name("CC-Stealth").unwrap(), "CC-Stealth");
+        assert_eq!(validate_agent_name("CC-Cloud").unwrap(), "CC-Cloud");
+        assert_eq!(validate_agent_name("CC-HSR").unwrap(), "CC-HSR");
+        assert_eq!(validate_agent_name("CC-CPA").unwrap(), "CC-CPA");
+    }
+
+    #[test]
+    fn agent_name_accepts_freeform_slugs() {
+        assert_eq!(validate_agent_name("codex-hsr").unwrap(), "codex-hsr");
+        assert_eq!(
+            validate_agent_name("gemini-stealth").unwrap(),
+            "gemini-stealth"
+        );
+        assert_eq!(
+            validate_agent_name("opencode_local").unwrap(),
+            "opencode_local"
+        );
+        assert_eq!(
+            validate_agent_name("com.anthropic.claude").unwrap(),
+            "com.anthropic.claude"
+        );
+        assert_eq!(validate_agent_name("agent-123").unwrap(), "agent-123");
+    }
+
+    #[test]
+    fn agent_name_trims_whitespace() {
+        assert_eq!(validate_agent_name("  CC-Stealth\n").unwrap(), "CC-Stealth");
+        assert_eq!(validate_agent_name("\tcodex-hsr ").unwrap(), "codex-hsr");
+    }
+
+    #[test]
+    fn agent_name_rejects_empty() {
+        assert!(validate_agent_name("").is_err());
+        assert!(validate_agent_name("   ").is_err());
+        assert!(validate_agent_name("\t\n").is_err());
+    }
+
+    #[test]
+    fn agent_name_rejects_oversized() {
+        let long = "a".repeat(81);
+        let err = validate_agent_name(&long).unwrap_err();
+        assert!(err.contains("too long"));
+        // 80 is the max — exactly 80 should pass.
+        let max = "a".repeat(80);
+        assert!(validate_agent_name(&max).is_ok());
+    }
+
+    #[test]
+    fn agent_name_rejects_invalid_chars() {
+        assert!(validate_agent_name("agent name").is_err()); // space
+        assert!(validate_agent_name("agent/path").is_err()); // slash
+        assert!(validate_agent_name("agent@host").is_err()); // at
+        assert!(validate_agent_name("agent\nnewline").is_err());
+        assert!(validate_agent_name("agent\u{00e9}").is_err()); // non-ASCII
     }
 }

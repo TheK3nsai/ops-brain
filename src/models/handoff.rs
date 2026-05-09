@@ -6,8 +6,8 @@ use uuid::Uuid;
 pub struct Handoff {
     pub id: Uuid,
     pub from_session_id: Option<Uuid>,
-    pub from_machine: String,
-    pub to_machine: Option<String>,
+    pub from_agent: String,
+    pub to_agent: Option<String>,
     pub status: String,
     pub priority: String,
     /// "action" (persistent until completed) or "notify" (ephemeral FYI,

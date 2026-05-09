@@ -12,12 +12,12 @@ pub async fn add_knowledge(
     tags: &[String],
     client_id: Option<Uuid>,
     cross_client_safe: bool,
-    author_cc: Option<&str>,
+    author: Option<&str>,
     source_incident_id: Option<Uuid>,
 ) -> Result<Knowledge, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Knowledge>(
-        "INSERT INTO knowledge (id, title, content, category, tags, client_id, cross_client_safe, author_cc, source_incident_id)
+        "INSERT INTO knowledge (id, title, content, category, tags, client_id, cross_client_safe, author, source_incident_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *",
     )
@@ -28,7 +28,7 @@ pub async fn add_knowledge(
     .bind(tags)
     .bind(client_id)
     .bind(cross_client_safe)
-    .bind(author_cc)
+    .bind(author)
     .bind(source_incident_id)
     .fetch_one(pool)
     .await
@@ -90,9 +90,10 @@ pub async fn update_knowledge(
     cross_client_safe: Option<bool>,
     source_incident_id: Option<Uuid>,
 ) -> Result<Knowledge, sqlx::Error> {
-    // NOTE: `author_cc` is intentionally NOT updatable — provenance is
+    // NOTE: `author` is intentionally NOT updatable — provenance is
     // immutable via the tool surface. Direct SQL is still possible for
-    // emergency correction. See migration 20260408000001.
+    // emergency correction. See migrations 20260408000001 (column added
+    // as author_cc) and 20260508000002 (renamed to author in v2.0).
     sqlx::query_as::<_, Knowledge>(
         "UPDATE knowledge SET
             title = COALESCE($2, title),

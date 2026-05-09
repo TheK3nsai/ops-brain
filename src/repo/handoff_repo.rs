@@ -19,8 +19,8 @@ pub async fn get_handoff(pool: &PgPool, id: Uuid) -> Result<Option<Handoff>, sql
 pub async fn create_handoff(
     pool: &PgPool,
     from_session_id: Option<Uuid>,
-    from_machine: &str,
-    to_machine: Option<&str>,
+    from_agent: &str,
+    to_agent: Option<&str>,
     priority: &str,
     category: &str,
     title: &str,
@@ -29,14 +29,14 @@ pub async fn create_handoff(
 ) -> Result<Handoff, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Handoff>(
-        "INSERT INTO handoffs (id, from_session_id, from_machine, to_machine, priority, category, title, body, context)
+        "INSERT INTO handoffs (id, from_session_id, from_agent, to_agent, priority, category, title, body, context)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *",
     )
     .bind(id)
     .bind(from_session_id)
-    .bind(from_machine)
-    .bind(to_machine)
+    .bind(from_agent)
+    .bind(to_agent)
     .bind(priority)
     .bind(category)
     .bind(title)
@@ -65,8 +65,8 @@ pub async fn update_handoff_status(
 pub async fn list_handoffs(
     pool: &PgPool,
     status: Option<&str>,
-    to_machine: Option<&str>,
-    from_machine: Option<&str>,
+    to_agent: Option<&str>,
+    from_agent: Option<&str>,
     category: Option<&str>,
     include_notify: bool,
     limit: i64,
@@ -79,12 +79,12 @@ pub async fn list_handoffs(
         conditions.push(format!("status = ${param_idx}"));
         param_idx += 1;
     }
-    if to_machine.is_some() {
-        conditions.push(format!("to_machine = ${param_idx}"));
+    if to_agent.is_some() {
+        conditions.push(format!("to_agent = ${param_idx}"));
         param_idx += 1;
     }
-    if from_machine.is_some() {
-        conditions.push(format!("from_machine = ${param_idx}"));
+    if from_agent.is_some() {
+        conditions.push(format!("from_agent = ${param_idx}"));
         param_idx += 1;
     }
     if category.is_some() {
@@ -113,10 +113,10 @@ pub async fn list_handoffs(
     if let Some(v) = status {
         q = q.bind(v);
     }
-    if let Some(v) = to_machine {
+    if let Some(v) = to_agent {
         q = q.bind(v);
     }
-    if let Some(v) = from_machine {
+    if let Some(v) = from_agent {
         q = q.bind(v);
     }
     if let Some(v) = category {
