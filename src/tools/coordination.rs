@@ -34,12 +34,50 @@ pub struct CreateHandoffParams {
     pub context: Option<serde_json::Value>,
     /// Session ID this handoff originates from
     pub from_session_id: Option<String>,
+    /// Parent handoff ID (UUID) when this handoff is a reply to another.
+    /// Enables threaded discovery via `list_replies_to_me`. The reply's
+    /// `category` is preserved as written — a reply can legitimately be
+    /// `action` (it requires a response) or `notify` (pure FYI).
+    pub in_reply_to: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateHandoffStatusParams {
     /// Handoff ID (UUID)
     pub handoff_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompleteHandoffParams {
+    /// Handoff ID (UUID)
+    pub handoff_id: String,
+    /// Optional commit ref (typically a git SHA) recording the work that
+    /// closed this handoff. When set, lets `mark_merged` link this handoff
+    /// to a merge commit later.
+    pub commit_hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListRepliesToMeParams {
+    /// Your agent identifier (free-form slug). Returns handoffs whose
+    /// `in_reply_to` references a handoff you originally sent.
+    #[serde(alias = "my_name")]
+    pub agent_name: String,
+    /// Optional ISO-8601 timestamp; only replies created after this time
+    /// are returned.
+    pub since: Option<String>,
+    /// Max results (default 20)
+    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarkMergedParams {
+    /// Handoff ID (UUID) to mark as merged.
+    pub handoff_id: String,
+    /// Merge commit ref (typically the merge-to-main SHA that bundled the
+    /// work). Free-form — any opaque identifier works.
+    pub merge_commit: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -84,7 +122,7 @@ pub struct DeleteHandoffParams {
 
 // ===== HANDOFF HANDLERS =====
 
-pub(crate) async fn handle_create_handoff(
+pub async fn handle_create_handoff(
     brain: &super::OpsBrain,
     p: CreateHandoffParams,
 ) -> CallToolResult {
@@ -115,6 +153,18 @@ pub(crate) async fn handle_create_handoff(
         None => None,
     };
 
+    // Resolve optional reply-parent ID. Existence is enforced at the
+    // database level by the FK; an invalid UUID returns 422-ish error
+    // here, and a well-formed-but-missing UUID returns the FK violation
+    // surfaced from the INSERT.
+    let in_reply_to = match &p.in_reply_to {
+        Some(id_str) => match uuid::Uuid::parse_str(id_str) {
+            Ok(id) => Some(id),
+            Err(_) => return error_result(&format!("Invalid in_reply_to UUID: {id_str}")),
+        },
+        None => None,
+    };
+
     // Validate sender + target as free-form agent slugs. v2.0 dropped the
     // CC-fleet allowlist; whatever the caller says it is, it is. Stored
     // values are exact-match for `check_in` lookups, so writers and
@@ -141,6 +191,7 @@ pub(crate) async fn handle_create_handoff(
         &p.title,
         &p.body,
         p.context.as_ref(),
+        in_reply_to,
     )
     .await
     {
@@ -160,7 +211,7 @@ pub(crate) async fn handle_create_handoff(
     }
 }
 
-pub(crate) async fn handle_accept_handoff(
+pub async fn handle_accept_handoff(
     brain: &super::OpsBrain,
     p: UpdateHandoffStatusParams,
 ) -> CallToolResult {
@@ -185,32 +236,102 @@ pub(crate) async fn handle_accept_handoff(
     }
 }
 
-pub(crate) async fn handle_complete_handoff(
+pub async fn handle_complete_handoff(
     brain: &super::OpsBrain,
-    p: UpdateHandoffStatusParams,
+    p: CompleteHandoffParams,
 ) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.handoff_id) {
         Ok(id) => id,
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
     };
 
-    // Verify it exists and is not already completed
+    // Verify it exists and is not already completed or merged. Mirroring
+    // the existing guard: re-completion is a no-op error, not a silent
+    // overwrite of commit_hash.
     match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
         Ok(Some(h)) if h.status == "completed" => {
             return error_result("Handoff is already completed")
+        }
+        Ok(Some(h)) if h.status == "merged" => return error_result("Handoff is already merged"),
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found("Handoff", &p.handoff_id),
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    }
+
+    match crate::repo::handoff_repo::complete_handoff_with_commit(
+        &brain.pool,
+        id,
+        p.commit_hash.as_deref(),
+    )
+    .await
+    {
+        Ok(handoff) => json_result(&handoff),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub async fn handle_list_replies_to_me(
+    brain: &super::OpsBrain,
+    p: ListRepliesToMeParams,
+) -> CallToolResult {
+    let agent = match crate::validation::validate_agent_name(&p.agent_name) {
+        Ok(n) => n.to_string(),
+        Err(e) => return error_result(&e),
+    };
+    let since = match p.since.as_deref() {
+        Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
+            Ok(ts) => Some(ts.with_timezone(&chrono::Utc)),
+            Err(_) => {
+                return error_result(&format!(
+                    "Invalid `since` timestamp (expected RFC3339): {raw}"
+                ))
+            }
+        },
+        None => None,
+    };
+    let limit = p.limit.unwrap_or(20);
+
+    match crate::repo::handoff_repo::list_replies_to_me(&brain.pool, &agent, since, limit).await {
+        Ok(replies) => json_result(&replies),
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub async fn handle_mark_merged(brain: &super::OpsBrain, p: MarkMergedParams) -> CallToolResult {
+    let id = match uuid::Uuid::parse_str(&p.handoff_id) {
+        Ok(id) => id,
+        Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
+    };
+    let merge_commit = p.merge_commit.trim();
+    if merge_commit.is_empty() {
+        return error_result("merge_commit cannot be empty");
+    }
+
+    // Idempotency: if already merged with the same commit, return current
+    // state; if merged with a different commit, surface the conflict so
+    // the caller doesn't silently overwrite.
+    match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
+        Ok(Some(h)) if h.status == "merged" => {
+            if h.merge_commit.as_deref() == Some(merge_commit) {
+                return json_result(&h);
+            }
+            return error_result(&format!(
+                "Handoff already merged with commit {:?}; refusing to overwrite",
+                h.merge_commit.as_deref().unwrap_or("(unknown)")
+            ));
         }
         Ok(Some(_)) => {}
         Ok(None) => return not_found("Handoff", &p.handoff_id),
         Err(e) => return error_result(&format!("Database error: {e}")),
     }
 
-    match crate::repo::handoff_repo::update_handoff_status(&brain.pool, id, "completed").await {
+    match crate::repo::handoff_repo::mark_merged(&brain.pool, id, merge_commit).await {
         Ok(handoff) => json_result(&handoff),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
 
-pub(crate) async fn handle_list_handoffs(
+pub async fn handle_list_handoffs(
     brain: &super::OpsBrain,
     p: ListHandoffsParams,
 ) -> CallToolResult {
@@ -292,7 +413,7 @@ pub(crate) async fn handle_list_handoffs(
     }
 }
 
-pub(crate) async fn handle_search_handoffs(
+pub async fn handle_search_handoffs(
     brain: &super::OpsBrain,
     p: SearchHandoffsParams,
 ) -> CallToolResult {
@@ -330,7 +451,7 @@ pub(crate) async fn handle_search_handoffs(
     }
 }
 
-pub(crate) async fn handle_delete_handoff(
+pub async fn handle_delete_handoff(
     brain: &super::OpsBrain,
     p: DeleteHandoffParams,
 ) -> CallToolResult {

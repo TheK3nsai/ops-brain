@@ -212,6 +212,7 @@ mod coordination_tests {
             "Continue DNS migration",
             "Need to update remaining A records",
             None,
+            None,
         )
         .await
         .unwrap();
@@ -271,6 +272,7 @@ mod coordination_tests {
             "Action item",
             "Body",
             None,
+            None,
         )
         .await
         .unwrap();
@@ -284,6 +286,7 @@ mod coordination_tests {
             "notify",
             "FYI item",
             "Body",
+            None,
             None,
         )
         .await
@@ -366,6 +369,7 @@ mod coordination_tests {
                 "agent preservation test",
                 "body",
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -386,6 +390,189 @@ mod coordination_tests {
         // Cleanup
         sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
             .bind(&ids)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// in_reply_to threads a child handoff to a parent and list_replies_to_me
+    /// surfaces it via the parent's from_agent (not the reply's).
+    #[tokio::test]
+    async fn handoff_in_reply_to_threading() {
+        let pool = pool().await;
+        let alice = format!("alice-{}", Uuid::now_v7());
+        let bob = format!("bob-{}", Uuid::now_v7());
+
+        let parent = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            &alice,
+            Some(&bob),
+            "normal",
+            "action",
+            "Please review",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let reply = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            &bob,
+            Some(&alice),
+            "normal",
+            "action",
+            "Re: Please review",
+            "looks good",
+            None,
+            Some(parent.id),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(reply.in_reply_to, Some(parent.id));
+        // Category is preserved — the reply stays `action` even though it's a reply.
+        assert_eq!(reply.category, "action");
+
+        let replies = ops_brain::repo::handoff_repo::list_replies_to_me(&pool, &alice, None, 10)
+            .await
+            .unwrap();
+        assert!(replies.iter().any(|h| h.id == reply.id));
+        // Parent author asking for *their* replies shouldn't see unrelated rows.
+        assert!(replies.iter().all(|h| h.in_reply_to == Some(parent.id)));
+
+        // Cleanup — order matters because of the FK.
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(reply.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(parent.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// in_reply_to FK is ON DELETE SET NULL — deleting a parent leaves the
+    /// reply intact with a nulled link, never cascade-orphaned.
+    #[tokio::test]
+    async fn handoff_reply_survives_parent_deletion() {
+        let pool = pool().await;
+        let from = format!("from-{}", Uuid::now_v7());
+
+        let parent = ops_brain::repo::handoff_repo::create_handoff(
+            &pool, None, &from, None, "normal", "action", "Parent", "body", None, None,
+        )
+        .await
+        .unwrap();
+        let reply = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            &from,
+            None,
+            "normal",
+            "notify",
+            "Reply",
+            "body",
+            None,
+            Some(parent.id),
+        )
+        .await
+        .unwrap();
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(parent.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let row: (Option<Uuid>,) = sqlx::query_as("SELECT in_reply_to FROM handoffs WHERE id = $1")
+            .bind(reply.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.0.is_none(),
+            "in_reply_to should null out on parent delete"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(reply.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// complete_handoff_with_commit stores the commit_hash and flips status
+    /// to completed. Re-running with a different commit doesn't silently
+    /// overwrite (guarded at the tool layer; repo layer keeps it permissive
+    /// for explicit-reset paths).
+    #[tokio::test]
+    async fn handoff_complete_with_commit_hash() {
+        let pool = pool().await;
+        let from = format!("from-{}", Uuid::now_v7());
+
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool, None, &from, None, "normal", "action", "Work", "body", None, None,
+        )
+        .await
+        .unwrap();
+
+        let completed = ops_brain::repo::handoff_repo::complete_handoff_with_commit(
+            &pool,
+            h.id,
+            Some("abc1234"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.commit_hash.as_deref(), Some("abc1234"));
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(h.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// mark_merged flips status to merged and records merge_commit + merged_at.
+    /// Works regardless of whether complete_handoff was called first — the
+    /// integrator script may not have local visibility into completion state.
+    #[tokio::test]
+    async fn handoff_mark_merged_flips_status_and_records_commit() {
+        let pool = pool().await;
+        let from = format!("from-{}", Uuid::now_v7());
+
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool, None, &from, None, "normal", "action", "Work", "body", None, None,
+        )
+        .await
+        .unwrap();
+        let _ = ops_brain::repo::handoff_repo::complete_handoff_with_commit(
+            &pool,
+            h.id,
+            Some("feedf00d"),
+        )
+        .await
+        .unwrap();
+
+        let merged = ops_brain::repo::handoff_repo::mark_merged(&pool, h.id, "deadbeef0001")
+            .await
+            .unwrap();
+
+        assert_eq!(merged.status, "merged");
+        assert_eq!(merged.merge_commit.as_deref(), Some("deadbeef0001"));
+        assert!(merged.merged_at.is_some());
+        // commit_hash from the completion step is preserved.
+        assert_eq!(merged.commit_hash.as_deref(), Some("feedf00d"));
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(h.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -576,5 +763,181 @@ mod check_in_tests {
             !text.contains("\"hostname\":"),
             "v1.5: `hostname` field must not echo back — local is the source of truth"
         );
+    }
+}
+
+// Handler-layer tests for the v3.1.0 safety guards on threading + commit
+// linkage. Repo-level happy paths are covered in `coordination_tests` above;
+// these pin the tool-layer behavior (invalid input, not-found, conflict-refuse,
+// idempotency) the locked design promises.
+mod coordination_handler_tests {
+    use super::*;
+    use ops_brain::tools::coordination::{
+        handle_create_handoff, handle_mark_merged, CreateHandoffParams, MarkMergedParams,
+    };
+
+    fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
+        ops_brain::tools::OpsBrain::new(pool, None, None)
+    }
+
+    fn extract_text(result: &rmcp::model::CallToolResult) -> String {
+        result
+            .content
+            .first()
+            .expect("result has at least one content item")
+            .as_text()
+            .expect("content is text")
+            .text
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn create_handoff_rejects_malformed_in_reply_to() {
+        let brain = build_brain(pool().await);
+        let result = handle_create_handoff(
+            &brain,
+            CreateHandoffParams {
+                from_agent: "CC-Stealth".to_string(),
+                to_agent: None,
+                priority: None,
+                category: None,
+                title: "smoke".to_string(),
+                body: "body".to_string(),
+                context: None,
+                from_session_id: None,
+                in_reply_to: Some("not-a-uuid".to_string()),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(
+            text.contains("Invalid in_reply_to UUID"),
+            "expected in_reply_to validation error, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_merged_returns_not_found_for_missing_handoff() {
+        let brain = build_brain(pool().await);
+        let missing = Uuid::now_v7();
+        let result = handle_mark_merged(
+            &brain,
+            MarkMergedParams {
+                handoff_id: missing.to_string(),
+                merge_commit: "abc1234".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(
+            text.contains("not found") || text.contains("Handoff"),
+            "expected not-found surface, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_merged_is_idempotent_on_same_commit() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let from = format!("from-{}", Uuid::now_v7());
+
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            &from,
+            None,
+            "normal",
+            "action",
+            "idempotency-smoke",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let params = || MarkMergedParams {
+            handoff_id: h.id.to_string(),
+            merge_commit: "merge-abc".to_string(),
+        };
+
+        let first = handle_mark_merged(&brain, params()).await;
+        assert_eq!(
+            first.is_error,
+            Some(false),
+            "first mark_merged should succeed"
+        );
+
+        let second = handle_mark_merged(&brain, params()).await;
+        assert_eq!(
+            second.is_error,
+            Some(false),
+            "second mark_merged with same commit should be a no-op success"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(h.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn mark_merged_refuses_to_overwrite_with_different_commit() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let from = format!("from-{}", Uuid::now_v7());
+
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            &from,
+            None,
+            "normal",
+            "action",
+            "conflict-refuse-smoke",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let first = handle_mark_merged(
+            &brain,
+            MarkMergedParams {
+                handoff_id: h.id.to_string(),
+                merge_commit: "first-merge".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(first.is_error, Some(false));
+
+        let second = handle_mark_merged(
+            &brain,
+            MarkMergedParams {
+                handoff_id: h.id.to_string(),
+                merge_commit: "different-merge".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(
+            second.is_error,
+            Some(true),
+            "second mark_merged with different commit should refuse"
+        );
+        let text = extract_text(&second);
+        assert!(
+            text.contains("already merged") || text.contains("refusing to overwrite"),
+            "expected conflict-refuse error, got: {text}"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(h.id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

@@ -58,7 +58,7 @@ where
     }
 }
 
-pub const HANDOFF_STATUSES: &[&str] = &["pending", "accepted", "completed"];
+pub const HANDOFF_STATUSES: &[&str] = &["pending", "accepted", "completed", "merged"];
 pub const HANDOFF_PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
 pub const HANDOFF_CATEGORIES: &[&str] = &["action", "notify"];
 pub const SEARCH_MODES: &[&str] = &["fts", "semantic", "hybrid"];

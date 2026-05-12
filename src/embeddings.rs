@@ -173,6 +173,10 @@ mod tests {
             title: "Big handoff".to_string(),
             body: "x".repeat(30_000),
             context: None,
+            in_reply_to: None,
+            commit_hash: None,
+            merge_commit: None,
+            merged_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -196,6 +200,10 @@ mod tests {
             title: "Continue DNS migration".to_string(),
             body: "Need to update remaining A records".to_string(),
             context: None,
+            in_reply_to: None,
+            commit_hash: None,
+            merge_commit: None,
+            merged_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

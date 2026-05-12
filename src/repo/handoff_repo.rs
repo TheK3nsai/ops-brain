@@ -26,11 +26,12 @@ pub async fn create_handoff(
     title: &str,
     body: &str,
     context: Option<&serde_json::Value>,
+    in_reply_to: Option<Uuid>,
 ) -> Result<Handoff, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Handoff>(
-        "INSERT INTO handoffs (id, from_session_id, from_agent, to_agent, priority, category, title, body, context)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "INSERT INTO handoffs (id, from_session_id, from_agent, to_agent, priority, category, title, body, context, in_reply_to)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *",
     )
     .bind(id)
@@ -42,6 +43,7 @@ pub async fn create_handoff(
     .bind(title)
     .bind(body)
     .bind(context)
+    .bind(in_reply_to)
     .fetch_one(pool)
     .await
 }
@@ -59,6 +61,82 @@ pub async fn update_handoff_status(
     .bind(status)
     .fetch_one(pool)
     .await
+}
+
+/// Complete a handoff, optionally recording the commit hash of the work
+/// that closed it. `commit_hash` is free-form; callers typically pass a
+/// short or full git SHA, but any opaque identifier works.
+pub async fn complete_handoff_with_commit(
+    pool: &PgPool,
+    id: Uuid,
+    commit_hash: Option<&str>,
+) -> Result<Handoff, sqlx::Error> {
+    sqlx::query_as::<_, Handoff>(
+        "UPDATE handoffs
+            SET status = 'completed',
+                commit_hash = COALESCE($2, commit_hash),
+                updated_at = now()
+          WHERE id = $1
+          RETURNING *",
+    )
+    .bind(id)
+    .bind(commit_hash)
+    .fetch_one(pool)
+    .await
+}
+
+/// Mark a handoff as merged. Records the merge commit (typically the
+/// merge-to-main commit that bundled the work) and the merge timestamp.
+/// Does NOT require `commit_hash` to be set; callers who care about that
+/// linkage can verify it client-side before invoking.
+pub async fn mark_merged(
+    pool: &PgPool,
+    id: Uuid,
+    merge_commit: &str,
+) -> Result<Handoff, sqlx::Error> {
+    sqlx::query_as::<_, Handoff>(
+        "UPDATE handoffs
+            SET status = 'merged',
+                merge_commit = $2,
+                merged_at = now(),
+                updated_at = now()
+          WHERE id = $1
+          RETURNING *",
+    )
+    .bind(id)
+    .bind(merge_commit)
+    .fetch_one(pool)
+    .await
+}
+
+/// Replies addressed to `agent`: handoffs whose `in_reply_to` references a
+/// handoff that `agent` originally sent. Optional `since` filters by the
+/// reply's `created_at`.
+pub async fn list_replies_to_me(
+    pool: &PgPool,
+    agent: &str,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    limit: i64,
+) -> Result<Vec<Handoff>, sqlx::Error> {
+    let mut q = String::from(
+        "SELECT r.*
+           FROM handoffs r
+           JOIN handoffs parent ON parent.id = r.in_reply_to
+          WHERE parent.from_agent = $1",
+    );
+    if since.is_some() {
+        q.push_str(" AND r.created_at > $2");
+        q.push_str(" ORDER BY r.created_at DESC LIMIT $3");
+    } else {
+        q.push_str(" ORDER BY r.created_at DESC LIMIT $2");
+    }
+
+    let mut query = sqlx::query_as::<_, Handoff>(&q).bind(agent);
+    if let Some(ts) = since {
+        query = query.bind(ts);
+    }
+    query = query.bind(limit);
+    query.fetch_all(pool).await
 }
 
 #[allow(clippy::too_many_arguments)]

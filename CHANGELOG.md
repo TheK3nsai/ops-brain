@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.0] — 2026-05-12
+
+### Added — handoff threading + commit linkage
+
+Two additive primitives retire a pair of body-text-grep workarounds that the fleet has been carrying. Surface: **18 → 20 tools**. No breaking changes.
+
+#### New columns on `handoffs` (migration `20260512000001_handoff_threading_and_commit_linkage.sql`)
+
+- `in_reply_to UUID NULL REFERENCES handoffs(id) ON DELETE SET NULL` — explicit thread parent. Replies survive parent deletion.
+- `commit_hash TEXT NULL` — completion-time work ref (typically a git SHA).
+- `merge_commit TEXT NULL` + `merged_at TIMESTAMPTZ NULL` — populated by `mark_merged` once the bundle containing `commit_hash` lands in main.
+
+Two partial indexes: `(in_reply_to, to_agent, created_at DESC) WHERE in_reply_to IS NOT NULL` and `(commit_hash) WHERE commit_hash IS NOT NULL`.
+
+#### Tool surface
+
+- `create_handoff` gains optional `in_reply_to` (UUID string). The reply's `category` is preserved as written — no server-side coercion to `notify` (a reply may legitimately be `action`).
+- `complete_handoff` gains optional `commit_hash`. Param shape promoted from the shared `UpdateHandoffStatusParams` to a per-tool `CompleteHandoffParams`.
+- New `list_replies_to_me(agent_name, since?, limit?)` — returns handoffs whose `in_reply_to` references a handoff you originally sent.
+- New `mark_merged(handoff_id, merge_commit)` — flips `status='merged'` and records `merge_commit` + `merged_at`. Idempotent on the same merge_commit; refuses to overwrite a different one.
+
+#### Validation
+
+- `HANDOFF_STATUSES` adds `"merged"`.
+
+#### What was rejected
+
+A larger 5-deliverable brief from CC-HSR (`019e1dd7`) proposed:
+
+- `linked_todo` field with `#NNNNN` regex validation — rejected; HSR `docs/todo.md` row numbers are fleet-specific convention, not team-bus shape. Body-text search already finds them.
+- Server-side `add_knowledge` banned-category enforcement — rejected; agent-side discipline via local memory files already worked (2026-04-22 sweep stuck). Adds server intelligence the v3.0 de-bloat explicitly removed.
+- `POST /v1/land-event` webhook with strict per-fleet integrator allowlist — rejected; HSR-specific scaffolding doesn't belong in the team bus. `mark_merged` covers the legitimate primitive without the auth model.
+
+Convergence captured in handoffs `019e1ddf` (counter) and `019e1de1` (Option-A accept).
+
 ## [3.0.0] — 2026-05-09
 
 ### Removed (the de-bloat)
