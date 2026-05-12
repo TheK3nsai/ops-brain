@@ -9,3 +9,7 @@
 ## Commit workflow
 
 - **PreToolUse `cargo fmt --check` hook blocks the whole Bash invocation, including staging.** When you chain `git add <files> && git commit -m "..."` and the fmt hook trips, neither half runs — so untracked files you intended to include are still untracked. After `cargo fmt`, re-stage the originally-intended set explicitly (especially new migrations and other untracked files); `git add -u` alone only catches tracked-file edits. Caught once on 2026-05-12 (v3.1 PR #53), required a follow-up commit; squash-merge cleaned it up but is avoidable.
+
+## Production deploy checks
+
+- **Production compose does not publish port 3000 to the host.** `docker-compose.prod.yml` attaches `ops-brain` to Docker networks for the reverse proxy; host-local `curl http://localhost:3000/health` is not a valid prod smoke test. Use container health plus `https://ops.kensai.cloud/health` (or an MCP initialize/tools-list request through the reverse proxy). Caught during the first `Codex-Cloud` deploy smoke on 2026-05-12.

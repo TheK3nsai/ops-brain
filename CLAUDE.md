@@ -71,7 +71,7 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 
 - **Before committing non-trivial changes**: run `/prereview` — spawns the project reviewer agent to catch logic and safety issues the pre-commit hook can't. (The built-in `/review` is for an already-open PR.)
 - **Pre-commit hook** catches fmt, clippy, and check automatically — no need to run these manually
-- **After merging to main**: hand off the deploy to **CC-Cloud** (the canonical ops-brain deployer). The `/deploy` skill creates the handoff for you. SSH escape hatch is reserved for cases where CC-Cloud is unavailable AND the change is genuinely urgent; even then, **always** pass `-f docker-compose.prod.yml` (see Gotchas).
+- **After merging to main**: hand off the deploy to **CC-Cloud** or **Codex-Cloud** on the VPS. The `/deploy` skill creates the handoff for CC flows; Codex deploy handoffs should spell out the same prod-compose rule. SSH escape hatch is reserved for cases where the cloud deployer is unavailable AND the change is genuinely urgent; even then, **always** pass `-f docker-compose.prod.yml` and smoke via container health plus `https://ops.kensai.cloud/health` (port 3000 is not published to the host in prod).
 - **Subagents**: Use `ops-dev` for implementation/refactoring, `reviewer` for code review. Both are in `.claude/agents/`.
 
 ## What NOT to Do
