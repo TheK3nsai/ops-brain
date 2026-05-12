@@ -540,6 +540,4 @@ mod tests {
 
         assert!(item.get("_client_slug").is_none());
     }
-
-    // ===== compact mode tests =====
 }
