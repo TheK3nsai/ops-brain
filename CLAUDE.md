@@ -65,6 +65,7 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 - **cargo-audit 0.22 has no config file support** — ignores via `--ignore RUSTSEC-XXXX` CLI flags. The `audit.toml` is documentation only; actual ignore is in `.github/workflows/ci.yml`.
 - **nomic-embed-text tokenization** — real content tokenizes at ~1–1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` is 6,000. Do not increase without empirical testing.
 - **Production deploys MUST use `-f docker-compose.prod.yml`** — prod uses `shared-postgres`, dev uses bundled postgres. Dev compose is project-namespaced as `ops-brain-dev` so a stray invocation can't clobber prod, but it can spin up isolated dev orphans.
+- **Prod does not publish `localhost:3000` on the host** — `docker-compose.prod.yml` attaches `ops-brain` to Docker networks for the reverse proxy; it does not expose `ports:`. Verify liveness with `docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/health` or `curl -sf https://ops.kensai.cloud/health`, not host-local `curl http://localhost:3000/health`.
 - **New env vars need BOTH `.env` AND `docker-compose.prod.yml`** — prod compose enumerates every env var explicitly under `services.ops-brain.environment:` (no `env_file:`). Adding `FOO=...` to `.env` alone leaves the container booting without `FOO`. Always pair the binary's `std::env::var("FOO")` with a `- FOO=${FOO:-}` line in the prod compose.
 
 ## Development Workflow

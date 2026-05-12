@@ -15,7 +15,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- Documented the production health-check gotcha: prod compose does not publish host port 3000, so deploy smoke tests should use container health and `https://ops.kensai.cloud/health`.
+- Documented the production health-check gotcha: prod compose does not publish host port 3000, `/health` is unauthenticated, and deploy smoke tests should use container health plus `https://ops.kensai.cloud/health`.
 - Removed stale watchdog test env from CI after the v3 de-bloat.
 - Replaced stale Zammad error guidance that referenced the removed `upsert_client` MCP tool.
 

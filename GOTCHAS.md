@@ -12,4 +12,5 @@
 
 ## Production deploy checks
 
-- **Production compose does not publish port 3000 to the host.** `docker-compose.prod.yml` attaches `ops-brain` to Docker networks for the reverse proxy; host-local `curl http://localhost:3000/health` is not a valid prod smoke test. Use container health plus `https://ops.kensai.cloud/health` (or an MCP initialize/tools-list request through the reverse proxy). Caught during the first `Codex-Cloud` deploy smoke on 2026-05-12.
+- **Production compose does not publish port 3000 to the host.** `ops-brain` listens on `0.0.0.0:3000` inside the container and exposes `3000/tcp` to Docker networks for the reverse proxy; host-local `curl http://localhost:3000/health` is not a valid prod smoke test. Use `docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/health` for the container health path, `curl -sf https://ops.kensai.cloud/health` for the public reverse-proxy path, or an MCP initialize/tools-list request through the reverse proxy. Caught during the first `Codex-Cloud` deploy smoke on 2026-05-12.
+- **`/health` is unauthenticated on purpose.** The bearer middleware skips `/health` so Docker and reverse proxies can probe liveness without the MCP bearer. `/api` and `/mcp` remain bearer-protected.

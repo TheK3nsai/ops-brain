@@ -69,7 +69,9 @@ POST /api/briefing  { "type": "daily" | "weekly", "client_slug": "..." (optional
 GET  /health
 ```
 
-Bearer auth runs in front of `/api`, `/mcp`, and `/health`.
+Bearer auth protects `/api` and `/mcp`. `/health` is intentionally unauthenticated so container healthchecks and reverse proxies can probe liveness without carrying the MCP bearer.
+
+Production compose does not publish port 3000 on the host; the service is reached through the Docker networks and the reverse proxy. For local production-host checks, run health probes inside the container or use the public reverse-proxy URL.
 
 ## Status
 
