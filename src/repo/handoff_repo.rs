@@ -205,6 +205,57 @@ pub async fn list_handoffs(
     q.fetch_all(pool).await
 }
 
+pub async fn list_open_handoffs(
+    pool: &PgPool,
+    to_agent: Option<&str>,
+    from_agent: Option<&str>,
+    category: Option<&str>,
+    include_notify: bool,
+    limit: i64,
+) -> Result<Vec<Handoff>, sqlx::Error> {
+    let mut query = String::from("SELECT * FROM handoffs");
+    let mut conditions: Vec<String> = vec!["status IN ('pending', 'accepted')".to_string()];
+    let mut param_idx = 1u32;
+
+    if to_agent.is_some() {
+        conditions.push(format!("to_agent = ${param_idx}"));
+        param_idx += 1;
+    }
+    if from_agent.is_some() {
+        conditions.push(format!("from_agent = ${param_idx}"));
+        param_idx += 1;
+    }
+    if category.is_some() {
+        conditions.push(format!("category = ${param_idx}"));
+        param_idx += 1;
+    } else if !include_notify {
+        conditions.push("category = 'action'".to_string());
+    }
+
+    conditions.push(format!(
+        "(category = 'action' OR created_at > now() - interval '{NOTIFY_TTL_DAYS} days')"
+    ));
+
+    query.push_str(" WHERE ");
+    query.push_str(&conditions.join(" AND "));
+    query.push_str(" ORDER BY created_at DESC");
+    query.push_str(&format!(" LIMIT ${param_idx}"));
+
+    let mut q = sqlx::query_as::<_, Handoff>(&query);
+    if let Some(v) = to_agent {
+        q = q.bind(v);
+    }
+    if let Some(v) = from_agent {
+        q = q.bind(v);
+    }
+    if let Some(v) = category {
+        q = q.bind(v);
+    }
+    q = q.bind(limit);
+
+    q.fetch_all(pool).await
+}
+
 pub async fn delete_handoff(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM handoffs WHERE id = $1")
         .bind(id)

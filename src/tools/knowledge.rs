@@ -89,6 +89,19 @@ fn compact_search_results(
         .collect()
 }
 
+fn insert_cross_client_withheld(
+    results: &mut serde_json::Map<String, serde_json::Value>,
+    notices: &[serde_json::Value],
+) {
+    if notices.is_empty() {
+        return;
+    }
+    results.insert(
+        "cross_client_withheld".to_string(),
+        serde_json::to_value(notices).unwrap_or_default(),
+    );
+}
+
 /// v1.6: knowledge staleness threshold in days. An entry is considered stale
 /// if (now - last_verified_at.unwrap_or(created_at)) exceeds this. Computed
 /// at read time — no schema column, no background job.
@@ -138,7 +151,7 @@ pub struct AddKnowledgeParams {
     /// Skip duplicate detection check. Set to true if you've already seen the warning and want to create anyway.
     pub force: Option<bool>,
     /// Your agent identifier (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "CC-Stealth", "codex-hsr", "gemini-stealth". Immutable
+    /// Examples: "CC-Stealth", "Codex-HSR", "Gemini-Stealth". Immutable
     /// once set — provenance cannot be rewritten via the tool surface.
     #[serde(alias = "author_cc")]
     pub author: String,
@@ -567,10 +580,7 @@ pub(crate) async fn handle_search_knowledge(
     }
 
     if !all_withheld.is_empty() {
-        results.insert(
-            "cross_client_withheld".to_string(),
-            serde_json::to_value(&all_withheld).unwrap_or_default(),
-        );
+        insert_cross_client_withheld(&mut results, &all_withheld);
     }
 
     // Inject notes about embedding availability
@@ -668,7 +678,7 @@ async fn browse_recent_entries(
                             .filter_map(|h| serde_json::to_value(h).ok())
                             .collect();
                         let final_items = if compact {
-                            compact_search_results(&json_items, "handoffs")
+                            compact_search_results(&json_items, "handoff")
                         } else {
                             json_items
                         };
@@ -690,10 +700,7 @@ async fn browse_recent_entries(
     }
 
     if !all_withheld.is_empty() {
-        results.insert(
-            "_cross_client_withheld".to_string(),
-            serde_json::to_value(&all_withheld).unwrap_or_default(),
-        );
+        insert_cross_client_withheld(&mut results, &all_withheld);
     }
     results.insert(
         "_browse_mode".to_string(),

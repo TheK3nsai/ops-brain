@@ -1,20 +1,6 @@
-#![allow(dead_code)] // Repo/model functions used by integration tests via lib.rs
-
-mod api;
-mod auth;
-mod config;
-mod db;
-mod embeddings;
-mod models;
-mod repo;
-mod tools;
-mod validation;
-mod zammad;
-
 use clap::Parser;
-use config::Config;
+use ops_brain::{api, auth, config::Config, db, embeddings, tools::OpsBrain, zammad};
 use rmcp::service::ServiceExt;
-use tools::OpsBrain;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]

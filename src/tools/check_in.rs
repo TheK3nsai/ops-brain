@@ -21,7 +21,7 @@ use crate::validation::validate_agent_name;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CheckInParams {
     /// Your agent identifier (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "CC-Stealth", "CC-Cloud", "codex-hsr", "gemini-stealth".
+    /// Examples: "CC-Stealth", "CC-Cloud", "Codex-HSR", "Gemini-Stealth".
     /// Used to filter handoffs addressed to you.
     #[serde(alias = "my_name")]
     pub agent_name: String,
@@ -37,9 +37,8 @@ pub async fn handle_check_in(brain: &super::OpsBrain, p: CheckInParams) -> CallT
     // canonical stored value; v1.x normalized hostname aliases to CC names
     // at write time, so legacy rows continue to be discoverable as long as
     // the caller passes the same canonical name they used at write time.
-    let action_handoffs = match handoff_repo::list_handoffs(
+    let action_handoffs = match handoff_repo::list_open_handoffs(
         &brain.pool,
-        Some("pending"),
         Some(&agent_name),
         None,
         Some("action"),
@@ -55,9 +54,8 @@ pub async fn handle_check_in(brain: &super::OpsBrain, p: CheckInParams) -> CallT
     // Recent notify-class handoffs targeted at this agent (compact:
     // id/title/from/created_at only). Older than NOTIFY_TTL_DAYS are
     // filtered at the repo level.
-    let notify_handoffs = match handoff_repo::list_handoffs(
+    let notify_handoffs = match handoff_repo::list_open_handoffs(
         &brain.pool,
-        Some("pending"),
         Some(&agent_name),
         None,
         Some("notify"),
@@ -85,6 +83,8 @@ pub async fn handle_check_in(brain: &super::OpsBrain, p: CheckInParams) -> CallT
     json_result(&serde_json::json!({
         "open_handoffs_to_you": {
             "count": action_handoffs.len(),
+            "pending_count": action_handoffs.iter().filter(|h| h.status == "pending").count(),
+            "accepted_count": action_handoffs.iter().filter(|h| h.status == "accepted").count(),
             "items": action_handoffs,
         },
         "recent_notifications": {

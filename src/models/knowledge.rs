@@ -13,7 +13,7 @@ pub struct Knowledge {
     pub cross_client_safe: bool,
     pub last_verified_at: Option<DateTime<Utc>>,
     /// Agent that authored this entry (free-form slug, e.g. "CC-Stealth",
-    /// "codex-hsr"). NULL for rows created before v1.6. Required on new
+    /// "Codex-HSR"). NULL for rows created before v1.6. Required on new
     /// entries; immutable once set via the tool surface.
     pub author: Option<String>,
     pub created_at: DateTime<Utc>,

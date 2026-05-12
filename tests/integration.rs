@@ -354,7 +354,7 @@ mod coordination_tests {
 
         let cases = [
             ("CC-Stealth", Some("CC-Cloud")),
-            ("codex-hsr", Some("gemini-hsr")),
+            ("Codex-HSR", Some("Gemini-HSR")),
             ("opencode.local", None),
         ];
         let mut ids = Vec::new();
@@ -540,9 +540,7 @@ mod coordination_tests {
             .unwrap();
     }
 
-    /// mark_merged flips status to merged and records merge_commit + merged_at.
-    /// Works regardless of whether complete_handoff was called first — the
-    /// integrator script may not have local visibility into completion state.
+    /// mark_merged flips completed handoffs to merged and records merge_commit + merged_at.
     #[tokio::test]
     async fn handoff_mark_merged_flips_status_and_records_commit() {
         let pool = pool().await;
@@ -764,6 +762,47 @@ mod check_in_tests {
             "v1.5: `hostname` field must not echo back — local is the source of truth"
         );
     }
+
+    #[tokio::test]
+    async fn handler_check_in_includes_accepted_action_handoffs() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let agent = format!("Codex-{}", Uuid::now_v7().simple());
+
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            "CC-Stealth",
+            Some(&agent),
+            "normal",
+            "action",
+            "accepted visibility smoke",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = ops_brain::repo::handoff_repo::update_handoff_status(&pool, h.id, "accepted")
+            .await
+            .unwrap();
+
+        let result = ops_brain::tools::check_in::handle_check_in(
+            &brain,
+            ops_brain::tools::check_in::CheckInParams { agent_name: agent },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(false));
+        let text = extract_text(&result);
+        assert!(text.contains("accepted visibility smoke"));
+        assert!(text.contains("\"accepted_count\": 1"));
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(h.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }
 
 // Handler-layer tests for the v3.1.0 safety guards on threading + commit
@@ -857,6 +896,13 @@ mod coordination_handler_tests {
         )
         .await
         .unwrap();
+        let _ = ops_brain::repo::handoff_repo::complete_handoff_with_commit(
+            &pool,
+            h.id,
+            Some("work-abc"),
+        )
+        .await
+        .unwrap();
 
         let params = || MarkMergedParams {
             handoff_id: h.id.to_string(),
@@ -904,6 +950,13 @@ mod coordination_handler_tests {
         )
         .await
         .unwrap();
+        let _ = ops_brain::repo::handoff_repo::complete_handoff_with_commit(
+            &pool,
+            h.id,
+            Some("work-conflict"),
+        )
+        .await
+        .unwrap();
 
         let first = handle_mark_merged(
             &brain,
@@ -932,6 +985,95 @@ mod coordination_handler_tests {
         assert!(
             text.contains("already merged") || text.contains("refusing to overwrite"),
             "expected conflict-refuse error, got: {text}"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(h.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn mark_merged_rejects_uncompleted_handoff() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let from = format!("from-{}", Uuid::now_v7());
+
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            &from,
+            None,
+            "normal",
+            "action",
+            "pending-merge-refuse-smoke",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let result = handle_mark_merged(
+            &brain,
+            MarkMergedParams {
+                handoff_id: h.id.to_string(),
+                merge_commit: "merge-pending".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(
+            text.contains("must be completed"),
+            "expected completed-before-merged error, got: {text}"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(h.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn mark_merged_rejects_completed_handoff_without_commit_hash() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let from = format!("from-{}", Uuid::now_v7());
+
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            None,
+            &from,
+            None,
+            "normal",
+            "action",
+            "missing-work-ref-smoke",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = ops_brain::repo::handoff_repo::complete_handoff_with_commit(&pool, h.id, None)
+            .await
+            .unwrap();
+
+        let result = handle_mark_merged(
+            &brain,
+            MarkMergedParams {
+                handoff_id: h.id.to_string(),
+                merge_commit: "merge-no-work-ref".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(
+            text.contains("commit_hash"),
+            "expected commit_hash requirement error, got: {text}"
         );
 
         sqlx::query("DELETE FROM handoffs WHERE id = $1")

@@ -8,7 +8,7 @@ ops-brain is **not** local truth. Inventory belongs in your config management. I
 
 - **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`. Cross-agent gotchas, safety warnings, compliance rules, vendor behavior. Per-agent provenance via `author`. Default-deny across clients.
 - **Handoffs** — `create_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit-linkage via `commit_hash` on completion + `mark_merged` at integration time.
-- **Team bus** — `check_in` returns open action handoffs and recent notifications addressed to your `agent_name`.
+- **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
 - **Search** — `backfill_embeddings` for the FTS+vector hybrid (PostgreSQL tsvector + pgvector HNSW + RRF fusion).
 - **Zammad** — `list_tickets`, `get_ticket`, `create_ticket`, `search_tickets`. Resolves `client_slug` to Zammad group/org/customer.
 - **Briefings** — `generate_briefing` produces daily/weekly markdown summaries (handoffs + tickets), optionally client-scoped, stored for history. Same logic available at `POST /api/briefing`.
@@ -55,6 +55,8 @@ Every audit event lands in the `audit_log` table.
 | `ZAMMAD_URL` | (none) | Zammad base URL — disables Zammad tools if unset |
 | `ZAMMAD_API_TOKEN` | (none) | Zammad API token |
 | `ZAMMAD_DEFAULT_OWNER_ID` | (none) | Default owner ID for `create_ticket` |
+
+Recommended agent names mirror the CC fleet convention: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. Names are still free-form slugs for compatibility; ops-brain stores exactly what the caller sends.
 
 ## REST endpoints
 

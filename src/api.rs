@@ -79,21 +79,28 @@ pub async fn generate_briefing_inner(
     // ── Pending handoffs ──
     // Briefings show actionable work only — notify-class FYIs are not "pending"
     // in any meaningful sense.
-    let pending_handoffs = crate::repo::handoff_repo::list_handoffs(
-        pool,
-        Some("pending"),
-        None,
-        None,
-        None,
-        false,
-        20,
-    )
-    .await
-    .unwrap_or_default();
+    let open_handoffs =
+        crate::repo::handoff_repo::list_open_handoffs(pool, None, None, None, false, 20)
+            .await
+            .unwrap_or_default();
+
+    let pending_titles: Vec<String> = open_handoffs
+        .iter()
+        .filter(|h| h.status == "pending")
+        .map(|h| h.title.clone())
+        .collect();
+    let accepted_titles: Vec<String> = open_handoffs
+        .iter()
+        .filter(|h| h.status == "accepted")
+        .map(|h| h.title.clone())
+        .collect();
 
     let handoff_data = briefings::HandoffSummaryData {
-        pending_count: pending_handoffs.len(),
-        pending_titles: pending_handoffs.iter().map(|h| h.title.clone()).collect(),
+        open_count: open_handoffs.len(),
+        pending_count: pending_titles.len(),
+        accepted_count: accepted_titles.len(),
+        pending_titles,
+        accepted_titles,
     };
 
     // ── Zammad tickets ──
@@ -187,15 +194,24 @@ fn build_markdown(
 
     // Handoffs
     md.push_str("## Handoffs\n\n");
-    if handoffs.pending_count == 0 {
-        md.push_str("No pending handoffs.\n\n");
+    if handoffs.open_count == 0 {
+        md.push_str("No open handoffs.\n\n");
     } else {
         md.push_str(&format!(
-            "**{} pending handoff(s)**\n\n",
-            handoffs.pending_count
+            "**{} open handoff(s)** ({} pending, {} accepted)\n\n",
+            handoffs.open_count, handoffs.pending_count, handoffs.accepted_count
         ));
-        for title in &handoffs.pending_titles {
-            md.push_str(&format!("- {title}\n"));
+        if !handoffs.pending_titles.is_empty() {
+            md.push_str("Pending:\n");
+            for title in &handoffs.pending_titles {
+                md.push_str(&format!("- {title}\n"));
+            }
+        }
+        if !handoffs.accepted_titles.is_empty() {
+            md.push_str("Accepted:\n");
+            for title in &handoffs.accepted_titles {
+                md.push_str(&format!("- {title}\n"));
+            }
         }
         md.push('\n');
     }

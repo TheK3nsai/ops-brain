@@ -12,7 +12,7 @@ use rmcp::model::*;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateHandoffParams {
     /// Sender agent (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "CC-Stealth", "codex-hsr", "gemini-stealth".
+    /// Examples: "CC-Stealth", "Codex-HSR", "Gemini-Stealth".
     #[serde(alias = "from_machine")]
     pub from_agent: String,
     /// Target agent (optional — if omitted, any agent can pick it up).
@@ -320,6 +320,15 @@ pub async fn handle_mark_merged(brain: &super::OpsBrain, p: MarkMergedParams) ->
                 h.merge_commit.as_deref().unwrap_or("(unknown)")
             ));
         }
+        Ok(Some(h)) if h.status != "completed" => {
+            return error_result(&format!(
+                "Handoff must be completed before it can be marked merged (current status: '{}')",
+                h.status
+            ));
+        }
+        Ok(Some(h)) if h.commit_hash.as_deref().unwrap_or("").trim().is_empty() => {
+            return error_result("Handoff must have commit_hash before it can be marked merged")
+        }
         Ok(Some(_)) => {}
         Ok(None) => return not_found("Handoff", &p.handoff_id),
         Err(e) => return error_result(&format!("Database error: {e}")),
@@ -475,23 +484,23 @@ mod tests {
     fn create_handoff_accepts_legacy_machine_aliases() {
         let params: CreateHandoffParams = serde_json::from_value(serde_json::json!({
             "from_machine": "CC-Stealth",
-            "to_machine": "codex-hsr",
+            "to_machine": "Codex-HSR",
             "title": "handoff",
             "body": "body"
         }))
         .unwrap();
         assert_eq!(params.from_agent, "CC-Stealth");
-        assert_eq!(params.to_agent.as_deref(), Some("codex-hsr"));
+        assert_eq!(params.to_agent.as_deref(), Some("Codex-HSR"));
     }
 
     #[test]
     fn list_handoffs_accepts_legacy_machine_aliases() {
         let params: ListHandoffsParams = serde_json::from_value(serde_json::json!({
             "from_machine": "CC-Stealth",
-            "to_machine": "codex-hsr"
+            "to_machine": "Codex-HSR"
         }))
         .unwrap();
         assert_eq!(params.from_agent.as_deref(), Some("CC-Stealth"));
-        assert_eq!(params.to_agent.as_deref(), Some("codex-hsr"));
+        assert_eq!(params.to_agent.as_deref(), Some("Codex-HSR"));
     }
 }

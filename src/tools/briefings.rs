@@ -26,8 +26,11 @@ pub struct BriefingData {
 
 #[derive(Debug, Serialize)]
 pub struct HandoffSummaryData {
+    pub open_count: usize,
     pub pending_count: usize,
+    pub accepted_count: usize,
     pub pending_titles: Vec<String>,
+    pub accepted_titles: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

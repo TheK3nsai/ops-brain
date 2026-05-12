@@ -78,7 +78,7 @@ pub(crate) async fn handle_list_tickets(
             Some(id) => id,
             None => {
                 return error_result(&format!(
-                    "Client '{slug}' has no Zammad org ID configured. Use upsert_client to set zammad_org_id."
+                    "Client '{slug}' has no Zammad org ID configured. Set zammad_org_id in the clients table or seed/admin SQL."
                 ))
             }
         };
@@ -162,7 +162,7 @@ pub(crate) async fn handle_create_ticket(
     let (group_id, customer_id, org_id) = match (client.zammad_group_id, client.zammad_customer_id, client.zammad_org_id) {
         (Some(g), Some(c), org) => (g as i64, c as i64, org.map(|o| o as i64)),
         _ => return error_result(&format!(
-            "Client '{}' missing Zammad IDs. Set zammad_group_id and zammad_customer_id via upsert_client.",
+            "Client '{}' missing Zammad IDs. Set zammad_group_id and zammad_customer_id in the clients table or seed/admin SQL.",
             p.client_slug
         )),
     };

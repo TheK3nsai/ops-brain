@@ -102,9 +102,10 @@ pub fn validate_required(value: &str, field_name: &str, allowed: &[&str]) -> Res
 /// whatever the caller says it is, it is. Trims surrounding whitespace.
 ///
 /// v2.0 replacement for the v1.x CC-fleet allowlist (CC_TEAM, normalize_machine_name,
-/// is_valid_cc_name). Existing values like `CC-Stealth`, `CC-Cloud`, `codex-hsr`,
-/// `gemini.stealth` all pass cleanly. Recommended convention is `<kind>-<host>`
-/// (`codex-hsr`, `gemini-stealth`) but this is documentation, not enforcement.
+/// is_valid_cc_name). Existing values like `CC-Stealth`, `CC-Cloud`, `Codex-HSR`,
+/// `Gemini-Stealth`, and older lowercase slugs all pass cleanly. Recommended
+/// fleet convention mirrors the CC names: `<Kind>-<Infra>` (`Codex-HSR`,
+/// `Gemini-Stealth`) but this is documentation, not enforcement.
 pub fn validate_agent_name(input: &str) -> Result<&str, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -268,11 +269,12 @@ mod tests {
 
     #[test]
     fn agent_name_accepts_freeform_slugs() {
-        assert_eq!(validate_agent_name("codex-hsr").unwrap(), "codex-hsr");
+        assert_eq!(validate_agent_name("Codex-HSR").unwrap(), "Codex-HSR");
         assert_eq!(
-            validate_agent_name("gemini-stealth").unwrap(),
-            "gemini-stealth"
+            validate_agent_name("Gemini-Stealth").unwrap(),
+            "Gemini-Stealth"
         );
+        assert_eq!(validate_agent_name("codex-hsr").unwrap(), "codex-hsr");
         assert_eq!(
             validate_agent_name("opencode_local").unwrap(),
             "opencode_local"
@@ -287,7 +289,7 @@ mod tests {
     #[test]
     fn agent_name_trims_whitespace() {
         assert_eq!(validate_agent_name("  CC-Stealth\n").unwrap(), "CC-Stealth");
-        assert_eq!(validate_agent_name("\tcodex-hsr ").unwrap(), "codex-hsr");
+        assert_eq!(validate_agent_name("\tCodex-HSR ").unwrap(), "Codex-HSR");
     }
 
     #[test]

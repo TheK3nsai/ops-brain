@@ -199,7 +199,7 @@ impl OpsBrain {
         name = "check_in",
         description = "Pending-work query: open action handoffs addressed to you and recent \
         notify-class handoffs (compact). Pass `agent_name` (your free-form agent \
-        slug — e.g. 'CC-Stealth', 'codex-hsr')."
+        slug — e.g. 'CC-Stealth', 'Codex-HSR')."
     )]
     async fn check_in(
         &self,
@@ -292,7 +292,7 @@ impl ServerHandler for OpsBrain {
                  history are the source of truth — reach for ops-brain only when you need \
                  the rest of the team: handoffs, cross-agent knowledge, briefings, and \
                  Zammad tickets. Identify yourself with a free-form `agent_name` (slug, \
-                 e.g. 'CC-Stealth', 'codex-hsr'). Default-deny across clients: \
+                 e.g. 'CC-Stealth', 'Codex-HSR'). Default-deny across clients: \
                  cross-client content requires acknowledge_cross_client=true.",
             )
     }
@@ -453,31 +453,31 @@ mod tests {
         assert_eq!(result.audit_entries.len(), 2);
     }
 
-    // ===== incident cross-client gating tests =====
+    // ===== generic cross-client gating tests =====
 
     #[test]
-    fn filter_incident_cross_client_withheld() {
+    fn filter_other_entity_cross_client_withheld() {
         let (alpha_id, beta_id, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "incident", Some(beta_id), false, &lookup);
+        let result = filter_cross_client(items, "shared_item", Some(beta_id), false, &lookup);
 
         assert!(result.allowed.is_empty());
         assert_eq!(result.withheld_notices.len(), 1);
-        assert_eq!(result.withheld_notices[0]["entity_type"], "incident");
+        assert_eq!(result.withheld_notices[0]["entity_type"], "shared_item");
         assert_eq!(result.withheld_notices[0]["owning_client_slug"], "alpha");
         assert_eq!(result.audit_entries.len(), 1);
         assert_eq!(result.audit_entries[0].2, "withheld");
     }
 
     #[test]
-    fn filter_incident_cross_client_safe_allowed() {
+    fn filter_other_entity_cross_client_safe_allowed() {
         let (alpha_id, beta_id, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, Some(alpha_id), true)];
 
-        let result = filter_cross_client(items, "incident", Some(beta_id), false, &lookup);
+        let result = filter_cross_client(items, "shared_item", Some(beta_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());
@@ -486,12 +486,12 @@ mod tests {
     }
 
     #[test]
-    fn filter_incident_same_client_allowed() {
+    fn filter_other_entity_same_client_allowed() {
         let (alpha_id, _, lookup) = make_lookup();
         let item_id = Uuid::now_v7();
         let items = vec![make_item(item_id, Some(alpha_id), false)];
 
-        let result = filter_cross_client(items, "incident", Some(alpha_id), false, &lookup);
+        let result = filter_cross_client(items, "shared_item", Some(alpha_id), false, &lookup);
 
         assert_eq!(result.allowed.len(), 1);
         assert!(result.withheld_notices.is_empty());

@@ -8,7 +8,7 @@ Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18
 
 - **Knowledge** (5): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`
 - **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
-- **Team bus** (1): `check_in` — pending action handoffs + recent notify-class handoffs for `agent_name`
+- **Team bus** (1): `check_in` — open action handoffs (pending + accepted) + recent notify-class handoffs for `agent_name`
 - **Search** (1): `backfill_embeddings`
 - **Zammad** (4): `list_tickets`, `get_ticket`, `create_ticket`, `search_tickets`
 - **Briefings** (1): `generate_briefing` (daily/weekly handoffs+tickets summary, optionally client-scoped)
@@ -49,7 +49,8 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 
 - **Handoffs are the coordination layer** — creating a handoff IS the notification mechanism. `action`-category for things the recipient must do; `notify`-category for FYI broadcasts (auto-pruned after 7 days).
 - **Product bar** — only build features that solve observed field pain, reduce missed/duplicate work across agents, make the next natural action clearer, and have a lifecycle. Reject ceremony, duplicate truth, generic wiki behavior, and scheduling/orchestration features that belong to cron/systemd/Task Scheduler/CI. Durable doctrine: ops-brain knowledge `019e0d79-3a7f-7902-86cc-db4a573c1071`.
-- **Knowledge policy** — knowledge entries are for cross-agent gotchas, safety warnings, compliance rules, verified patterns, and vendor behavior ONLY. Every entry costs tokens across all agents. If it would fit in your own local instructions, put it there instead. If local docs are canonical, write a pointer/provenance entry, not a duplicate. `add_knowledge` requires `author` (your agent slug, e.g. `CC-Stealth` or `codex-hsr`).
+- **Agent names** — use the CC-style fleet convention for every agent family: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. The validator remains free-form for compatibility, but new rows should keep that convention so handoffs route predictably.
+- **Knowledge policy** — knowledge entries are for cross-agent gotchas, safety warnings, compliance rules, verified patterns, and vendor behavior ONLY. Every entry costs tokens across all agents. If it would fit in your own local instructions, put it there instead. If local docs are canonical, write a pointer/provenance entry, not a duplicate. `add_knowledge` requires `author` (your agent slug, e.g. `CC-Stealth` or `Codex-HSR`).
 - **Default-deny across clients** — cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
 
 ## Gotchas

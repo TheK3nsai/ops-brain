@@ -13,7 +13,6 @@ env:
   DATABASE_URL: postgresql://ops_brain:ops_brain@localhost:5432/ops_brain_test
   # Disable optional services in tests
   OPS_BRAIN_EMBEDDINGS_ENABLED: "false"
-  OPS_BRAIN_WATCHDOG_ENABLED: "false"
 
 jobs:
   check:

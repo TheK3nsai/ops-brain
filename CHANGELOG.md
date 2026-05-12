@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- `check_in` and generated briefings now treat accepted handoffs as open work, not hidden work. Responses split open action handoffs into pending and accepted counts.
+- `mark_merged` now requires a completed handoff with a recorded `commit_hash`; pending/accepted handoffs and completed handoffs without a work ref are rejected.
+- Agent naming guidance now follows the CC-style fleet convention for every agent family: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. Existing lowercase/free-form slugs remain valid for compatibility.
+- Search response metadata for withheld cross-client content is consistently emitted as `cross_client_withheld`; browse-mode handoff compaction now uses the same snippet shaping as search-mode handoffs.
+- The binary now imports the library crate instead of redeclaring every module, so unit tests no longer run twice under `cargo test`.
+
+### Fixed
+
+- Removed stale watchdog test env from CI after the v3 de-bloat.
+- Replaced stale Zammad error guidance that referenced the removed `upsert_client` MCP tool.
+
 ## [3.1.0] — 2026-05-12
 
 ### Added — handoff threading + commit linkage
