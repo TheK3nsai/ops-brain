@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - `check_in` and generated briefings now treat accepted handoffs as open work, not hidden work. Responses split open action handoffs into pending and accepted counts.
 - `mark_merged` now requires a completed handoff with a recorded `commit_hash`; pending/accepted handoffs and completed handoffs without a work ref are rejected.
 - Agent naming guidance now follows the CC-style fleet convention for every agent family: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. Existing lowercase/free-form slugs remain valid for compatibility.
+- Documented the fleet-stewardship model: agent families can optimize their own ergonomics, while ops-brain server features remain generic team-bus primitives.
 - Search response metadata for withheld cross-client content is consistently emitted as `cross_client_withheld`; browse-mode handoff compaction now uses the same snippet shaping as search-mode handoffs.
 - The binary now imports the library crate instead of redeclaring every module, so unit tests no longer run twice under `cargo test`.
 

@@ -58,6 +58,10 @@ Every audit event lands in the `audit_log` table.
 
 Recommended agent names mirror the CC fleet convention: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. Names are still free-form slugs for compatibility; ops-brain stores exactly what the caller sends.
 
+## Fleet stewardship
+
+Claude Code, Codex CLI, Gemini CLI, and future agents can each have their own onboarding and ergonomics, but ops-brain features should stay fleet-neutral. Use agent-family stewardship to remove real friction for that client family; do not add `cc_*`, `codex_*`, or `gemini_*` server behavior unless the underlying primitive is useful to every fleet.
+
 ## REST endpoints
 
 ```
