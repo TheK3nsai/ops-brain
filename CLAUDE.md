@@ -4,10 +4,10 @@ Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18
 
 **v3.0.0 — team bus only.** Inventory, incidents, and monitoring subsystems were removed: configuration management owns inventory, Zammad owns tickets/incidents, Uptime Kuma owns monitoring. ops-brain stays on its lane.
 
-## Surface (18 tools)
+## Surface (20 tools)
 
 - **Knowledge** (5): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`
-- **Handoffs** (6): `create_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `search_handoffs`, `delete_handoff`
+- **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
 - **Team bus** (1): `check_in` — pending action handoffs + recent notify-class handoffs for `agent_name`
 - **Search** (1): `backfill_embeddings`
 - **Zammad** (4): `list_tickets`, `get_ticket`, `create_ticket`, `search_tickets`

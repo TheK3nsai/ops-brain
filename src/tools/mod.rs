@@ -1,6 +1,6 @@
 pub mod briefings;
 pub mod check_in;
-mod coordination;
+pub mod coordination;
 mod helpers;
 pub mod knowledge;
 mod search;
@@ -120,12 +120,44 @@ impl OpsBrain {
         Ok(coordination::handle_accept_handoff(self, params.0).await)
     }
 
-    #[tool(name = "complete_handoff", description = "Mark a handoff as completed")]
+    #[tool(
+        name = "complete_handoff",
+        description = "Mark a handoff as completed. Optional `commit_hash` records the work \
+        ref (typically a git SHA) so `mark_merged` can later flip the same handoff to \
+        `merged` when the bundle reaches main."
+    )]
     async fn complete_handoff(
         &self,
-        params: Parameters<coordination::UpdateHandoffStatusParams>,
+        params: Parameters<coordination::CompleteHandoffParams>,
     ) -> Result<CallToolResult, McpError> {
         Ok(coordination::handle_complete_handoff(self, params.0).await)
+    }
+
+    #[tool(
+        name = "list_replies_to_me",
+        description = "List handoffs that reply to ones you sent. Returns handoffs whose \
+        `in_reply_to` references a handoff with your `agent_name` as `from_agent`. \
+        Optional ISO-8601 `since` filters by reply timestamp."
+    )]
+    async fn list_replies_to_me(
+        &self,
+        params: Parameters<coordination::ListRepliesToMeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(coordination::handle_list_replies_to_me(self, params.0).await)
+    }
+
+    #[tool(
+        name = "mark_merged",
+        description = "Flip a handoff to status=merged and record the merge commit. \
+        Typically called by an integrator script after the bundle containing the \
+        handoff's commit_hash lands in main. Idempotent on identical merge_commit; \
+        refuses to overwrite a different one."
+    )]
+    async fn mark_merged(
+        &self,
+        params: Parameters<coordination::MarkMergedParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(coordination::handle_mark_merged(self, params.0).await)
     }
 
     #[tool(
