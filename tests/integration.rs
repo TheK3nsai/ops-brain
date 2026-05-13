@@ -204,7 +204,6 @@ mod coordination_tests {
 
         let handoff = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             "dev-laptop",
             Some("prod-server"),
             "high",
@@ -264,7 +263,6 @@ mod coordination_tests {
 
         let action = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             "dev-laptop",
             Some("category-test-host"),
             "normal",
@@ -279,7 +277,6 @@ mod coordination_tests {
 
         let notify = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             "dev-laptop",
             Some("category-test-host"),
             "low",
@@ -361,7 +358,6 @@ mod coordination_tests {
         for (from_agent, to_agent) in &cases {
             let h = ops_brain::repo::handoff_repo::create_handoff(
                 &pool,
-                None,
                 from_agent,
                 *to_agent,
                 "normal",
@@ -405,7 +401,6 @@ mod coordination_tests {
 
         let parent = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             &alice,
             Some(&bob),
             "normal",
@@ -420,7 +415,6 @@ mod coordination_tests {
 
         let reply = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             &bob,
             Some(&alice),
             "normal",
@@ -465,13 +459,12 @@ mod coordination_tests {
         let from = format!("from-{}", Uuid::now_v7());
 
         let parent = ops_brain::repo::handoff_repo::create_handoff(
-            &pool, None, &from, None, "normal", "action", "Parent", "body", None, None,
+            &pool, &from, None, "normal", "action", "Parent", "body", None, None,
         )
         .await
         .unwrap();
         let reply = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             &from,
             None,
             "normal",
@@ -517,7 +510,7 @@ mod coordination_tests {
         let from = format!("from-{}", Uuid::now_v7());
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
-            &pool, None, &from, None, "normal", "action", "Work", "body", None, None,
+            &pool, &from, None, "normal", "action", "Work", "body", None, None,
         )
         .await
         .unwrap();
@@ -547,7 +540,7 @@ mod coordination_tests {
         let from = format!("from-{}", Uuid::now_v7());
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
-            &pool, None, &from, None, "normal", "action", "Work", "body", None, None,
+            &pool, &from, None, "normal", "action", "Work", "body", None, None,
         )
         .await
         .unwrap();
@@ -771,7 +764,6 @@ mod check_in_tests {
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             "CC-Stealth",
             Some(&agent),
             "normal",
@@ -843,7 +835,6 @@ mod coordination_handler_tests {
                 title: "smoke".to_string(),
                 body: "body".to_string(),
                 context: None,
-                from_session_id: None,
                 in_reply_to: Some("not-a-uuid".to_string()),
             },
         )
@@ -884,7 +875,6 @@ mod coordination_handler_tests {
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             &from,
             None,
             "normal",
@@ -938,7 +928,6 @@ mod coordination_handler_tests {
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             &from,
             None,
             "normal",
@@ -1002,7 +991,6 @@ mod coordination_handler_tests {
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             &from,
             None,
             "normal",
@@ -1045,7 +1033,6 @@ mod coordination_handler_tests {
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            None,
             &from,
             None,
             "normal",

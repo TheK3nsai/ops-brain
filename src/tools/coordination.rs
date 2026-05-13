@@ -32,8 +32,6 @@ pub struct CreateHandoffParams {
     pub body: String,
     /// Optional structured context (JSON object)
     pub context: Option<serde_json::Value>,
-    /// Session ID this handoff originates from
-    pub from_session_id: Option<String>,
     /// Parent handoff ID (UUID) when this handoff is a reply to another.
     /// Enables threaded discovery via `list_replies_to_me`. The reply's
     /// `category` is preserved as written — a reply can legitimately be
@@ -144,15 +142,6 @@ pub async fn handle_create_handoff(
         return error_result(&msg);
     }
 
-    // Resolve optional session ID
-    let from_session_id = match &p.from_session_id {
-        Some(id_str) => match uuid::Uuid::parse_str(id_str) {
-            Ok(id) => Some(id),
-            Err(_) => return error_result(&format!("Invalid session UUID: {id_str}")),
-        },
-        None => None,
-    };
-
     // Resolve optional reply-parent ID. Existence is enforced at the
     // database level by the FK; an invalid UUID returns 422-ish error
     // here, and a well-formed-but-missing UUID returns the FK violation
@@ -183,7 +172,6 @@ pub async fn handle_create_handoff(
 
     match crate::repo::handoff_repo::create_handoff(
         &brain.pool,
-        from_session_id,
         &from_agent,
         to_agent.as_deref(),
         priority,

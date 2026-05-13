@@ -164,7 +164,6 @@ mod tests {
     fn prepare_handoff_text_truncates_long_body() {
         let handoff = Handoff {
             id: Uuid::now_v7(),
-            from_session_id: None,
             from_agent: "dev-laptop".to_string(),
             to_agent: Some("prod-server".to_string()),
             status: "pending".to_string(),
@@ -191,7 +190,6 @@ mod tests {
     fn prepare_handoff_text_format() {
         let handoff = Handoff {
             id: Uuid::now_v7(),
-            from_session_id: None,
             from_agent: "dev-laptop".to_string(),
             to_agent: Some("prod-server".to_string()),
             status: "pending".to_string(),

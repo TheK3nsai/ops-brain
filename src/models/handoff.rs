@@ -5,7 +5,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Handoff {
     pub id: Uuid,
-    pub from_session_id: Option<Uuid>,
     pub from_agent: String,
     pub to_agent: Option<String>,
     pub status: String,

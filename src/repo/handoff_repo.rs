@@ -18,7 +18,6 @@ pub async fn get_handoff(pool: &PgPool, id: Uuid) -> Result<Option<Handoff>, sql
 #[allow(clippy::too_many_arguments)]
 pub async fn create_handoff(
     pool: &PgPool,
-    from_session_id: Option<Uuid>,
     from_agent: &str,
     to_agent: Option<&str>,
     priority: &str,
@@ -30,12 +29,11 @@ pub async fn create_handoff(
 ) -> Result<Handoff, sqlx::Error> {
     let id = Uuid::now_v7();
     sqlx::query_as::<_, Handoff>(
-        "INSERT INTO handoffs (id, from_session_id, from_agent, to_agent, priority, category, title, body, context, in_reply_to)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        "INSERT INTO handoffs (id, from_agent, to_agent, priority, category, title, body, context, in_reply_to)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *",
     )
     .bind(id)
-    .bind(from_session_id)
     .bind(from_agent)
     .bind(to_agent)
     .bind(priority)
