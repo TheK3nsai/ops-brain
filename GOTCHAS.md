@@ -14,3 +14,7 @@
 
 - **Production compose does not publish port 3000 to the host.** `ops-brain` listens on `0.0.0.0:3000` inside the container and exposes `3000/tcp` to Docker networks for the reverse proxy; host-local `curl http://localhost:3000/health` is not a valid prod smoke test. Use `docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/health` for the container health path, `curl -sf https://ops.kensai.cloud/health` for the public reverse-proxy path, or an MCP initialize/tools-list request through the reverse proxy. Caught during the first `Codex-Cloud` deploy smoke on 2026-05-12.
 - **`/health` is unauthenticated on purpose.** The bearer middleware skips `/health` so Docker and reverse proxies can probe liveness without the MCP bearer. `/api` and `/mcp` remain bearer-protected.
+
+## MCP Clients
+
+- **Gemini CLI (Node.js SDK) SSE Disconnects:** Gemini CLI instances (which rely on the `@modelcontextprotocol/sdk` Node.js client) might experience intermittent, silent SSE disconnects from `ops-brain` if left idle. This manifests as a 401 or `Session not found` error on the *next* tool call you make. This is likely an interaction between the Node `eventsource` package timeout and a lack of periodic ping frames from the `rmcp` server. If this happens, restart your CLI session to establish a fresh MCP connection.
