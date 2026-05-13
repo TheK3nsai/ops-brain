@@ -120,7 +120,7 @@ pub async fn list_replies_to_me(
         "SELECT r.*
            FROM handoffs r
            JOIN handoffs parent ON parent.id = r.in_reply_to
-          WHERE parent.from_agent = $1",
+          WHERE parent.from_agent ILIKE $1",
     );
     if since.is_some() {
         q.push_str(" AND r.created_at > $2");
@@ -156,11 +156,11 @@ pub async fn list_handoffs(
         param_idx += 1;
     }
     if to_agent.is_some() {
-        conditions.push(format!("to_agent = ${param_idx}"));
+        conditions.push(format!("to_agent ILIKE ${param_idx}"));
         param_idx += 1;
     }
     if from_agent.is_some() {
-        conditions.push(format!("from_agent = ${param_idx}"));
+        conditions.push(format!("from_agent ILIKE ${param_idx}"));
         param_idx += 1;
     }
     if category.is_some() {
@@ -216,11 +216,11 @@ pub async fn list_open_handoffs(
     let mut param_idx = 1u32;
 
     if to_agent.is_some() {
-        conditions.push(format!("to_agent = ${param_idx}"));
+        conditions.push(format!("to_agent ILIKE ${param_idx}"));
         param_idx += 1;
     }
     if from_agent.is_some() {
-        conditions.push(format!("from_agent = ${param_idx}"));
+        conditions.push(format!("from_agent ILIKE ${param_idx}"));
         param_idx += 1;
     }
     if category.is_some() {
