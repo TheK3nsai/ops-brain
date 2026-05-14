@@ -74,8 +74,17 @@ async fn main() -> anyhow::Result<()> {
                 tower::{StreamableHttpServerConfig, StreamableHttpService},
             };
             use std::sync::Arc;
+            use std::time::Duration;
 
-            let session_manager = Arc::new(LocalSessionManager::default());
+            // rmcp's SessionConfig::DEFAULT_KEEP_ALIVE is 300s — sessions
+            // get evicted server-side after 5 minutes of idle, and existing
+            // MCP clients (Claude Code's rmcp HTTP client, Gemini CLI's Node
+            // SDK) don't auto-reinitialize on the resulting 404. Bumping
+            // to 1h covers normal coding pauses while still reaping genuine
+            // zombies in reasonable time.
+            let mut session_manager = LocalSessionManager::default();
+            session_manager.session_config.keep_alive = Some(Duration::from_secs(3600));
+            let session_manager = Arc::new(session_manager);
 
             let api_state = Arc::new(api::ApiState {
                 pool: pool.clone(),
