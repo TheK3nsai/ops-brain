@@ -29,7 +29,8 @@ services:
       # Zammad ticketing integration
       - ZAMMAD_URL=http://zammad-railsserver:3000
       - ZAMMAD_API_TOKEN=${ZAMMAD_API_TOKEN}
-      - RUST_LOG=ops_brain=info
+      # rmcp=info surfaces session lifecycle (create/KeepAliveTimeout) in `docker logs`
+      - RUST_LOG=${RUST_LOG:-ops_brain=info,rmcp=info}
     networks:
       - traefik-net
       - shared-db
