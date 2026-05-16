@@ -4,6 +4,8 @@ Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18
 
 **v3.0.0 — team bus only.** Inventory, incidents, and monitoring subsystems were removed: configuration management owns inventory, Zammad owns tickets/incidents, Uptime Kuma owns monitoring. ops-brain stays on its lane.
 
+For roadmap philosophy + hard stops (what we will/won't build, and why), see `ROADMAP.md`. For shipped history, see `CHANGELOG.md`.
+
 ## Surface (20 tools)
 
 - **Knowledge** (5): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`
