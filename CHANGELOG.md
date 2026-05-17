@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-05-16
+
 ### Changed
 
 - `check_in` and generated briefings now treat accepted handoffs as open work, not hidden work. Responses split open action handoffs into pending and accepted counts.
