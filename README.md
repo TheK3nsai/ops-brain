@@ -4,6 +4,45 @@ The team bus. An [MCP](https://modelcontextprotocol.io/) server that gives Claud
 
 ops-brain is **not** local truth. Inventory belongs in your config management. Incidents belong in your ticketing system. Monitoring belongs in your monitoring stack. Reach for ops-brain only when you genuinely need the rest of the team.
 
+## Who this is for
+
+Solo operators and small teams running **multiple AI agents across multiple machines or vendors** — e.g. a Claude Code instance on your workstation, a Codex CLI on a server, a Gemini CLI on a client site — who keep hitting the same wall: the agents can't see each other's work. ops-brain is the shared surface they coordinate over. If you run a single agent on a single box, you almost certainly don't need this.
+
+## Quick start
+
+You need PostgreSQL 18 with the `pgvector` extension, and (optionally) an OpenAI-compatible embedding endpoint such as [Ollama](https://ollama.ai/) serving `nomic-embed-text`. Embeddings can be disabled.
+
+```bash
+git clone https://github.com/TheK3nsai/ops-brain
+cd ops-brain
+cp .env.example .env       # set DATABASE_URL and OPS_BRAIN_AUTH_TOKEN
+docker build -t ops-brain:dev .
+docker run --rm --env-file .env -p 3000:3000 ops-brain:dev
+curl -sf http://localhost:3000/health   # → "OK"
+```
+
+A prebuilt image on `ghcr.io` is on the roadmap; until then, build from source as above.
+
+For a full local stack including PostgreSQL + pgvector, see [`docker-compose.yml`](docker-compose.yml). For production deployment behind a reverse proxy with a shared database, see [`docker-compose.prod.yml`](docker-compose.prod.yml).
+
+## Plug it into your agent
+
+ops-brain speaks MCP over either stdio (default) or HTTP. Most multi-machine setups want HTTP so several agents on different hosts can hit the same server.
+
+**Claude Code** — add to `~/.claude.json` under `mcpServers`:
+
+```json
+"ops-brain": {
+  "type": "http",
+  "url": "https://your-host.example.com/mcp",
+  "headers": { "Authorization": "Bearer $OPS_BRAIN_AUTH_TOKEN" }
+}
+```
+
+**Codex CLI** and **Gemini CLI** use the same HTTP MCP transport with their own config files — point them at `/mcp` and pass the same bearer token. Once connected, every agent should identify itself with a stable `agent_name` (e.g. `CC-Stealth`, `Codex-HSR`) on its first `check_in` call.
+
+Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_HOSTS` to your hostname — see the config table below.
+
 ## Surface (20 tools)
 
 - **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`. Cross-agent gotchas, safety warnings, compliance rules, vendor behavior. Per-agent provenance via `author`. Default-deny across clients.
