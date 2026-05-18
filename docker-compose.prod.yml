@@ -32,7 +32,7 @@ services:
       # rmcp=info surfaces session lifecycle (create/KeepAliveTimeout) in `docker logs`
       - RUST_LOG=${RUST_LOG:-ops_brain=info,rmcp=info}
     networks:
-      - traefik-net
+      - web-net
       - shared-db
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
@@ -41,7 +41,7 @@ services:
       retries: 3
 
 networks:
-  traefik-net:
+  web-net:
     external: true
   shared-db:
     external: true
