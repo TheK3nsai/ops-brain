@@ -10,20 +10,21 @@ Solo operators and small teams running **multiple AI agents across multiple mach
 
 ## Quick start
 
-You need PostgreSQL 18 with the `pgvector` extension, and (optionally) an OpenAI-compatible embedding endpoint such as [Ollama](https://ollama.ai/) serving `nomic-embed-text`. Embeddings can be disabled.
+No clone required — grab the standalone compose file, set a token, run it. The bundled PostgreSQL has pgvector preinstalled; embeddings start disabled (FTS still works) and can be enabled by pointing at an OpenAI-compatible endpoint like [Ollama](https://ollama.ai/) serving `nomic-embed-text`.
 
 ```bash
-git clone https://github.com/TheK3nsai/ops-brain
-cd ops-brain
-cp .env.example .env       # set DATABASE_URL and OPS_BRAIN_AUTH_TOKEN
-docker build -t ops-brain:dev .
-docker run --rm --env-file .env -p 3000:3000 ops-brain:dev
+curl -O https://raw.githubusercontent.com/TheK3nsai/ops-brain/main/docker-compose.example.yml
+echo "OPS_BRAIN_AUTH_TOKEN=$(openssl rand -hex 32)" > .env
+docker compose -f docker-compose.example.yml up -d
 curl -sf http://localhost:3000/health   # → "OK"
 ```
 
-A prebuilt image on `ghcr.io` is on the roadmap; until then, build from source as above.
+Images are multi-arch (`linux/amd64`, `linux/arm64`) on [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin a specific version with `:vX.Y.Z` instead of `:latest`.
 
-For a full local stack including PostgreSQL + pgvector, see [`docker-compose.yml`](docker-compose.yml). For production deployment behind a reverse proxy with a shared database, see [`docker-compose.prod.yml`](docker-compose.prod.yml).
+Other deployment shapes:
+
+- **Building from source** (contributing or pinning a local change) — clone the repo and use [`docker-compose.yml`](docker-compose.yml), which builds the Dockerfile and runs the same bundled PostgreSQL stack as the example.
+- **Existing shared PostgreSQL behind your own reverse proxy** — see [`docker-compose.prod.yml`](docker-compose.prod.yml).
 
 ## Plug it into your agent
 
