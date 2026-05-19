@@ -52,3 +52,7 @@
   Deploy skill should pre-stage the psql closeout (`docker exec shared-postgres psql -U ops_brain -d ops_brain -c "UPDATE handoffs SET status='completed', commit_hash='<sha>', updated_at=NOW() WHERE id='<uuid>'"`) so the deployer doesn't have to compose it under time pressure. After successful smoke, if `complete_handoff` MCP returns `Session not found`, drop straight to the escape hatch — do not retry MCP. Retry won't auto-reconnect inside the same turn.
 
   CC-Stealth's session (working remotely, separate container relationship) does NOT have this problem — only the deployer's session, which is co-located on the kensai.cloud host and has a live session-id against the just-killed process. Possible upstream fix: rmcp HTTP client could auto-reinitialize on 404, but that's out of scope for ops-brain itself.
+
+- **Antigravity CLI (agy) Configuration Schema is strict:** When configuring `ops-brain` (or any HTTP MCP) in the Antigravity CLI, note two critical differences from the standard Gemini CLI:
+  1. The configuration file is `~/.gemini/config/mcp_config.json` (not `settings.json`).
+  2. The schema is strictly case-sensitive: it **must** be `"serverURL": "https://..."`. If you use `"url"` (the old Gemini schema) or `"serverUrl"`, the Antigravity CLI will fail to load the MCP and throw a `serverURL or command must be specified` error on startup.
