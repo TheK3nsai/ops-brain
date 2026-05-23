@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Stripped deployment-specific URLs and private hostnames from repo docs (`CHANGELOG.md`, `CLAUDE.md`, `GOTCHAS.md`, `docker-compose.yml`) and the v3.2.0 GitHub release notes. Repo is now generic enough to fork and adapt without inheriting one operator's fleet topology. The `20260426000002_normalize_handoff_machine_names.sql` migration retains its original hostnames as data (modifying a shipped migration would break deployments via checksum drift); diff-based scanning leaves it alone on unchanged commits.
+
+### Added
+
+- `.github/workflows/secret-scan.yml` blocks PRs and pushes-to-main that re-introduce the cleaned-up fleet-private patterns. Self-excluded from its own scan. Pairs with a workstation-side pre-commit hook for immediate feedback. Bypass for the rare legitimate case: `ALLOW_FLEET_STRINGS=1 git commit ...`.
+
 ## [3.2.0] — 2026-05-16
 
 ### Changed

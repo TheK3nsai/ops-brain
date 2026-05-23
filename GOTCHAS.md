@@ -9,10 +9,11 @@
 ## Commit workflow
 
 - **PreToolUse `cargo fmt --check` hook blocks the whole Bash invocation, including staging.** When you chain `git add <files> && git commit -m "..."` and the fmt hook trips, neither half runs — so untracked files you intended to include are still untracked. After `cargo fmt`, re-stage the originally-intended set explicitly (especially new migrations and other untracked files); `git add -u` alone only catches tracked-file edits. Caught once on 2026-05-12 (v3.1 PR #53), required a follow-up commit; squash-merge cleaned it up but is avoidable.
+- **Fleet-private strings are blocked at commit + CI time.** `.github/workflows/secret-scan.yml` greps the PR/push diff for a denylist of deployment URLs and private hostnames (see the workflow's `PATTERN` for the current list) and fails the workflow on match. Workstation-side Claude Code hooks should mirror the same denylist for immediate feedback before push. If a commit legitimately needs one of those strings (rare), retry with `ALLOW_FLEET_STRINGS=1 git commit ...` — and reconsider whether the string really belongs in the public repo. The pre-existing `20260426000002_normalize_handoff_machine_names.sql` migration contains the historical hostnames as data and must not be modified (checksum rule); diff-based scanning leaves it alone on unchanged commits.
 
 ## Production deploy checks
 
-- **Production compose does not publish port 3000 to the host.** `ops-brain` listens on `0.0.0.0:3000` inside the container and exposes `3000/tcp` to Docker networks for the reverse proxy; host-local `curl http://localhost:3000/health` is not a valid prod smoke test. Use `docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/health` for the container health path, `curl -sf https://ops.kensai.cloud/health` for the public reverse-proxy path, or an MCP initialize/tools-list request through the reverse proxy. Caught during the first `Codex-Cloud` deploy smoke on 2026-05-12.
+- **Production compose does not publish port 3000 to the host.** `ops-brain` listens on `0.0.0.0:3000` inside the container and exposes `3000/tcp` to Docker networks for the reverse proxy; host-local `curl http://localhost:3000/health` is not a valid prod smoke test. Use `docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/health` for the container health path, `curl -sf https://<your-deploy-host>/health` for the public reverse-proxy path, or an MCP initialize/tools-list request through the reverse proxy. Caught during the first `Codex-Cloud` deploy smoke on 2026-05-12.
 - **`/health` is unauthenticated on purpose.** The bearer middleware skips `/health` so Docker and reverse proxies can probe liveness without the MCP bearer. `/api` and `/mcp` remain bearer-protected.
 
 ## Compose files
@@ -51,7 +52,7 @@
 
   Deploy skill should pre-stage the psql closeout (`docker exec shared-postgres psql -U ops_brain -d ops_brain -c "UPDATE handoffs SET status='completed', commit_hash='<sha>', updated_at=NOW() WHERE id='<uuid>'"`) so the deployer doesn't have to compose it under time pressure. After successful smoke, if `complete_handoff` MCP returns `Session not found`, drop straight to the escape hatch — do not retry MCP. Retry won't auto-reconnect inside the same turn.
 
-  CC-Stealth's session (working remotely, separate container relationship) does NOT have this problem — only the deployer's session, which is co-located on the kensai.cloud host and has a live session-id against the just-killed process. Possible upstream fix: rmcp HTTP client could auto-reinitialize on 404, but that's out of scope for ops-brain itself.
+  A remote contributor's session (working from a different machine, separate container relationship) does NOT have this problem — only the deployer's session, which is co-located on the deployment host and has a live session-id against the just-killed process. Possible upstream fix: rmcp HTTP client could auto-reinitialize on 404, but that's out of scope for ops-brain itself.
 
 - **Antigravity CLI (agy) Configuration Schema is strict:** When configuring `ops-brain` (or any HTTP MCP) in the Antigravity CLI, note two critical differences from the standard Gemini CLI:
   1. The configuration file is `~/.gemini/config/mcp_config.json` (not `settings.json`).
