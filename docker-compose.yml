@@ -7,7 +7,8 @@
 #  already have a PostgreSQL server, or you want a self-contained stack.
 #
 #  DO NOT USE THIS FILE WHEN: you're deploying alongside an existing
-#  PostgreSQL (e.g. shared-postgres on kensai-cloud) — use docker-compose.prod.yml
+#  PostgreSQL on the same host (e.g. a `shared-postgres` container reused
+#  across services) — use docker-compose.prod.yml
 #  with `docker compose -f docker-compose.prod.yml up -d` instead.
 #
 #  Container names are intentionally suffixed `-dev` and the project is named
