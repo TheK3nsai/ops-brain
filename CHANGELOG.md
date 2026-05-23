@@ -18,7 +18,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - HTTP MCP sessions now survive 1h of idle (was 5min). Bumps `LocalSessionManager.session_config.keep_alive` to `Some(Duration::from_secs(3600))` to address `Session not found` after-idle errors that forced manual `/mcp` reconnects across all client implementations (Claude Code's Rust rmcp HTTP client, Gemini CLI's Node `@modelcontextprotocol/sdk`).
-- Documented the production health-check gotcha: prod compose does not publish host port 3000, `/health` is unauthenticated, and deploy smoke tests should use container health plus `https://ops.kensai.cloud/health`.
+- Documented the production health-check gotcha: prod compose does not publish host port 3000, `/health` is unauthenticated, and deploy smoke tests should use container health plus the externally reachable `/health` URL exposed by the reverse proxy.
 - Removed stale watchdog test env from CI after the v3 de-bloat.
 - Replaced stale Zammad error guidance that referenced the removed `upsert_client` MCP tool.
 
@@ -140,11 +140,11 @@ ops-brain still trusts the transport (Caddy + Cloudflare for HTTP, stdio for loc
 
 ### Fixed
 
-- **Handoff routing was silently dropping messages when sender and recipient used different name forms.** A CC writing `to_machine: "CC-Stealth"` (CC name) was invisible to a recipient running `check_in(my_name: "CC-Stealth")` because `check_in` queried by hostname (`stealth`) — and vice versa. The bug surfaced when CC-CPA sent a reply handoff with `to_machine: "CC-Stealth"` / `from_machine: "CC-CPA"` and the recipient's `check_in` returned 0. Fix: all handoff handlers now normalize machine-name inputs (CC name OR hostname OR mixed-case alias) to a single canonical CC-name form before write/query. Migration `20260426000002_normalize_handoff_machine_names.sql` backfills existing rows; idempotent, covers the five known hostname aliases (`stealth`, `kensai-cloud`, `HV-FS0`, `SMYT-SERVER`, legacy `CPA-SRV`).
+- **Handoff routing was silently dropping messages when sender and recipient used different name forms.** A CC writing `to_machine: "CC-Stealth"` (CC name) was invisible to a recipient running `check_in(my_name: "CC-Stealth")` because `check_in` queried by hostname (`stealth`) — and vice versa. The bug surfaced when CC-CPA sent a reply handoff with `to_machine: "CC-Stealth"` / `from_machine: "CC-CPA"` and the recipient's `check_in` returned 0. Fix: all handoff handlers now normalize machine-name inputs (CC name OR hostname OR mixed-case alias) to a single canonical CC-name form before write/query. Migration `20260426000002_normalize_handoff_machine_names.sql` backfills existing rows; idempotent, covering the hostname aliases known to the deploying fleet at upgrade time.
 
 ### Changed
 
-- **`CC_TEAM` table shape** in `src/tools/cc_team.rs` widened from `(cc_name, hostname, client_slug)` to `(cc_name, &[hostname_aliases], client_slug)`. CC-CPA's machine has been called both `SMYT-SERVER` and `CPA-SRV` across docs and history; both now resolve to `CC-CPA`. Adding more aliases is a one-line edit, not a schema change.
+- **`CC_TEAM` table shape** in `src/tools/cc_team.rs` widened from `(cc_name, hostname, client_slug)` to `(cc_name, &[hostname_aliases], client_slug)`, so a single agent can have multiple historical hostnames resolve to the same canonical name. Adding more aliases is a one-line edit, not a schema change.
 - **`normalize_machine_name(input)` helper** added (case-insensitive, trims whitespace, returns canonical CC name with allowlist on error). Applied at `handle_create_handoff`, `handle_list_handoffs`, `handle_check_in`, and the `machine` filter in `handle_get_situational_awareness`.
 - **Tool param descriptions** updated on `CreateHandoffParams`, `ListHandoffsParams`, `CheckInParams`, `GetSituationalAwarenessParams.machine` to document the dual-form acceptance and CC-name canonical form.
 - **`is_valid_cc_name()` retained as a strict check** (case-sensitive, no hostnames) for `add_knowledge.author_cc` validation — provenance is immutable post-write, so loose normalization is the wrong tradeoff there.
