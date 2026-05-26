@@ -9,6 +9,8 @@ services:
       dockerfile: Dockerfile
     container_name: ops-brain
     restart: always
+    security_opt:
+      - no-new-privileges:true
     deploy:
       resources:
         limits:
