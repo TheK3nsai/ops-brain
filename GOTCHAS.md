@@ -15,6 +15,7 @@
 
 - **Production compose does not publish port 3000 to the host.** `ops-brain` listens on `0.0.0.0:3000` inside the container and exposes `3000/tcp` to Docker networks for the reverse proxy; host-local `curl http://localhost:3000/health` is not a valid prod smoke test. Use `docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/health` for the container health path, `curl -sf https://<your-deploy-host>/health` for the public reverse-proxy path, or an MCP initialize/tools-list request through the reverse proxy. Caught during the first `Codex-Cloud` deploy smoke on 2026-05-12.
 - **`/health` is unauthenticated on purpose.** The bearer middleware skips `/health` so Docker and reverse proxies can probe liveness without the MCP bearer. `/api` and `/mcp` remain bearer-protected.
+- **Deployment target `~/docker/ops-brain` reports as a highly dirty and stale Git branch.** This is a false positive and completely normal. The `deploy-ops-brain` skill runs `rsync` from `~/ops-brain/` to `~/docker/ops-brain/` with `--exclude=.git` to rebuild the container. Because the `.git` folder in `~/docker/ops-brain` is never updated by rsync, the local git index remains frozen at a historical commit while the code files are dynamically overwritten with clean production assets. Do not try to run `git` commands, revert, or pull in `~/docker/ops-brain`; use the development repository at `~/ops-brain` as the clean Git source of truth instead.
 
 ## Compose files
 
