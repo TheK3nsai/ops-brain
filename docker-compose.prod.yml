@@ -41,6 +41,11 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    labels:
+      # Locally-built image (no registry) — exclude from diun's watch-by-default
+      # so it stops probing a non-existent repo and logging daily "access denied".
+      # Base-image (Dockerfile FROM) updates are covered by Dependabot, not diun.
+      diun.enable: "false"
 
 networks:
   web-net:
