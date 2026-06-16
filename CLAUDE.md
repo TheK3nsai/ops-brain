@@ -6,13 +6,13 @@ Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18
 
 For roadmap philosophy + hard stops (what we will/won't build, and why), see `ROADMAP.md`. For shipped history, see `CHANGELOG.md`.
 
-## Surface (20 tools)
+## Surface (21 tools)
 
 - **Knowledge** (5): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`
 - **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
 - **Team bus** (1): `check_in` — open action handoffs (pending + accepted) + recent notify-class handoffs for `agent_name`
 - **Search** (1): `backfill_embeddings`
-- **Zammad** (4): `list_tickets`, `get_ticket`, `create_ticket`, `search_tickets`
+- **Zammad** (5): `list_tickets`, `get_ticket`, `create_ticket`, `update_ticket` (state/priority + inline note; `state="closed"` closes), `search_tickets`
 - **Briefings** (1): `generate_briefing` (daily/weekly handoffs+tickets summary, optionally client-scoped)
 
 ## Architecture Constraints

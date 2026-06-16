@@ -162,6 +162,21 @@ pub struct CreateArticleInline {
     pub time_accounting_type_id: Option<i64>,
 }
 
+/// Partial update for an existing ticket. All fields optional — only the
+/// provided ones are sent (and changed). An inline `article` adds a note in the
+/// same request, e.g. a resolution summary when transitioning to `closed`.
+#[derive(Debug, Default, Serialize)]
+pub struct UpdateTicketPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub article: Option<CreateArticleInline>,
+}
+
 // ===== API functions =====
 
 fn build_client(_config: &ZammadConfig) -> reqwest::Client {
@@ -343,6 +358,40 @@ pub async fn create_ticket(
         .map_err(|e| format!("Failed to parse Zammad create ticket response: {e}"))
 }
 
+/// Update an existing ticket (state, priority, owner) and optionally add an
+/// inline article. Returns the updated ticket. Uses `PUT /tickets/{id}`.
+pub async fn update_ticket(
+    config: &ZammadConfig,
+    ticket_id: i64,
+    payload: &UpdateTicketPayload,
+) -> Result<ZammadTicket, String> {
+    let client = build_client(config);
+    let url = api_url(config, &format!("/tickets/{ticket_id}"));
+
+    let response = client
+        .put(&url)
+        .header("Authorization", auth_header(config))
+        .header("Content-Type", "application/json")
+        .query(&[("expand", "true")])
+        .json(payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to update Zammad ticket {ticket_id}: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Zammad PUT ticket {ticket_id} returned HTTP {status}: {body}"
+        ));
+    }
+
+    response
+        .json::<ZammadTicket>()
+        .await
+        .map_err(|e| format!("Failed to parse Zammad update ticket response: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,6 +570,41 @@ mod tests {
         assert_eq!(json["article"]["internal"], true);
         // time_unit should be skipped
         assert!(json["article"].get("time_unit").is_none());
+    }
+
+    #[test]
+    fn serialize_update_ticket_payload_close_with_note() {
+        let payload = UpdateTicketPayload {
+            state_id: Some(4), // closed
+            article: Some(CreateArticleInline {
+                body: "Resolved: replaced the failing PSU.".to_string(),
+                content_type: Some("text/plain".to_string()),
+                article_type: Some("note".to_string()),
+                internal: Some(false),
+                time_unit: None,
+                time_accounting_type_id: None,
+            }),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["state_id"], 4);
+        assert_eq!(
+            json["article"]["body"],
+            "Resolved: replaced the failing PSU."
+        );
+        assert_eq!(json["article"]["internal"], false);
+        // unset fields are omitted entirely
+        assert!(json.get("priority_id").is_none());
+        assert!(json.get("owner_id").is_none());
+    }
+
+    #[test]
+    fn serialize_update_ticket_payload_empty_is_empty_object() {
+        // A no-op update serializes to `{}` — all fields skip_serializing_if None.
+        let payload = UpdateTicketPayload::default();
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json, serde_json::json!({}));
     }
 
     // parse_ticket_search_response

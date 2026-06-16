@@ -44,13 +44,13 @@ ops-brain speaks MCP over either stdio (default) or HTTP. Most multi-machine set
 
 Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_HOSTS` to your hostname — see the config table below.
 
-## Surface (20 tools)
+## Surface (21 tools)
 
 - **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`. Cross-agent gotchas, safety warnings, compliance rules, vendor behavior. Per-agent provenance via `author`. Default-deny across clients.
 - **Handoffs** — `create_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit-linkage via `commit_hash` on completion + `mark_merged` at integration time.
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
 - **Search** — `backfill_embeddings` for the FTS+vector hybrid (PostgreSQL tsvector + pgvector HNSW + RRF fusion).
-- **Zammad** — `list_tickets`, `get_ticket`, `create_ticket`, `search_tickets`. Resolves `client_slug` to Zammad group/org/customer.
+- **Zammad** — `list_tickets`, `get_ticket`, `create_ticket`, `update_ticket`, `search_tickets`. Resolves `client_slug` to Zammad group/org/customer. `update_ticket` drives state transitions (incl. close), priority, and inline resolution notes.
 - **Briefings** — `generate_briefing` produces daily/weekly markdown summaries (handoffs + tickets), optionally client-scoped, stored for history. Same logic available at `POST /api/briefing`.
 
 ## Cross-client safety

@@ -54,6 +54,25 @@ pub struct SearchTicketsParams {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateTicketParams {
+    /// Zammad ticket ID (integer)
+    pub ticket_id: i64,
+    /// New state: "new", "open", "pending_reminder", "closed" (optional). Use "closed" to close.
+    pub state: Option<String>,
+    /// New priority: "low", "normal", "high" (optional)
+    pub priority: Option<String>,
+    /// Optional note added as an article in the same request — e.g. a resolution
+    /// summary when closing. Recommended when closing so the "why" is recorded.
+    pub note: Option<String>,
+    /// Whether the note is internal-only (default: false — visible to the customer)
+    pub note_internal: Option<bool>,
+    /// Time spent in minutes for time accounting (applies to the note article)
+    pub time_unit: Option<f64>,
+    /// Time accounting type: 1=Maintenance, 2=On-site, 3=Remote, 4=On-site/Remote
+    pub time_accounting_type_id: Option<i64>,
+}
+
 // ===== HANDLERS =====
 
 pub(crate) async fn handle_list_tickets(
@@ -214,6 +233,71 @@ pub(crate) async fn handle_create_ticket(
     };
 
     json_result(&ticket)
+}
+
+pub(crate) async fn handle_update_ticket(
+    brain: &super::OpsBrain,
+    p: UpdateTicketParams,
+) -> CallToolResult {
+    let zammad = match &brain.zammad_config {
+        Some(c) => c,
+        None => return error_result("Zammad not configured (set ZAMMAD_URL and ZAMMAD_API_TOKEN)"),
+    };
+
+    let state_id = match &p.state {
+        Some(s) => match crate::zammad::state_name_to_id(s) {
+            Some(id) => Some(id),
+            None => {
+                return error_result(&format!(
+                    "Unknown state: '{s}'. Use: new, open, pending_reminder, closed"
+                ))
+            }
+        },
+        None => None,
+    };
+
+    let priority_id = match &p.priority {
+        Some(pr) => match crate::zammad::priority_name_to_id(pr) {
+            Some(id) => Some(id),
+            None => {
+                return error_result(&format!("Unknown priority: '{pr}'. Use: low, normal, high"))
+            }
+        },
+        None => None,
+    };
+
+    let article = p
+        .note
+        .as_ref()
+        .map(|body| crate::zammad::CreateArticleInline {
+            body: body.clone(),
+            content_type: Some("text/plain".to_string()),
+            article_type: Some("note".to_string()),
+            internal: Some(p.note_internal.unwrap_or(false)),
+            time_unit: p.time_unit,
+            time_accounting_type_id: p.time_accounting_type_id,
+        });
+
+    // Reject no-op calls so callers get a clear error rather than a silent PUT
+    // that changes nothing.
+    if state_id.is_none() && priority_id.is_none() && article.is_none() {
+        return error_result("Nothing to update — provide at least one of: state, priority, note.");
+    }
+
+    let payload = crate::zammad::UpdateTicketPayload {
+        state_id,
+        priority_id,
+        // Never reassign ownership on update — clobbering the in-flight owner on
+        // every close would be worse than leaving it. (create_ticket sets the
+        // default owner; updates intentionally do not.)
+        owner_id: None,
+        article,
+    };
+
+    match crate::zammad::update_ticket(zammad, p.ticket_id, &payload).await {
+        Ok(ticket) => json_result(&ticket),
+        Err(e) => error_result(&e),
+    }
 }
 
 pub(crate) async fn handle_search_tickets(

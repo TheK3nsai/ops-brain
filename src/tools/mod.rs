@@ -267,6 +267,19 @@ impl OpsBrain {
         Ok(zammad::handle_search_tickets(self, params.0).await)
     }
 
+    #[tool(
+        name = "update_ticket",
+        description = "Update a Zammad ticket's state, priority, and/or add a note. \
+        Use state='closed' to close a ticket; pass `note` to record the resolution \
+        in the same call. Provide at least one of state, priority, or note."
+    )]
+    async fn update_ticket(
+        &self,
+        params: Parameters<zammad::UpdateTicketParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(zammad::handle_update_ticket(self, params.0).await)
+    }
+
     // ===== BRIEFING TOOLS =====
 
     #[tool(
