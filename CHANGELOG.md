@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `update_ticket` Zammad tool (21st tool) — closes the loop the fleet was missing: agents could open and hand off tickets but had no way to close them. Drives state transitions (incl. `state="closed"`), priority changes, and an optional inline `note` article (e.g. a resolution summary recorded in the same call, customer-visible by default or `note_internal: true`). Mirrors `create_ticket`'s article-inline shape via `PUT /tickets/{id}`; rejects no-op calls (must provide at least one of state/priority/note). Supports `time_unit`/`time_accounting_type_id` so closing notes can carry time accounting.
 - `.github/workflows/secret-scan.yml` blocks PRs and pushes-to-main that re-introduce the cleaned-up fleet-private patterns. Self-excluded from its own scan. Pairs with a workstation-side pre-commit hook for immediate feedback. Bypass for the rare legitimate case: `ALLOW_FLEET_STRINGS=1 git commit ...`.
 
 ## [3.2.0] — 2026-05-16
