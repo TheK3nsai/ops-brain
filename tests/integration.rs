@@ -30,9 +30,6 @@ mod client_tests {
             "Test Client",
             &slug,
             Some("test notes"),
-            None,
-            None,
-            None,
         )
         .await
         .unwrap();
@@ -68,35 +65,18 @@ mod client_tests {
         let pool = pool().await;
         let slug = format!("upsert-test-{}", Uuid::now_v7());
 
-        let _c1 = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Original",
-            &slug,
-            Some("v1"),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let _c1 = ops_brain::repo::client_repo::upsert_client(&pool, "Original", &slug, Some("v1"))
+            .await
+            .unwrap();
 
-        let c2 = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Updated",
-            &slug,
-            Some("v2"),
-            Some(10),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let c2 = ops_brain::repo::client_repo::upsert_client(&pool, "Updated", &slug, Some("v2"))
+            .await
+            .unwrap();
 
         // Same slug, should update name and notes
         assert_eq!(c2.slug, slug);
         assert_eq!(c2.name, "Updated");
         assert_eq!(c2.notes.as_deref(), Some("v2"));
-        assert_eq!(c2.zammad_org_id, Some(10));
 
         // Cleanup
         sqlx::query("DELETE FROM clients WHERE slug = $1")
@@ -588,24 +568,14 @@ mod audit_log_tests {
             "Requesting Client",
             &slug_req,
             None,
-            None,
-            None,
-            None,
         )
         .await
         .unwrap();
 
-        let own_client = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Owning Client",
-            &slug_own,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let own_client =
+            ops_brain::repo::client_repo::upsert_client(&pool, "Owning Client", &slug_own, None)
+                .await
+                .unwrap();
 
         let entity_id = Uuid::now_v7();
 
@@ -698,7 +668,7 @@ mod check_in_tests {
     use super::*;
 
     fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
-        ops_brain::tools::OpsBrain::new(pool, None, None)
+        ops_brain::tools::OpsBrain::new(pool, None)
     }
 
     fn extract_text(result: &rmcp::model::CallToolResult) -> String {
@@ -808,7 +778,7 @@ mod coordination_handler_tests {
     };
 
     fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
-        ops_brain::tools::OpsBrain::new(pool, None, None)
+        ops_brain::tools::OpsBrain::new(pool, None)
     }
 
     fn extract_text(result: &rmcp::model::CallToolResult) -> String {

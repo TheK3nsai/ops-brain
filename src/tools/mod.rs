@@ -5,7 +5,6 @@ mod helpers;
 pub mod knowledge;
 mod search;
 mod shared;
-mod zammad;
 
 use rmcp::{
     handler::server::wrapper::Parameters, model::*, tool, tool_handler, tool_router,
@@ -14,26 +13,19 @@ use rmcp::{
 use sqlx::PgPool;
 
 use crate::embeddings::EmbeddingClient;
-use crate::zammad::ZammadConfig;
 
 #[derive(Clone)]
 pub struct OpsBrain {
     pub(crate) pool: PgPool,
     pub(crate) embedding_client: Option<EmbeddingClient>,
-    pub(crate) zammad_config: Option<ZammadConfig>,
 }
 
 #[tool_router]
 impl OpsBrain {
-    pub fn new(
-        pool: PgPool,
-        embedding_client: Option<EmbeddingClient>,
-        zammad_config: Option<ZammadConfig>,
-    ) -> Self {
+    pub fn new(pool: PgPool, embedding_client: Option<EmbeddingClient>) -> Self {
         Self {
             pool,
             embedding_client,
-            zammad_config,
         }
     }
 
@@ -221,71 +213,12 @@ impl OpsBrain {
         Ok(search::handle_backfill_embeddings(self, params.0).await)
     }
 
-    // ===== ZAMMAD TICKET TOOLS =====
-
-    #[tool(
-        name = "list_tickets",
-        description = "List Zammad tickets. Filter by client, state, priority. Omit client_slug for all clients."
-    )]
-    async fn list_tickets(
-        &self,
-        params: Parameters<zammad::ListTicketsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(zammad::handle_list_tickets(self, params.0).await)
-    }
-
-    #[tool(
-        name = "get_ticket",
-        description = "Get a Zammad ticket by ID with full article history (messages, notes, time accounting)."
-    )]
-    async fn get_ticket(
-        &self,
-        params: Parameters<zammad::GetTicketParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(zammad::handle_get_ticket(self, params.0).await)
-    }
-
-    #[tool(
-        name = "create_ticket",
-        description = "Create a Zammad ticket. Resolves client_slug to group/org/customer."
-    )]
-    async fn create_ticket(
-        &self,
-        params: Parameters<zammad::CreateTicketParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(zammad::handle_create_ticket(self, params.0).await)
-    }
-
-    #[tool(
-        name = "search_tickets",
-        description = "Search Zammad tickets via Elasticsearch syntax."
-    )]
-    async fn search_tickets(
-        &self,
-        params: Parameters<zammad::SearchTicketsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(zammad::handle_search_tickets(self, params.0).await)
-    }
-
-    #[tool(
-        name = "update_ticket",
-        description = "Update a Zammad ticket's state, priority, and/or add a note. \
-        Use state='closed' to close a ticket; pass `note` to record the resolution \
-        in the same call. Provide at least one of state, priority, or note."
-    )]
-    async fn update_ticket(
-        &self,
-        params: Parameters<zammad::UpdateTicketParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(zammad::handle_update_ticket(self, params.0).await)
-    }
-
     // ===== BRIEFING TOOLS =====
 
     #[tool(
         name = "generate_briefing",
-        description = "Generate a daily/weekly operational briefing. Aggregates pending \
-        handoffs and Zammad tickets. Optionally client-scoped. Stored for history."
+        description = "Generate a daily/weekly operational briefing. Summarizes pending \
+        handoffs. Optionally client-scoped. Stored for history."
     )]
     async fn generate_briefing(
         &self,
@@ -303,8 +236,8 @@ impl ServerHandler for OpsBrain {
             .with_instructions(
                 "ops-brain is the team bus. Your local instructions, filesystem, and git \
                  history are the source of truth — reach for ops-brain only when you need \
-                 the rest of the team: handoffs, cross-agent knowledge, briefings, and \
-                 Zammad tickets. Identify yourself with a free-form `agent_name` (slug, \
+                 the rest of the team: handoffs, cross-agent knowledge, and briefings. \
+                 Identify yourself with a free-form `agent_name` (slug, \
                  e.g. 'CC-Stealth', 'Codex-HSR'). Default-deny across clients: \
                  cross-client content requires acknowledge_cross_client=true.",
             )

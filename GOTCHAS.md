@@ -2,7 +2,7 @@
 
 ## Database Migrations
 
-- **Inventory and incident tables were dropped in v3.0.0.** Do not add them back. Configuration management (Terraform/Ansible/local config files) is the source of truth for inventory; Zammad is the source of truth for tickets/incidents; Uptime Kuma is the source of truth for monitoring. ops-brain stays on its lane: handoffs, knowledge, briefings, Zammad orchestration.
+- **Inventory/incident tables were dropped in v3.0.0; Zammad ticketing in v4.0.0.** Do not add them back. Configuration management (Terraform/Ansible/local config files) is the source of truth for inventory; tickets/incidents live in each client's own systems (Zammad was decommissioned fleet-side); Uptime Kuma is the source of truth for monitoring. ops-brain stays on its lane: handoffs, knowledge, briefings.
 - **`knowledge.source_incident_id` was dropped** in the same migration. Provenance now lives entirely in the `author` column.
 - **Re-applying a still-untracked migration after editing it.** If a new migration file has already run against your local dev DB and you edit the file before committing, sqlx will refuse to boot with `VersionMismatch(<version>)` because the checksum drifted. Recipe to recover: `DELETE FROM _sqlx_migrations WHERE version = <N>;` then `DROP` the indexes/columns it added; re-run. Only safe while the migration is unreleased — never do this once it has merged.
 

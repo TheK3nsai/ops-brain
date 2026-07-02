@@ -61,9 +61,11 @@ Non-negotiable. Any idea that violates one of these is DOA.
   good reason — per-agent config belongs in each agent's local instructions or
   in per-call parameters, not in a shared row that mutates other agents'
   defaults.
-- **No inventory, incidents, or monitoring tables.** Removed in v3.0.0.
-  Configuration management owns inventory, Zammad owns tickets/incidents,
-  Uptime Kuma owns monitoring. ops-brain stays on its lane.
+- **No inventory, incidents, monitoring, or ticketing tables.** Inventory,
+  incidents, and monitoring were removed in v3.0.0; Zammad ticketing followed
+  in v4.0.0. Configuration management owns inventory, Uptime Kuma owns
+  monitoring, and tickets/incidents live in each client's own systems.
+  ops-brain stays on its lane: handoffs, knowledge, briefings.
 
 ## Dead forever (don't resurrect)
 
@@ -103,14 +105,17 @@ local-as-source-of-truth, **remove it**.
 Removed in v3.0.0 (2026-05-09). Tool count 59 → 18, ~ -10k LOC, 13 tables
 CASCADE-dropped. See `CHANGELOG.md` for the full record.
 
-## Open-but-dormant items
+### ❌ Zammad ticketing integration
 
-Not on the roadmap, noted for when they hit.
-
-- **Zammad retirement audit.** Eduardo confirmed Zammad is supposed to go
-  away. ops-brain tickets are the survivor. Before shutdown, someone needs to
-  audit what's in Zammad and decide what should migrate. Not on the roadmap
-  because there's no date; flag it when the shutdown date lands.
+Removed in v4.0.0 (2026-07-02). Zammad was decommissioned fleet-side (RAM
+reclamation — underused, only two agents touched it lightly, tickets exported
+to CSV + two restore-verified DB dumps kept). Retiring the integration dropped
+the 5 ticket tools (`list_tickets`, `get_ticket`, `create_ticket`,
+`update_ticket`, `search_tickets`), the `src/zammad.rs` REST client, the
+briefing ticket summary, and the `zammad_*` columns on `clients`. Tool count
+21 → 16. Tickets/incidents now live in each client's own systems. This closes
+the "Zammad retirement audit" that sat dormant here — the audit happened
+(export + dumps), and the shutdown landed.
 
 ## How to apply this file
 

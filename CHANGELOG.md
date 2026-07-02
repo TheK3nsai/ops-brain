@@ -4,13 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.0.0] — 2026-07-02
+
+### Removed — Zammad ticketing retirement (breaking)
+
+- Removed the entire Zammad integration after Zammad was decommissioned fleet-side (RAM reclamation — underused; tickets were exported to CSV and two restore-verified DB dumps retained before shutdown). **Surface: 21 → 16 tools.** Dropped the 5 ticket tools (`list_tickets`, `get_ticket`, `create_ticket`, `update_ticket`, `search_tickets`), the `src/zammad.rs` REST client and `src/tools/zammad.rs`, the `ZammadConfig` struct, the `ZAMMAD_URL`/`ZAMMAD_API_TOKEN`/`ZAMMAD_DEFAULT_OWNER_ID` env vars, and the ticket summary from `generate_briefing` / `POST /api/briefing` (briefings now cover pending handoffs only). The `update_ticket` tool added after 3.2.0 was never in a tagged release, so it ships here as removed rather than added.
+- Migration `20260702191511_drop_zammad_columns_from_clients.sql` drops `zammad_org_id`, `zammad_group_id`, and `zammad_customer_id` from `clients`; `upsert_client` and the `Client` model lose those parameters/fields. The `ticket_links` table was already CASCADE-dropped in the v3.0.0 de-bloat. Tickets/incidents now live in each client's own systems. Closes the long-dormant "Zammad retirement audit" tracked in `ROADMAP.md`.
+
 ### Changed
 
 - Stripped deployment-specific URLs and private hostnames from repo docs (`CHANGELOG.md`, `CLAUDE.md`, `GOTCHAS.md`, `docker-compose.yml`) and the v3.2.0 GitHub release notes. Repo is now generic enough to fork and adapt without inheriting one operator's fleet topology. The `20260426000002_normalize_handoff_machine_names.sql` migration retains its original hostnames as data (modifying a shipped migration would break deployments via checksum drift); diff-based scanning leaves it alone on unchanged commits.
 
 ### Added
 
-- `update_ticket` Zammad tool (21st tool) — closes the loop the fleet was missing: agents could open and hand off tickets but had no way to close them. Drives state transitions (incl. `state="closed"`), priority changes, and an optional inline `note` article (e.g. a resolution summary recorded in the same call, customer-visible by default or `note_internal: true`). Mirrors `create_ticket`'s article-inline shape via `PUT /tickets/{id}`; rejects no-op calls (must provide at least one of state/priority/note). Supports `time_unit`/`time_accounting_type_id` so closing notes can carry time accounting.
 - `.github/workflows/secret-scan.yml` blocks PRs and pushes-to-main that re-introduce the cleaned-up fleet-private patterns. Self-excluded from its own scan. Pairs with a workstation-side pre-commit hook for immediate feedback. Bypass for the rare legitimate case: `ALLOW_FLEET_STRINGS=1 git commit ...`.
 
 ## [3.2.0] — 2026-05-16

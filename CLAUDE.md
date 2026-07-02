@@ -2,24 +2,23 @@
 
 Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18 via sqlx, stdio/HTTP transport.
 
-**v3.0.0 — team bus only.** Inventory, incidents, and monitoring subsystems were removed: configuration management owns inventory, Zammad owns tickets/incidents, Uptime Kuma owns monitoring. ops-brain stays on its lane.
+**v4.0.0 — team bus only.** Inventory, incidents, monitoring, and Zammad ticketing subsystems were all removed (v3.0.0 dropped the first three; v4.0.0 retired Zammad after it was decommissioned fleet-side). Configuration management owns inventory, Uptime Kuma owns monitoring, and tickets/incidents live in each client's own systems. ops-brain stays on its lane: handoffs, knowledge, briefings.
 
 For roadmap philosophy + hard stops (what we will/won't build, and why), see `ROADMAP.md`. For shipped history, see `CHANGELOG.md`.
 
-## Surface (21 tools)
+## Surface (16 tools)
 
 - **Knowledge** (5): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`
 - **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
 - **Team bus** (1): `check_in` — open action handoffs (pending + accepted) + recent notify-class handoffs for `agent_name`
 - **Search** (1): `backfill_embeddings`
-- **Zammad** (5): `list_tickets`, `get_ticket`, `create_ticket`, `update_ticket` (state/priority + inline note; `state="closed"` closes), `search_tickets`
-- **Briefings** (1): `generate_briefing` (daily/weekly handoffs+tickets summary, optionally client-scoped)
+- **Briefings** (1): `generate_briefing` (daily/weekly handoffs summary, optionally client-scoped)
 
 ## Architecture Constraints
 
 - All `#[tool]` stubs MUST remain in the single `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs` — rmcp macro requirement. Each stub delegates to a `handle_*` function in the appropriate category module.
 - Shared helpers in `tools/helpers.rs`; shared async functions in `tools/shared.rs`
-- OpsBrain fields are `pub(crate)` so category modules can access pool, embedding_client, zammad_config
+- OpsBrain fields are `pub(crate)` so category modules can access pool, embedding_client
 - Tool errors return `Ok(CallToolResult::error(...))`, never `Err(McpError)`
 - Slugs are the public API (not UUIDs) — tools resolve slugs to IDs internally. On miss, pg_trgm suggests similar slugs via `not_found_with_suggestions()` in helpers.rs
 - Tracing writes to stderr (critical: stdout is the MCP stdio transport)
@@ -86,4 +85,4 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 - **Don't add fictional/placeholder data to seed.sql**
 - **Don't merge without CI green**
 - **Don't add ops-brain features that duplicate local truth or create startup/session ceremony**
-- **Don't reintroduce inventory, incidents, or monitoring tables** — those are owned by config management, Zammad, and Uptime Kuma respectively
+- **Don't reintroduce inventory, incidents, monitoring, or ticketing tables** — inventory is owned by config management, monitoring by Uptime Kuma, and tickets/incidents by each client's own systems (Zammad was retired in v4.0.0)

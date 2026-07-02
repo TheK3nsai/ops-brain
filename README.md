@@ -1,8 +1,8 @@
 # ops-brain
 
-The team bus. An [MCP](https://modelcontextprotocol.io/) server that gives Claude, Codex, Gemini, and other MCP-capable agents a shared coordination surface for the state that must cross sessions, machines, clients, or agent vendors — handoffs, knowledge, briefings, and Zammad ticket orchestration.
+The team bus. An [MCP](https://modelcontextprotocol.io/) server that gives Claude, Codex, Gemini, and other MCP-capable agents a shared coordination surface for the state that must cross sessions, machines, clients, or agent vendors — handoffs, knowledge, and briefings.
 
-ops-brain is **not** local truth. Inventory belongs in your config management. Incidents belong in your ticketing system. Monitoring belongs in your monitoring stack. Reach for ops-brain only when you genuinely need the rest of the team.
+ops-brain is **not** local truth. Inventory belongs in your config management. Tickets and incidents belong in your ticketing system. Monitoring belongs in your monitoring stack. Reach for ops-brain only when you genuinely need the rest of the team.
 
 ## Who this is for
 
@@ -44,14 +44,13 @@ ops-brain speaks MCP over either stdio (default) or HTTP. Most multi-machine set
 
 Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_HOSTS` to your hostname — see the config table below.
 
-## Surface (21 tools)
+## Surface (16 tools)
 
 - **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`. Cross-agent gotchas, safety warnings, compliance rules, vendor behavior. Per-agent provenance via `author`. Default-deny across clients.
 - **Handoffs** — `create_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit-linkage via `commit_hash` on completion + `mark_merged` at integration time.
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
 - **Search** — `backfill_embeddings` for the FTS+vector hybrid (PostgreSQL tsvector + pgvector HNSW + RRF fusion).
-- **Zammad** — `list_tickets`, `get_ticket`, `create_ticket`, `update_ticket`, `search_tickets`. Resolves `client_slug` to Zammad group/org/customer. `update_ticket` drives state transitions (incl. close), priority, and inline resolution notes.
-- **Briefings** — `generate_briefing` produces daily/weekly markdown summaries (handoffs + tickets), optionally client-scoped, stored for history. Same logic available at `POST /api/briefing`.
+- **Briefings** — `generate_briefing` produces daily/weekly markdown summaries of pending handoffs, optionally client-scoped, stored for history. Same logic available at `POST /api/briefing`.
 
 ## Cross-client safety
 
@@ -92,9 +91,6 @@ Every audit event lands in the `audit_log` table.
 | `OPS_BRAIN_EMBEDDING_URL` | `http://localhost:11434/v1/embeddings` | OpenAI-compatible embedding API |
 | `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
 | `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | Bearer for the embedding API, if needed |
-| `ZAMMAD_URL` | (none) | Zammad base URL — disables Zammad tools if unset |
-| `ZAMMAD_API_TOKEN` | (none) | Zammad API token |
-| `ZAMMAD_DEFAULT_OWNER_ID` | (none) | Default owner ID for `create_ticket` |
 
 Recommended agent names mirror the CC fleet convention: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. Names are still free-form slugs for compatibility; ops-brain stores exactly what the caller sends.
 
@@ -115,4 +111,4 @@ Production compose does not publish port 3000 on the host; the service is reache
 
 ## Status
 
-ops-brain is designed for solo operators managing multiple clients. v3.0.0 is the post-debloat shape: handoffs, knowledge, briefings, Zammad. See `CLAUDE.md` for architecture constraints and `GOTCHAS.md` for the load-bearing footguns.
+ops-brain is designed for solo operators managing multiple clients. v4.0.0 is the current shape: handoffs, knowledge, briefings. See `CLAUDE.md` for architecture constraints and `GOTCHAS.md` for the load-bearing footguns.
