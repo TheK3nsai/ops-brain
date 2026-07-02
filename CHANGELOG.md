@@ -19,6 +19,10 @@ All notable changes to this project will be documented in this file.
 
 - `.github/workflows/secret-scan.yml` blocks PRs and pushes-to-main that re-introduce the cleaned-up fleet-private patterns. Self-excluded from its own scan. Pairs with a workstation-side pre-commit hook for immediate feedback. Bypass for the rare legitimate case: `ALLOW_FLEET_STRINGS=1 git commit ...`.
 
+### Security
+
+- Bumped `quinn-proto` 0.11.14 → 0.11.15 (lockfile-only) to clear `RUSTSEC-2026-0185`. Transitive via `reqwest`'s dependency set and not compiled into our build (HTTP/3 is not enabled), but `cargo audit` scans the lockfile — the patched release keeps the Security Audit gate green. Unrelated to the Zammad removal; folded in because it surfaced on this PR's CI.
+
 ## [3.2.0] — 2026-05-16
 
 ### Changed
