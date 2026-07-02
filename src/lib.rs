@@ -9,4 +9,3 @@ pub mod models;
 pub mod repo;
 pub mod tools;
 pub mod validation;
-pub mod zammad;

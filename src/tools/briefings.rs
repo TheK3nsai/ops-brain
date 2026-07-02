@@ -19,8 +19,6 @@ pub struct BriefingData {
     pub client: Option<String>,
     pub generated_at: String,
     pub handoffs: HandoffSummaryData,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tickets: Option<TicketSummaryData>,
     pub content: String,
 }
 
@@ -31,13 +29,6 @@ pub struct HandoffSummaryData {
     pub accepted_count: usize,
     pub pending_titles: Vec<String>,
     pub accepted_titles: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TicketSummaryData {
-    pub open_count: usize,
-    pub new_count: usize,
-    pub by_priority: std::collections::HashMap<String, usize>,
 }
 
 // ===== HANDLERS =====
@@ -65,7 +56,6 @@ pub(crate) async fn handle_generate_briefing(
 
     match crate::api::generate_briefing_inner(
         &brain.pool,
-        &brain.zammad_config,
         &p.briefing_type.to_lowercase(),
         client.as_ref(),
     )

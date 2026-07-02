@@ -9,13 +9,11 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::tools::briefings;
-use crate::zammad::ZammadConfig;
 
 /// Shared state for REST API handlers.
 #[derive(Clone)]
 pub struct ApiState {
     pub pool: PgPool,
-    pub zammad_config: Option<ZammadConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,14 +50,7 @@ pub async fn generate_briefing(
         None => None,
     };
 
-    match generate_briefing_inner(
-        &state.pool,
-        &state.zammad_config,
-        &briefing_type,
-        client.as_ref(),
-    )
-    .await
-    {
+    match generate_briefing_inner(&state.pool, &briefing_type, client.as_ref()).await {
         Ok(data) => Ok(Json(data)),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
@@ -68,7 +59,6 @@ pub async fn generate_briefing(
 /// Core briefing generation logic shared between the MCP tool and the REST API.
 pub async fn generate_briefing_inner(
     pool: &PgPool,
-    zammad_config: &Option<ZammadConfig>,
     briefing_type: &str,
     client: Option<&crate::models::client::Client>,
 ) -> Result<serde_json::Value, String> {
@@ -103,39 +93,9 @@ pub async fn generate_briefing_inner(
         accepted_titles,
     };
 
-    // ── Zammad tickets ──
-    let ticket_data = if let Some(zammad) = zammad_config {
-        if let Some(c) = client {
-            if let Some(org_id) = c.zammad_org_id {
-                let open_query =
-                    format!("organization.id:{org_id} AND (state.name:new OR state.name:open)");
-                let open_tickets = crate::zammad::search_tickets(zammad, &open_query, 100)
-                    .await
-                    .unwrap_or_default();
-                Some(ticket_summary(&open_tickets))
-            } else {
-                None
-            }
-        } else {
-            let open_tickets =
-                crate::zammad::search_tickets(zammad, "state.name:new OR state.name:open", 100)
-                    .await
-                    .unwrap_or_default();
-            Some(ticket_summary(&open_tickets))
-        }
-    } else {
-        None
-    };
-
     // ── Build markdown ──
     let now = chrono::Utc::now();
-    let md = build_markdown(
-        is_weekly,
-        client_name,
-        &now,
-        &handoff_data,
-        ticket_data.as_ref(),
-    );
+    let md = build_markdown(is_weekly, client_name, &now, &handoff_data);
 
     // Store
     let briefing = crate::repo::briefing_repo::insert_briefing(pool, briefing_type, client_id, &md)
@@ -147,7 +107,6 @@ pub async fn generate_briefing_inner(
         client: client.map(|c| c.slug.clone()),
         generated_at: now.format("%Y-%m-%d %H:%M UTC").to_string(),
         handoffs: handoff_data,
-        tickets: ticket_data,
         content: md,
     };
 
@@ -156,29 +115,11 @@ pub async fn generate_briefing_inner(
     Ok(output)
 }
 
-fn ticket_summary(tickets: &[crate::zammad::ZammadTicket]) -> briefings::TicketSummaryData {
-    let new_count = tickets
-        .iter()
-        .filter(|t| t.state.as_deref() == Some("new"))
-        .count();
-    let mut by_priority = std::collections::HashMap::new();
-    for t in tickets {
-        let pri = t.priority.as_deref().unwrap_or("unknown").to_string();
-        *by_priority.entry(pri).or_insert(0usize) += 1;
-    }
-    briefings::TicketSummaryData {
-        open_count: tickets.len(),
-        new_count,
-        by_priority,
-    }
-}
-
 fn build_markdown(
     is_weekly: bool,
     client_name: &str,
     now: &chrono::DateTime<chrono::Utc>,
     handoffs: &briefings::HandoffSummaryData,
-    tickets: Option<&briefings::TicketSummaryData>,
 ) -> String {
     let mut md = String::new();
 
@@ -214,23 +155,6 @@ fn build_markdown(
             }
         }
         md.push('\n');
-    }
-
-    // Tickets
-    if let Some(tickets) = tickets {
-        md.push_str("## Tickets\n\n");
-        if tickets.open_count == 0 {
-            md.push_str("No open tickets.\n\n");
-        } else {
-            md.push_str(&format!(
-                "**{} open ticket(s)** ({} new)\n\n",
-                tickets.open_count, tickets.new_count
-            ));
-            for (pri, count) in &tickets.by_priority {
-                md.push_str(&format!("- {pri}: {count}\n"));
-            }
-            md.push('\n');
-        }
     }
 
     md

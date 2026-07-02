@@ -28,9 +28,6 @@ services:
       # Embeddings (ollama on same Docker network)
       - OPS_BRAIN_EMBEDDING_URL=http://ollama:11434/v1/embeddings
       - OPS_BRAIN_EMBEDDING_MODEL=nomic-embed-text
-      # Zammad ticketing integration
-      - ZAMMAD_URL=http://zammad-railsserver:3000
-      - ZAMMAD_API_TOKEN=${ZAMMAD_API_TOKEN}
       # rmcp=info surfaces session lifecycle (create/KeepAliveTimeout) in `docker logs`
       - RUST_LOG=${RUST_LOG:-ops_brain=info,rmcp=info}
     networks:
