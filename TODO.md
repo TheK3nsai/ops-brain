@@ -4,7 +4,7 @@ External-user release sweep (#56 + #57) shipped on 2026-05-18: repo description,
 
 ## Open
 
-_(empty)_
+- **Case-insensitive agent matching on handoff queries.** The fleet convention is `Codex-HSR`-style, but prod data already has mixed casings (`Codex-HSR` and `codex-hsr` both live as distinct `from_agent` values), and `list_handoffs` `from_agent`/`to_agent` filters are exact-match — a targeted query silently misses the other casing. Bit CC-Stealth 2026-07-13 while hunting a CC-HSR handoff. Fix: `ILIKE`/`LOWER()=LOWER()` on the agent filters (cheap, no schema change); optionally lowercase-normalize `check_in`/`list_replies_to_me` the same way. Until shipped: query both casings or fall back to `search_handoffs`.
 
 ## Closed (2026-05-18 release sweep)
 
