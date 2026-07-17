@@ -21,7 +21,7 @@ services:
       - DATABASE_URL=postgresql://ops_brain:${OPS_BRAIN_DB_PASSWORD}@shared-postgres:5432/ops_brain
       - OPS_BRAIN_TRANSPORT=http
       - OPS_BRAIN_LISTEN=0.0.0.0:3000
-      - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN}
+      - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN:?OPS_BRAIN_AUTH_TOKEN must be set — refusing to start unauthenticated}
       # Scoped machine tokens (JSON array) for POST /api/handoff + GET /api/pending
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       - OPS_BRAIN_MIGRATE=true

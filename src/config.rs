@@ -19,6 +19,12 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_AUTH_TOKEN")]
     pub auth_token: Option<String>,
 
+    /// Explicitly serve HTTP without authentication. Without this flag, a
+    /// missing or blank OPS_BRAIN_AUTH_TOKEN aborts startup on the http
+    /// transport — an empty env var must never silently mean "open server".
+    #[arg(long, env = "OPS_BRAIN_DEV_NO_AUTH", default_value_t = false)]
+    pub dev_no_auth: bool,
+
     /// Machine tokens for the REST ingestion path (http transport only).
     /// JSON array of scoped token bindings, e.g.:
     /// `[{"token":"...","from_agent":"Example-Host1","client":"example",

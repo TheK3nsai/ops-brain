@@ -201,18 +201,25 @@ mod coordination_tests {
         assert_eq!(handoff.from_agent, "dev-laptop");
         assert_eq!(handoff.to_agent.as_deref(), Some("prod-server"));
 
-        // Accept
-        let accepted =
-            ops_brain::repo::handoff_repo::update_handoff_status(&pool, handoff.id, "accepted")
-                .await
-                .unwrap();
+        // Accept (atomic: only flips a pending row)
+        let accepted = ops_brain::repo::handoff_repo::accept_handoff(&pool, handoff.id)
+            .await
+            .unwrap()
+            .expect("pending handoff should accept");
         assert_eq!(accepted.status, "accepted");
+
+        // Accepting again loses the precondition and returns None.
+        let reaccept = ops_brain::repo::handoff_repo::accept_handoff(&pool, handoff.id)
+            .await
+            .unwrap();
+        assert!(reaccept.is_none(), "second accept must not win");
 
         // Complete
         let completed =
-            ops_brain::repo::handoff_repo::update_handoff_status(&pool, handoff.id, "completed")
+            ops_brain::repo::handoff_repo::complete_handoff_with_commit(&pool, handoff.id, None)
                 .await
-                .unwrap();
+                .unwrap()
+                .expect("open handoff should complete");
         assert_eq!(completed.status, "completed");
 
         // List by status
@@ -501,7 +508,8 @@ mod coordination_tests {
             Some("abc1234"),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .expect("open handoff should complete");
 
         assert_eq!(completed.status, "completed");
         assert_eq!(completed.commit_hash.as_deref(), Some("abc1234"));
@@ -534,7 +542,8 @@ mod coordination_tests {
 
         let merged = ops_brain::repo::handoff_repo::mark_merged(&pool, h.id, "deadbeef0001")
             .await
-            .unwrap();
+            .unwrap()
+            .expect("completed handoff should mark merged");
 
         assert_eq!(merged.status, "merged");
         assert_eq!(merged.merge_commit.as_deref(), Some("deadbeef0001"));
@@ -745,9 +754,10 @@ mod check_in_tests {
         )
         .await
         .unwrap();
-        let _ = ops_brain::repo::handoff_repo::update_handoff_status(&pool, h.id, "accepted")
+        let _ = ops_brain::repo::handoff_repo::accept_handoff(&pool, h.id)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("accept should succeed");
 
         let result = ops_brain::tools::check_in::handle_check_in(
             &brain,
@@ -1090,9 +1100,10 @@ mod machine_handoff_tests {
         assert!(second.updated_at > first.updated_at);
 
         // Suppression also holds across accepted (still open).
-        ops_brain::repo::handoff_repo::update_handoff_status(&pool, first.id, "accepted")
+        ops_brain::repo::handoff_repo::accept_handoff(&pool, first.id)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("accept should succeed");
         let third = ops_brain::repo::handoff_repo::create_machine_handoff(
             &pool,
             "Test-Host1",
@@ -1110,9 +1121,10 @@ mod machine_handoff_tests {
         assert_eq!(third.repeat_count, 2);
 
         // Completion releases the key: the same check failing later files fresh.
-        ops_brain::repo::handoff_repo::update_handoff_status(&pool, first.id, "completed")
+        ops_brain::repo::handoff_repo::complete_handoff_with_commit(&pool, first.id, None)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("complete should succeed");
         let fresh = ops_brain::repo::handoff_repo::create_machine_handoff(
             &pool,
             "Test-Host1",
@@ -1174,6 +1186,66 @@ mod machine_handoff_tests {
 
         sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
             .bind(vec![a.id, b.id])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// Dedupe scope is per recipient: the same key filed to two different
+    /// agents inserts independently instead of suppressing the second
+    /// filing into the first agent's handoff.
+    #[tokio::test]
+    async fn machine_dedupe_key_is_scoped_per_recipient() {
+        let pool = pool().await;
+        let key = format!("shared-check-{}", Uuid::now_v7());
+
+        let file = |to: &'static str| {
+            let pool = pool.clone();
+            let key = key.clone();
+            async move {
+                ops_brain::repo::handoff_repo::create_machine_handoff(
+                    &pool,
+                    "Test-Host1",
+                    to,
+                    "high",
+                    "action",
+                    "[auto] shared check FAIL",
+                    "body",
+                    None,
+                    Some(&key),
+                )
+                .await
+                .unwrap()
+            }
+        };
+
+        let first = file("test-agent-alpha").await;
+        let second = file("test-agent-beta").await;
+        assert_ne!(
+            first.id, second.id,
+            "same key to a different recipient must file fresh"
+        );
+        assert_eq!(second.repeat_count, 0);
+
+        // Same key to the SAME recipient (case-insensitive) still suppresses.
+        let repeat = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            "Test-Agent-Alpha",
+            "high",
+            "action",
+            "[auto] shared check FAIL",
+            "body",
+            None,
+            Some(&key),
+        )
+        .await
+        .unwrap();
+        assert_eq!(repeat.id, first.id);
+        assert_eq!(repeat.repeat_count, 1);
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![first.id, second.id])
             .execute(&pool)
             .await
             .unwrap();
@@ -1245,9 +1317,10 @@ mod machine_handoff_tests {
         assert_eq!(resurfaced[0].repeat_count, 1);
 
         // Completed rows drop out of the poll.
-        ops_brain::repo::handoff_repo::update_handoff_status(&pool, filed.id, "completed")
+        ops_brain::repo::handoff_repo::complete_handoff_with_commit(&pool, filed.id, None)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("complete should succeed");
         let done = ops_brain::repo::handoff_repo::list_pending_for_agent(&pool, &agent, None, 50)
             .await
             .unwrap();

@@ -208,18 +208,20 @@ pub async fn handle_accept_handoff(
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
     };
 
-    // Verify it's pending
-    match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
-        Ok(Some(h)) if h.status == "pending" => {}
-        Ok(Some(h)) => {
-            return error_result(&format!("Handoff is already '{}', cannot accept", h.status))
+    // Atomic accept: the pending precondition is inside the UPDATE, so two
+    // agents racing on the same handoff can't both walk away owning it.
+    match crate::repo::handoff_repo::accept_handoff(&brain.pool, id).await {
+        Ok(Some(handoff)) => json_result(&handoff),
+        Ok(None) => {
+            // Lost the race or bad id — re-read to say which.
+            match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
+                Ok(Some(h)) => {
+                    error_result(&format!("Handoff is already '{}', cannot accept", h.status))
+                }
+                Ok(None) => not_found("Handoff", &p.handoff_id),
+                Err(e) => error_result(&format!("Database error: {e}")),
+            }
         }
-        Ok(None) => return not_found("Handoff", &p.handoff_id),
-        Err(e) => return error_result(&format!("Database error: {e}")),
-    }
-
-    match crate::repo::handoff_repo::update_handoff_status(&brain.pool, id, "accepted").await {
-        Ok(handoff) => json_result(&handoff),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -233,19 +235,8 @@ pub async fn handle_complete_handoff(
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
     };
 
-    // Verify it exists and is not already completed or merged. Mirroring
-    // the existing guard: re-completion is a no-op error, not a silent
-    // overwrite of commit_hash.
-    match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
-        Ok(Some(h)) if h.status == "completed" => {
-            return error_result("Handoff is already completed")
-        }
-        Ok(Some(h)) if h.status == "merged" => return error_result("Handoff is already merged"),
-        Ok(Some(_)) => {}
-        Ok(None) => return not_found("Handoff", &p.handoff_id),
-        Err(e) => return error_result(&format!("Database error: {e}")),
-    }
-
+    // Atomic complete: only open (pending/accepted) rows transition, so a
+    // concurrent complete can't silently overwrite commit_hash.
     match crate::repo::handoff_repo::complete_handoff_with_commit(
         &brain.pool,
         id,
@@ -253,7 +244,17 @@ pub async fn handle_complete_handoff(
     )
     .await
     {
-        Ok(handoff) => json_result(&handoff),
+        Ok(Some(handoff)) => json_result(&handoff),
+        Ok(None) => match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
+            Ok(Some(h)) if h.status == "completed" => error_result("Handoff is already completed"),
+            Ok(Some(h)) if h.status == "merged" => error_result("Handoff is already merged"),
+            Ok(Some(h)) => error_result(&format!(
+                "Handoff is '{}', cannot complete from that state",
+                h.status
+            )),
+            Ok(None) => not_found("Handoff", &p.handoff_id),
+            Err(e) => error_result(&format!("Database error: {e}")),
+        },
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -277,7 +278,7 @@ pub async fn handle_list_replies_to_me(
         },
         None => None,
     };
-    let limit = p.limit.unwrap_or(20);
+    let limit = p.limit.unwrap_or(20).clamp(1, 200);
 
     match crate::repo::handoff_repo::list_replies_to_me(&brain.pool, &agent, since, limit).await {
         Ok(replies) => json_result(&replies),
@@ -322,8 +323,29 @@ pub async fn handle_mark_merged(brain: &super::OpsBrain, p: MarkMergedParams) ->
         Err(e) => return error_result(&format!("Database error: {e}")),
     }
 
+    // Atomic transition: only a 'completed' row can flip to merged, so a
+    // concurrent merge between the precondition read above and this write
+    // loses cleanly instead of overwriting merge_commit.
     match crate::repo::handoff_repo::mark_merged(&brain.pool, id, merge_commit).await {
-        Ok(handoff) => json_result(&handoff),
+        Ok(Some(handoff)) => json_result(&handoff),
+        Ok(None) => match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
+            Ok(Some(h)) if h.status == "merged" => {
+                if h.merge_commit.as_deref() == Some(merge_commit) {
+                    json_result(&h)
+                } else {
+                    error_result(&format!(
+                        "Handoff already merged with commit {:?}; refusing to overwrite",
+                        h.merge_commit.as_deref().unwrap_or("(unknown)")
+                    ))
+                }
+            }
+            Ok(Some(h)) => error_result(&format!(
+                "Handoff must be completed before it can be marked merged (current status: '{}')",
+                h.status
+            )),
+            Ok(None) => not_found("Handoff", &p.handoff_id),
+            Err(e) => error_result(&format!("Database error: {e}")),
+        },
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -332,7 +354,7 @@ pub async fn handle_list_handoffs(
     brain: &super::OpsBrain,
     p: ListHandoffsParams,
 ) -> CallToolResult {
-    let limit = p.limit.unwrap_or(20);
+    let limit = p.limit.unwrap_or(20).clamp(1, 200);
     let compact = p.compact.unwrap_or(true);
     let include_notify = p.include_notify.unwrap_or(false);
 
@@ -420,7 +442,7 @@ pub async fn handle_search_handoffs(
     {
         return error_result(&msg);
     }
-    let limit = p.limit.unwrap_or(20);
+    let limit = p.limit.unwrap_or(20).clamp(1, 200);
     let result = match mode {
         "semantic" => {
             let Some(emb) = get_query_embedding(&brain.embedding_client, &p.query).await else {

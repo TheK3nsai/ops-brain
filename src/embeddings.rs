@@ -25,6 +25,10 @@ struct EmbeddingResponse {
 #[derive(Deserialize)]
 struct EmbeddingData {
     embedding: Vec<f32>,
+    /// Input position this vector belongs to. The OpenAI-compatible spec
+    /// allows `data` to arrive out of order — assigning positionally would
+    /// silently store vectors under the wrong rows.
+    index: usize,
 }
 
 impl EmbeddingClient {
@@ -66,7 +70,22 @@ impl EmbeddingClient {
             anyhow::bail!("Embedding API error {status}: {body}");
         }
 
-        let resp: EmbeddingResponse = response.json().await?;
+        let mut resp: EmbeddingResponse = response.json().await?;
+        if resp.data.len() != texts.len() {
+            anyhow::bail!(
+                "Embedding API returned {} vectors for {} inputs",
+                resp.data.len(),
+                texts.len()
+            );
+        }
+        // Reorder by the spec's `index` field — positional zip would
+        // mislabel vectors if the backend reorders its response. After
+        // sorting, indices must be exactly 0..N: anything else (a gap, a
+        // duplicate) would silently hand some row another input's vector.
+        resp.data.sort_by_key(|d| d.index);
+        if resp.data.iter().enumerate().any(|(i, d)| d.index != i) {
+            anyhow::bail!("Embedding API response has gaps or duplicate indices");
+        }
         Ok(resp.data.into_iter().map(|d| d.embedding).collect())
     }
 }
