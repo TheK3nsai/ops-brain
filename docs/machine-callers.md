@@ -98,7 +98,10 @@ reaches the entire MCP surface; a machine token bounds theft blast-radius to
 
 `dedupe_key` is caller-chosen, per-*check* (not per-run): e.g.
 `example-host1-var-disk`, not `...-2026-07-17`. Uniqueness is enforced only
-against **open** handoffs (pending/accepted). The lifecycle:
+against **open** handoffs (pending/accepted), and is scoped **per recipient**
+(`to_agent`, case-insensitive): the same key filed to two different agents
+files two independent handoffs — suppression only applies to repeat filings
+targeting the same agent. The lifecycle:
 
 1. Check fails → POST files a fresh handoff (201).
 2. Check fails again next run → POST suppresses into the open handoff,

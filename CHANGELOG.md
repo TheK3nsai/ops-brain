@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security — full-codebase audit hardening
+
+- **HTTP transport now fails closed on a missing or blank `OPS_BRAIN_AUTH_TOKEN`.** Previously a present-but-empty env var (`OPS_BRAIN_AUTH_TOKEN=`) reached the auth middleware as a valid zero-length secret, and `Authorization: Bearer ` (empty credential) authenticated as full access — one config slip from an open server on a public host. Startup now aborts unless a non-blank token is set or the operator explicitly passes `--dev-no-auth` / `OPS_BRAIN_DEV_NO_AUTH=true`; `validate_token` additionally refuses to match an empty expected secret, and `docker-compose.prod.yml` fails fast at compose level via `${OPS_BRAIN_AUTH_TOKEN:?...}`.
+- All MCP tool `limit`/`batch_size` params are clamped (`1..=200`, backfill `1..=100`) — negative values no longer reach Postgres and oversized values can't pull whole tables per call.
+
+### Fixed — correctness audit
+
+- **`accept_handoff` race**: the pending-check and the status UPDATE were separate statements, so two agents accepting concurrently could both "win" and both walk away owning the work — the exact duplicate-work failure the bus exists to prevent. Accept/complete/mark-merged are now single atomic conditional UPDATEs (`WHERE id = $1 AND status = ...` + `RETURNING`); the loser gets a clear "already '<status>'" error. The generic `update_handoff_status` repo fn is gone.
+- **`dedupe_key` is now scoped per recipient** (migration `20260717220000`): the arbiter index moved from `(dedupe_key)` to `(dedupe_key, LOWER(to_agent))` over open rows. Previously a producer reusing one key across two target agents had the second filing silently suppressed into the first agent's handoff — the second recipient never got woken.
+- **Agent-name filters use exact case-insensitive matching** (`LOWER(col) = LOWER($n)`) instead of `ILIKE` in `list_handoffs`, `list_open_handoffs`, and `list_replies_to_me` — `_` is legal in agent names and ILIKE treated it as a single-char wildcard, over-matching sibling agents. Matches the wake-poll path's existing semantics.
+- **Embedding batches are reassembled by the response `index` field** instead of positional zip, with a length check — an OpenAI-compatible backend that reorders or short-returns its `data` array can no longer silently store vectors under the wrong rows.
+
 ### Added — machine-filed handoffs + wake poll (automation backbone, phase 1+2)
 
 - **`POST /api/handoff`** — REST ingestion path for non-interactive producers (monitors, cron sweeps, scripts). Everything filed here is stamped `origin='machine'` server-side; interactive agents keep filing through the MCP `create_handoff` tool (`origin='agent'`). Optional caller-chosen `dedupe_key` makes recurring producers idempotent: while a handoff with the key is open (pending/accepted), repeat POSTs collapse into a `repeat_count` bump + `updated_at` touch on the existing row (returned with `deduplicated: true`); completing the handoff releases the key. Context payloads get lenient convention-v1 validation — non-object context is rejected, unknown keys and off-enum verdicts come back as `warnings`, never dropped.

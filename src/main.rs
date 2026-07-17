@@ -67,6 +67,33 @@ async fn main() -> anyhow::Result<()> {
             session_manager.session_config.keep_alive = Some(Duration::from_secs(3600));
             let session_manager = Arc::new(session_manager);
 
+            // Fail closed on auth config. clap maps a present-but-empty env
+            // var (`OPS_BRAIN_AUTH_TOKEN=`) to Some(""), and an empty
+            // "secret" must never become a valid bearer credential — so
+            // blank and missing are both treated as "no token", and no
+            // token aborts unless the operator explicitly opted into an
+            // open dev server.
+            let main_token: Option<String> = config
+                .auth_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string);
+            if main_token.is_none() {
+                if config.dev_no_auth {
+                    tracing::warn!(
+                        "AUTH DISABLED (--dev-no-auth): every caller gets full access. \
+                         Never expose this listener beyond localhost."
+                    );
+                } else {
+                    anyhow::bail!(
+                        "OPS_BRAIN_AUTH_TOKEN is missing or blank; refusing to serve HTTP \
+                         without auth. Set a real token, or pass --dev-no-auth / \
+                         OPS_BRAIN_DEV_NO_AUTH=true for a deliberately open dev server."
+                    );
+                }
+            }
+
             let api_state = Arc::new(api::ApiState { pool: pool.clone() });
 
             let mut http_config = StreamableHttpServerConfig::default();
@@ -105,11 +132,9 @@ async fn main() -> anyhow::Result<()> {
             // (POST /api/handoff) and wake poll (GET /api/pending). Parse
             // failures abort startup — a silently dropped token would read
             // as "monitor wired up" while its filings 401.
-            let machine_tokens = auth::parse_machine_tokens(
-                config.machine_tokens.as_deref(),
-                config.auth_token.as_deref(),
-            )
-            .map_err(|e| anyhow::anyhow!("OPS_BRAIN_MACHINE_TOKENS: {e}"))?;
+            let machine_tokens =
+                auth::parse_machine_tokens(config.machine_tokens.as_deref(), main_token.as_deref())
+                    .map_err(|e| anyhow::anyhow!("OPS_BRAIN_MACHINE_TOKENS: {e}"))?;
             if !machine_tokens.is_empty() {
                 tracing::info!(
                     count = machine_tokens.len(),
@@ -126,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
             let auth_state = auth::AuthState {
-                main_token: config.auth_token.clone(),
+                main_token,
                 machine_tokens: Arc::new(machine_tokens),
             };
 

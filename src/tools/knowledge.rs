@@ -392,7 +392,7 @@ pub(crate) async fn handle_search_knowledge(
             multi_table,
             p.client_slug.as_deref(),
             p.acknowledge_cross_client.unwrap_or(false),
-            p.limit.unwrap_or(20),
+            p.limit.unwrap_or(20).clamp(1, 200),
             compact,
         )
         .await;
@@ -427,7 +427,7 @@ pub(crate) async fn handle_search_knowledge(
         None => None,
     };
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
-    let limit = p.limit.unwrap_or(20);
+    let limit = p.limit.unwrap_or(20).clamp(1, 200);
 
     // Compact mode: default true for multi-table, false for single-table
     let compact = p.compact.unwrap_or(multi_table);
@@ -794,7 +794,7 @@ pub async fn handle_list_knowledge(
         None => None,
     };
 
-    let limit = p.limit.unwrap_or(50);
+    let limit = p.limit.unwrap_or(50).clamp(1, 200);
     match crate::repo::knowledge_repo::list_knowledge(
         &brain.pool,
         p.category.as_deref(),

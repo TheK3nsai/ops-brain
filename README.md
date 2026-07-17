@@ -84,7 +84,8 @@ Every audit event lands in the `audit_log` table.
 | `DATABASE_URL` | (required) | PostgreSQL connection string |
 | `OPS_BRAIN_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
-| `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth |
+| `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth. Required for `http` transport — a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true` explicitly opts into an open dev server. |
+| `OPS_BRAIN_DEV_NO_AUTH` | `false` | Explicitly serve HTTP without authentication (dev only — never expose beyond localhost) |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` header values for HTTP transport (rmcp DNS-rebind mitigation). Public deploys behind a reverse proxy must set their hostname. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
 | `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | Set `false` to disable embeddings |

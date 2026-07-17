@@ -27,7 +27,7 @@ pub(crate) async fn handle_backfill_embeddings(
         );
     };
 
-    let batch_size = p.batch_size.unwrap_or(10);
+    let batch_size = p.batch_size.unwrap_or(10).clamp(1, 100);
     let tables: Vec<&str> = match &p.table {
         Some(t) => vec![t.as_str()],
         None => vec!["knowledge", "handoffs"],

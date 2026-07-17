@@ -2,8 +2,11 @@ use axum::{extract::State, http::StatusCode, middleware::Next, response::Respons
 use std::sync::Arc;
 
 /// Constant-time token comparison to prevent timing attacks.
+///
+/// An empty `expected` never matches: a blank configured secret must not
+/// turn `Authorization: Bearer ` (empty credential) into a valid login.
 pub fn validate_token(token: &str, expected: &str) -> bool {
-    if token.len() != expected.len() {
+    if expected.is_empty() || token.len() != expected.len() {
         return false;
     }
     token
@@ -254,7 +257,9 @@ mod tests {
     fn validate_token_empty() {
         assert!(!validate_token("", "my-secret-token"));
         assert!(!validate_token("something", ""));
-        assert!(validate_token("", "")); // both empty = match
+        // A blank configured secret must never validate anything — not even
+        // an equally blank presented credential.
+        assert!(!validate_token("", ""));
     }
 
     #[test]
