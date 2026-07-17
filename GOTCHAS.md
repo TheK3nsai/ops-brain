@@ -58,3 +58,7 @@
 - **Antigravity CLI (agy) Configuration Schema is strict:** When configuring `ops-brain` (or any HTTP MCP) in the Antigravity CLI, note two critical differences from the standard Gemini CLI:
   1. The configuration file is `~/.gemini/config/mcp_config.json` (not `settings.json`).
   2. The schema is strictly case-sensitive: it **must** be `"serverURL": "https://..."`. If you use `"url"` (the old Gemini schema) or `"serverUrl"`, the Antigravity CLI will fail to load the MCP and throw a `serverURL or command must be specified` error on startup.
+
+## Machine-Filed Handoffs
+
+- **Replies to machine-filed handoffs are invisible to the operating agent's `list_replies_to_me`.** A machine-filed handoff's `from_agent` is the *token binding* (e.g. `Stealth-WS`), not the agent that operates that producer. `list_replies_to_me` matches `parent.from_agent` — so when a recipient replies on-thread, the human/agent who actually cares never sees it via reply tracking. Hit on the very first production wake (2026-07-17): the headless smoke reply threaded to `Stealth-WS` and CC-Cloud (who filed the smoke via that token) would have missed it. Until/unless a design change lands: when replying to an `origin=machine` handoff, ALSO send a direct notify to the operating agent, or address the reply `to_agent` = the operator, not the token binding.
