@@ -19,6 +19,17 @@ pub(crate) fn build_or_tsquery_text(query: &str) -> Option<String> {
     Some(words.join(" | "))
 }
 
+/// Prefix a comma-separated column list with a table alias, e.g.
+/// `aliased_cols("id, title", "k")` -> `"k.id, k.title"`. Used by join
+/// queries (RRF hydration, reply threading) that need `SELECT k.*` replaced
+/// with an explicit alias-qualified list — keeps the column set defined once.
+pub(crate) fn aliased_cols(cols: &str, alias: &str) -> String {
+    cols.split(", ")
+        .map(|c| format!("{alias}.{c}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub mod audit_log_repo;
 pub mod briefing_repo;
 pub mod client_repo;
@@ -68,5 +79,18 @@ mod tests {
     #[test]
     fn or_tsquery_bare_punctuation_filtered() {
         assert_eq!(build_or_tsquery_text("- --"), None);
+    }
+
+    #[test]
+    fn aliased_cols_prefixes_every_column() {
+        assert_eq!(
+            aliased_cols("id, title, body", "h"),
+            "h.id, h.title, h.body"
+        );
+    }
+
+    #[test]
+    fn aliased_cols_single_column() {
+        assert_eq!(aliased_cols("id", "k"), "k.id");
     }
 }

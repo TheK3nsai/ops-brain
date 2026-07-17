@@ -3,6 +3,15 @@ use uuid::Uuid;
 
 use crate::models::knowledge::Knowledge;
 
+/// Explicit column list for `Knowledge` reads — matches the model fields
+/// exactly and deliberately omits `embedding` (768-dim vector, ~3KB/row) and
+/// `search_vector`, which `FromRow` discards anyway. Use this instead of
+/// `SELECT *` so vectors never cross the wire on read paths. Writes keep
+/// `RETURNING *`.
+pub const KNOWLEDGE_COLS: &str =
+    "id, title, content, category, tags, client_id, cross_client_safe, \
+     last_verified_at, author, created_at, updated_at";
+
 #[allow(clippy::too_many_arguments)]
 pub async fn add_knowledge(
     pool: &PgPool,
@@ -33,10 +42,12 @@ pub async fn add_knowledge(
 }
 
 pub async fn get_knowledge(pool: &PgPool, id: Uuid) -> Result<Option<Knowledge>, sqlx::Error> {
-    sqlx::query_as::<_, Knowledge>("SELECT * FROM knowledge WHERE id = $1")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as::<_, Knowledge>(&format!(
+        "SELECT {KNOWLEDGE_COLS} FROM knowledge WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
 }
 
 pub async fn list_knowledge(
@@ -45,7 +56,7 @@ pub async fn list_knowledge(
     client_id: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
-    let mut query = String::from("SELECT * FROM knowledge");
+    let mut query = format!("SELECT {KNOWLEDGE_COLS} FROM knowledge");
     let mut conditions: Vec<String> = Vec::new();
     let mut param_idx = 1u32;
 
@@ -126,13 +137,13 @@ pub async fn list_stale_knowledge(
     stale_days: i32,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
-    sqlx::query_as::<_, Knowledge>(
-        "SELECT * FROM knowledge
+    sqlx::query_as::<_, Knowledge>(&format!(
+        "SELECT {KNOWLEDGE_COLS} FROM knowledge
          WHERE last_verified_at IS NULL
             OR last_verified_at < now() - ($1 || ' days')::interval
          ORDER BY last_verified_at ASC NULLS FIRST
-         LIMIT $2",
-    )
+         LIMIT $2"
+    ))
     .bind(stale_days)
     .bind(limit)
     .fetch_all(pool)
@@ -152,12 +163,12 @@ pub async fn search_knowledge(
     query: &str,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
-    let results = sqlx::query_as::<_, Knowledge>(
-        "SELECT * FROM knowledge
+    let results = sqlx::query_as::<_, Knowledge>(&format!(
+        "SELECT {KNOWLEDGE_COLS} FROM knowledge
          WHERE search_vector @@ websearch_to_tsquery('english', $1)
          ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
-         LIMIT $2",
-    )
+         LIMIT $2"
+    ))
     .bind(query)
     .bind(limit)
     .fetch_all(pool)
@@ -165,12 +176,12 @@ pub async fn search_knowledge(
 
     if results.is_empty() {
         if let Some(or_text) = super::build_or_tsquery_text(query) {
-            return sqlx::query_as::<_, Knowledge>(
-                "SELECT * FROM knowledge
+            return sqlx::query_as::<_, Knowledge>(&format!(
+                "SELECT {KNOWLEDGE_COLS} FROM knowledge
                  WHERE search_vector @@ to_tsquery('english', $1)
                  ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
-                 LIMIT $2",
-            )
+                 LIMIT $2"
+            ))
             .bind(&or_text)
             .bind(limit)
             .fetch_all(pool)
