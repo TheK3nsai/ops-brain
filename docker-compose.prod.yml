@@ -22,6 +22,8 @@ services:
       - OPS_BRAIN_TRANSPORT=http
       - OPS_BRAIN_LISTEN=0.0.0.0:3000
       - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN}
+      # Scoped machine tokens (JSON array) for POST /api/handoff + GET /api/pending
+      - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       - OPS_BRAIN_MIGRATE=true
       # rmcp 1.4+ Host header allowlist (DNS-rebind mitigation, default loopback-only)
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}

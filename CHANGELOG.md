@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — machine-filed handoffs + wake poll (automation backbone, phase 1+2)
+
+- **`POST /api/handoff`** — REST ingestion path for non-interactive producers (monitors, cron sweeps, scripts). Everything filed here is stamped `origin='machine'` server-side; interactive agents keep filing through the MCP `create_handoff` tool (`origin='agent'`). Optional caller-chosen `dedupe_key` makes recurring producers idempotent: while a handoff with the key is open (pending/accepted), repeat POSTs collapse into a `repeat_count` bump + `updated_at` touch on the existing row (returned with `deduplicated: true`); completing the handoff releases the key. Context payloads get lenient convention-v1 validation — non-object context is rejected, unknown keys and off-enum verdicts come back as `warnings`, never dropped.
+- **`GET /api/pending?agent=X&since=ISO`** — cheap wake-poll endpoint for local schedulers ("Claude kicks off Claude"): open action handoffs for an agent in a deliberately body-free item shape. `since` filters on `updated_at`, so dedupe bumps re-surface a still-firing monitor past the cursor.
+- **Machine tokens** (`OPS_BRAIN_MACHINE_TOKENS`, JSON array) — scoped credentials for the two endpoints above and nothing else (`/mcp` and `/api/briefing` reject them with 403). Each token binds a fixed `from_agent` (request-body overrides are a 400 — the token IS the identity), a case-insensitive agent allowlist gating both filing targets and pollable queues, and `create`/`read` scopes. Parse failures abort startup; secrets must be ≥32 chars, distinct from each other and from the main bearer.
+- Migration `20260717151000_machine_filed_handoffs.sql`: `origin` (CHECK agent|machine), `dedupe_key`, `repeat_count` on `handoffs`, plus the partial unique index (open rows only) that arbitrates the dedupe upsert.
+- `docs/machine-callers.md` — the producer-facing contract: endpoints, token config, dedupe lifecycle, context convention v1 (versioned via `v` for later field promotion), and the standing rules — recurrence lives on producers' own schedulers (ops-brain never owns execution timing), dead-man detection is the producer's job, context/body are PHI-free by contract.
+- **MCP tool surface unchanged (16 tools)** — the entire feature rides the REST layer.
+
 ## [4.0.0] — 2026-07-02
 
 ### Removed — Zammad ticketing retirement (breaking)

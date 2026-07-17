@@ -1040,3 +1040,223 @@ mod coordination_handler_tests {
             .unwrap();
     }
 }
+
+mod machine_handoff_tests {
+    use super::*;
+
+    /// The pilot acceptance round-trip: file fresh → duplicate suppresses
+    /// with a repeat_count bump → complete releases the key → next filing
+    /// is fresh again.
+    #[tokio::test]
+    async fn machine_dedupe_lifecycle() {
+        let pool = pool().await;
+        let key = format!("test-check-{}", uuid::Uuid::now_v7());
+
+        let first = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            "test-agent",
+            "high",
+            "action",
+            "[auto] test check FAIL",
+            "measured value vs threshold",
+            None,
+            Some(&key),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.origin, "machine");
+        assert_eq!(first.status, "pending");
+        assert_eq!(first.repeat_count, 0);
+        assert_eq!(first.dedupe_key.as_deref(), Some(key.as_str()));
+
+        // Second nightly run: suppressed into the same row, count bumped,
+        // updated_at moved forward.
+        let second = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            "test-agent",
+            "high",
+            "action",
+            "[auto] test check FAIL",
+            "measured value vs threshold",
+            None,
+            Some(&key),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.id, first.id);
+        assert_eq!(second.repeat_count, 1);
+        assert!(second.updated_at > first.updated_at);
+
+        // Suppression also holds across accepted (still open).
+        ops_brain::repo::handoff_repo::update_handoff_status(&pool, first.id, "accepted")
+            .await
+            .unwrap();
+        let third = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            "test-agent",
+            "high",
+            "action",
+            "[auto] test check FAIL",
+            "measured value vs threshold",
+            None,
+            Some(&key),
+        )
+        .await
+        .unwrap();
+        assert_eq!(third.id, first.id);
+        assert_eq!(third.repeat_count, 2);
+
+        // Completion releases the key: the same check failing later files fresh.
+        ops_brain::repo::handoff_repo::update_handoff_status(&pool, first.id, "completed")
+            .await
+            .unwrap();
+        let fresh = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            "test-agent",
+            "high",
+            "action",
+            "[auto] test check FAIL",
+            "measured value vs threshold",
+            None,
+            Some(&key),
+        )
+        .await
+        .unwrap();
+        assert_ne!(fresh.id, first.id);
+        assert_eq!(fresh.repeat_count, 0);
+        assert_eq!(fresh.status, "pending");
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![first.id, fresh.id])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// NULL dedupe keys never collide — every filing inserts.
+    #[tokio::test]
+    async fn machine_null_dedupe_keys_always_insert() {
+        let pool = pool().await;
+
+        let a = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            "test-agent",
+            "normal",
+            "action",
+            "[auto] one-off finding",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let b = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            "test-agent",
+            "normal",
+            "action",
+            "[auto] one-off finding",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_ne!(a.id, b.id);
+        assert_eq!(a.repeat_count, 0);
+        assert_eq!(b.repeat_count, 0);
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![a.id, b.id])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// The wake-poll query: agent match is case-insensitive, `since` filters
+    /// on updated_at so dedupe bumps re-surface a still-firing monitor.
+    #[tokio::test]
+    async fn list_pending_since_cursor_resurfaces_dedupe_bumps() {
+        let pool = pool().await;
+        // Unique agent per run keeps this test isolated from real rows.
+        let agent = format!("test-agent-{}", uuid::Uuid::now_v7().simple());
+        let key = format!("test-check-{}", uuid::Uuid::now_v7());
+
+        let filed = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            &agent,
+            "high",
+            "action",
+            "[auto] test check FAIL",
+            "body",
+            None,
+            Some(&key),
+        )
+        .await
+        .unwrap();
+
+        // Case-insensitive agent match, no cursor.
+        let all = ops_brain::repo::handoff_repo::list_pending_for_agent(
+            &pool,
+            &agent.to_uppercase(),
+            None,
+            50,
+        )
+        .await
+        .unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, filed.id);
+
+        // Cursor after the filing hides it.
+        let cursor = filed.updated_at;
+        let after =
+            ops_brain::repo::handoff_repo::list_pending_for_agent(&pool, &agent, Some(cursor), 50)
+                .await
+                .unwrap();
+        assert!(after.is_empty());
+
+        // A dedupe bump moves updated_at past the cursor → re-surfaces.
+        ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Test-Host1",
+            &agent,
+            "high",
+            "action",
+            "[auto] test check FAIL",
+            "body",
+            None,
+            Some(&key),
+        )
+        .await
+        .unwrap();
+        let resurfaced =
+            ops_brain::repo::handoff_repo::list_pending_for_agent(&pool, &agent, Some(cursor), 50)
+                .await
+                .unwrap();
+        assert_eq!(resurfaced.len(), 1);
+        assert_eq!(resurfaced[0].id, filed.id);
+        assert_eq!(resurfaced[0].repeat_count, 1);
+
+        // Completed rows drop out of the poll.
+        ops_brain::repo::handoff_repo::update_handoff_status(&pool, filed.id, "completed")
+            .await
+            .unwrap();
+        let done = ops_brain::repo::handoff_repo::list_pending_for_agent(&pool, &agent, None, 50)
+            .await
+            .unwrap();
+        assert!(done.is_empty());
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(filed.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}

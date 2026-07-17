@@ -25,6 +25,15 @@ pub struct Handoff {
     /// `commit_hash` lands in main.
     pub merge_commit: Option<String>,
     pub merged_at: Option<DateTime<Utc>>,
+    /// Who filed the row: "agent" (MCP tools) or "machine" (REST ingestion
+    /// path). Stamped server-side from the caller class, never caller-set.
+    pub origin: String,
+    /// Caller-chosen idempotency key for recurring machine producers.
+    /// Unique among OPEN handoffs only — completion releases the key.
+    pub dedupe_key: Option<String>,
+    /// Server-maintained count of suppressed duplicate filings against this
+    /// row's `dedupe_key` while it was open. 0 = filed once.
+    pub repeat_count: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
