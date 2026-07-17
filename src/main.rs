@@ -101,8 +101,39 @@ async fn main() -> anyhow::Result<()> {
                 http_config,
             );
 
+            // Machine tokens: scoped credentials for the REST ingestion path
+            // (POST /api/handoff) and wake poll (GET /api/pending). Parse
+            // failures abort startup — a silently dropped token would read
+            // as "monitor wired up" while its filings 401.
+            let machine_tokens = auth::parse_machine_tokens(
+                config.machine_tokens.as_deref(),
+                config.auth_token.as_deref(),
+            )
+            .map_err(|e| anyhow::anyhow!("OPS_BRAIN_MACHINE_TOKENS: {e}"))?;
+            if !machine_tokens.is_empty() {
+                tracing::info!(
+                    count = machine_tokens.len(),
+                    bindings = ?machine_tokens
+                        .iter()
+                        .map(|t| format!(
+                            "{} (client={}, scopes={})",
+                            t.from_agent,
+                            t.client.as_deref().unwrap_or("-"),
+                            t.scopes.join("+")
+                        ))
+                        .collect::<Vec<_>>(),
+                    "machine tokens configured"
+                );
+            }
+            let auth_state = auth::AuthState {
+                main_token: config.auth_token.clone(),
+                machine_tokens: Arc::new(machine_tokens),
+            };
+
             let api_routes = axum::Router::new()
                 .route("/briefing", axum::routing::post(api::generate_briefing))
+                .route("/handoff", axum::routing::post(api::create_handoff))
+                .route("/pending", axum::routing::get(api::list_pending))
                 .with_state(api_state);
 
             // Outer .layer wraps everything below — auth runs BEFORE rmcp's
@@ -113,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
                 .nest("/api", api_routes)
                 .nest_service("/mcp", mcp_service)
                 .layer(axum::middleware::from_fn_with_state(
-                    config.auth_token.clone(),
+                    auth_state,
                     auth::bearer_auth,
                 ));
 

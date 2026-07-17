@@ -46,6 +46,82 @@ pub async fn create_handoff(
     .await
 }
 
+/// Insert a machine-filed handoff (`origin = 'machine'`), idempotent on
+/// `dedupe_key` against OPEN rows: if a pending/accepted handoff already
+/// holds the key, the insert collapses into a bump of that row's
+/// `repeat_count` + `updated_at` and returns it unchanged otherwise.
+/// Callers detect suppression by comparing the returned id to `id`.
+///
+/// The ON CONFLICT clause must stay in sync with the partial unique index
+/// `idx_handoffs_dedupe_key_open` (see migration 20260717151000).
+#[allow(clippy::too_many_arguments)]
+pub async fn create_machine_handoff(
+    pool: &PgPool,
+    from_agent: &str,
+    to_agent: &str,
+    priority: &str,
+    category: &str,
+    title: &str,
+    body: &str,
+    context: Option<&serde_json::Value>,
+    dedupe_key: Option<&str>,
+) -> Result<Handoff, sqlx::Error> {
+    let id = Uuid::now_v7();
+    sqlx::query_as::<_, Handoff>(
+        "INSERT INTO handoffs (id, from_agent, to_agent, priority, category, title, body,
+                               context, origin, dedupe_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'machine', $9)
+         ON CONFLICT (dedupe_key)
+            WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'accepted')
+         DO UPDATE SET repeat_count = handoffs.repeat_count + 1,
+                       updated_at = now()
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(from_agent)
+    .bind(to_agent)
+    .bind(priority)
+    .bind(category)
+    .bind(title)
+    .bind(body)
+    .bind(context)
+    .bind(dedupe_key)
+    .fetch_one(pool)
+    .await
+}
+
+/// Open action handoffs addressed to `agent`, for wake-shim polling.
+/// `since` filters on `updated_at` (which `create_machine_handoff` bumps on
+/// dedupe suppression, so a still-firing monitor re-surfaces past a cursor).
+pub async fn list_pending_for_agent(
+    pool: &PgPool,
+    agent: &str,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    limit: i64,
+) -> Result<Vec<Handoff>, sqlx::Error> {
+    // Exact case-insensitive match, NOT ILIKE: this query sits behind the
+    // machine-token agent allowlist (an exact compare), and ILIKE's `_`
+    // wildcard — legal in agent names — would over-match past that gate.
+    let mut q = String::from(
+        "SELECT * FROM handoffs
+          WHERE status IN ('pending', 'accepted')
+            AND category = 'action'
+            AND LOWER(to_agent) = LOWER($1)",
+    );
+    if since.is_some() {
+        q.push_str(" AND updated_at > $2 ORDER BY updated_at DESC LIMIT $3");
+    } else {
+        q.push_str(" ORDER BY updated_at DESC LIMIT $2");
+    }
+
+    let mut query = sqlx::query_as::<_, Handoff>(&q).bind(agent);
+    if let Some(ts) = since {
+        query = query.bind(ts);
+    }
+    query = query.bind(limit);
+    query.fetch_all(pool).await
+}
+
 pub async fn update_handoff_status(
     pool: &PgPool,
     id: Uuid,

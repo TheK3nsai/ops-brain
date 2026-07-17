@@ -4,6 +4,8 @@ External-user release sweep (#56 + #57) shipped on 2026-05-18: repo description,
 
 ## Open
 
+- **Automation-backbone charter (2026-07-17) — phases 1+2 shipped on `feat/machine-filed-handoffs`; phase 3 evidence-gated.** Joint design with CC-HSR (handoff thread `019f7094` → `019f709f`): machine-filed handoffs + wake poll, contract in `docs/machine-callers.md`. Deliberately NOT built (doctrine intact): server-side recurrence (producers' own schedulers + `dedupe_key` idempotency cover it), structured handoff columns (versioned `context` convention instead — promote fields only if the pilot bleeds from prose-parsing), webhooks-out (poll `GET /api/pending`; additive upgrade if sub-minute latency ever becomes real pain). Pilot consumer: CC-HSR's nightly backup-posture sweep; acceptance = file FAIL → wake poll shows it → repeat suppresses+bumps → complete → next FAIL files fresh.
+
 - **Case-insensitive agent matching on handoff queries.** The fleet convention is `Codex-HSR`-style, but prod data already has mixed casings (`Codex-HSR` and `codex-hsr` both live as distinct `from_agent` values), and `list_handoffs` `from_agent`/`to_agent` filters are exact-match — a targeted query silently misses the other casing. Bit CC-Stealth 2026-07-13 while hunting a CC-HSR handoff. Fix: `ILIKE`/`LOWER()=LOWER()` on the agent filters (cheap, no schema change); optionally lowercase-normalize `check_in`/`list_replies_to_me` the same way. Until shipped: query both casings or fall back to `search_handoffs`.
 
 ## Closed (2026-05-18 release sweep)

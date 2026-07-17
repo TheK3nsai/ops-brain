@@ -176,6 +176,9 @@ mod tests {
             commit_hash: None,
             merge_commit: None,
             merged_at: None,
+            origin: "agent".to_string(),
+            dedupe_key: None,
+            repeat_count: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -202,6 +205,9 @@ mod tests {
             commit_hash: None,
             merge_commit: None,
             merged_at: None,
+            origin: "agent".to_string(),
+            dedupe_key: None,
+            repeat_count: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
