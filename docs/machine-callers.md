@@ -50,7 +50,9 @@ Configured server-side via `OPS_BRAIN_MACHINE_TOKENS` (JSON array):
 - `from_agent` — stamped on every handoff this token files. Callers cannot
   override it; supplying a different `from_agent` in the request body is a
   400. The token IS the identity.
-- `client` — informational scope label, recorded in server logs.
+- `client` — informational scope label, recorded in server logs. Optional —
+  omit for cross-infra producers with no single client; tooling that iterates
+  bindings must treat it as absent-able.
 - `agents` — the routing allowlist: which agents this token may file
   handoffs **to** and poll pending queues **for**. Case-insensitive exact
   match, no wildcard, must be non-empty.
