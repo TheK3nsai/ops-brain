@@ -60,6 +60,11 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-feature
 # Error handling
 anyhow = "1"
 
+[dev-dependencies]
+# tower::ServiceExt::oneshot for driving the axum auth middleware + REST
+# handlers in integration tests without binding a TCP listener.
+tower = { version = "0.5", features = ["util"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

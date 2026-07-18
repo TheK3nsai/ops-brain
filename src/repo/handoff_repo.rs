@@ -233,10 +233,26 @@ pub async fn list_replies_to_me(
     query.fetch_all(pool).await
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn list_handoffs(
+/// How the status column is constrained in `list_handoffs_filtered`.
+#[derive(Clone, Copy)]
+enum StatusFilter<'a> {
+    /// No status constraint (list_handoffs with no status filter).
+    Any,
+    /// Exactly one status (`status = $n`, bound).
+    Exact(&'a str),
+    /// The open set — pending + accepted (list_open_handoffs).
+    Open,
+}
+
+/// Shared builder behind `list_handoffs` and `list_open_handoffs`. The only
+/// axis that differs between the two public entry points is how the status
+/// column is constrained (`status_filter`); agent/category filtering, the
+/// notify-TTL read-time pruning clause, ordering, and the limit are identical.
+/// Keeping this in one place means the NOTIFY_TTL pruning lives in exactly one
+/// spot.
+async fn list_handoffs_filtered(
     pool: &PgPool,
-    status: Option<&str>,
+    status_filter: StatusFilter<'_>,
     to_agent: Option<&str>,
     from_agent: Option<&str>,
     category: Option<&str>,
@@ -247,10 +263,17 @@ pub async fn list_handoffs(
     let mut conditions: Vec<String> = Vec::new();
     let mut param_idx = 1u32;
 
-    if status.is_some() {
-        conditions.push(format!("status = ${param_idx}"));
-        param_idx += 1;
+    match status_filter {
+        StatusFilter::Any => {}
+        StatusFilter::Exact(_) => {
+            conditions.push(format!("status = ${param_idx}"));
+            param_idx += 1;
+        }
+        StatusFilter::Open => {
+            conditions.push("status IN ('pending', 'accepted')".to_string());
+        }
     }
+
     // Exact case-insensitive agent matching, NOT ILIKE: `_` is legal in
     // agent names and ILIKE treats it as a single-char wildcard (same
     // reasoning as list_pending_for_agent).
@@ -272,21 +295,20 @@ pub async fn list_handoffs(
     }
 
     // Read-time pruning: stale notify rows never resurface in operational
-    // queries. The row stays in the table; it just stops being noise.
+    // queries. The row stays in the table; it just stops being noise. This is
+    // the single source of the NOTIFY_TTL clause.
     conditions.push(format!(
         "(category = 'action' OR created_at > now() - interval '{NOTIFY_TTL_DAYS} days')"
     ));
 
-    if !conditions.is_empty() {
-        query.push_str(" WHERE ");
-        query.push_str(&conditions.join(" AND "));
-    }
+    query.push_str(" WHERE ");
+    query.push_str(&conditions.join(" AND "));
     query.push_str(" ORDER BY created_at DESC");
     query.push_str(&format!(" LIMIT ${param_idx}"));
 
     let mut q = sqlx::query_as::<_, Handoff>(&query);
-    if let Some(v) = status {
-        q = q.bind(v);
+    if let StatusFilter::Exact(s) = status_filter {
+        q = q.bind(s);
     }
     if let Some(v) = to_agent {
         q = q.bind(v);
@@ -302,6 +324,32 @@ pub async fn list_handoffs(
     q.fetch_all(pool).await
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn list_handoffs(
+    pool: &PgPool,
+    status: Option<&str>,
+    to_agent: Option<&str>,
+    from_agent: Option<&str>,
+    category: Option<&str>,
+    include_notify: bool,
+    limit: i64,
+) -> Result<Vec<Handoff>, sqlx::Error> {
+    let status_filter = match status {
+        Some(s) => StatusFilter::Exact(s),
+        None => StatusFilter::Any,
+    };
+    list_handoffs_filtered(
+        pool,
+        status_filter,
+        to_agent,
+        from_agent,
+        category,
+        include_notify,
+        limit,
+    )
+    .await
+}
+
 pub async fn list_open_handoffs(
     pool: &PgPool,
     to_agent: Option<&str>,
@@ -310,48 +358,44 @@ pub async fn list_open_handoffs(
     include_notify: bool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
-    let mut query = format!("SELECT {HANDOFF_COLS} FROM handoffs");
-    let mut conditions: Vec<String> = vec!["status IN ('pending', 'accepted')".to_string()];
-    let mut param_idx = 1u32;
+    list_handoffs_filtered(
+        pool,
+        StatusFilter::Open,
+        to_agent,
+        from_agent,
+        category,
+        include_notify,
+        limit,
+    )
+    .await
+}
 
-    // Exact case-insensitive agent matching — see list_handoffs.
-    if to_agent.is_some() {
-        conditions.push(format!("LOWER(to_agent) = LOWER(${param_idx})"));
-        param_idx += 1;
-    }
-    if from_agent.is_some() {
-        conditions.push(format!("LOWER(from_agent) = LOWER(${param_idx})"));
-        param_idx += 1;
-    }
-    if category.is_some() {
-        conditions.push(format!("category = ${param_idx}"));
-        param_idx += 1;
-    } else if !include_notify {
-        conditions.push("category = 'action'".to_string());
-    }
+/// Real open-action-handoff counts for briefings. Mirrors the filter of
+/// `list_open_handoffs(.., include_notify=false)` (action-class, pending +
+/// accepted) but returns true totals instead of a `LIMIT`-bounded page — the
+/// briefing previously reported `len()` of a 20-row page as the open count.
+pub struct OpenHandoffCounts {
+    pub open: i64,
+    pub pending: i64,
+    pub accepted: i64,
+}
 
-    conditions.push(format!(
-        "(category = 'action' OR created_at > now() - interval '{NOTIFY_TTL_DAYS} days')"
-    ));
-
-    query.push_str(" WHERE ");
-    query.push_str(&conditions.join(" AND "));
-    query.push_str(" ORDER BY created_at DESC");
-    query.push_str(&format!(" LIMIT ${param_idx}"));
-
-    let mut q = sqlx::query_as::<_, Handoff>(&query);
-    if let Some(v) = to_agent {
-        q = q.bind(v);
-    }
-    if let Some(v) = from_agent {
-        q = q.bind(v);
-    }
-    if let Some(v) = category {
-        q = q.bind(v);
-    }
-    q = q.bind(limit);
-
-    q.fetch_all(pool).await
+pub async fn count_open_handoffs(pool: &PgPool) -> Result<OpenHandoffCounts, sqlx::Error> {
+    let row: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            count(*),
+            count(*) FILTER (WHERE status = 'pending'),
+            count(*) FILTER (WHERE status = 'accepted')
+         FROM handoffs
+         WHERE category = 'action' AND status IN ('pending', 'accepted')",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(OpenHandoffCounts {
+        open: row.0,
+        pending: row.1,
+        accepted: row.2,
+    })
 }
 
 pub async fn delete_handoff(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {

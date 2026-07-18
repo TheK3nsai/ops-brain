@@ -1333,3 +1333,600 @@ mod machine_handoff_tests {
             .unwrap();
     }
 }
+
+// ===== Cross-client safety gate (end-to-end through the search handler) =====
+//
+// The pure-logic partitioning is unit-tested in `src/tools/mod.rs`; these
+// drive the whole `handle_search_knowledge` path so the withhold → acknowledge
+// → audit-log contract is locked against a real OpsBrain + Postgres. FTS mode
+// with a unique term keeps the embedding client out of the picture.
+mod knowledge_safety_tests {
+    use super::*;
+    use ops_brain::tools::knowledge::{handle_search_knowledge, SearchKnowledgeParams};
+
+    fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
+        ops_brain::tools::OpsBrain::new(pool, None)
+    }
+
+    fn extract_json(result: &rmcp::model::CallToolResult) -> serde_json::Value {
+        let text = result
+            .content
+            .first()
+            .expect("result has content")
+            .as_text()
+            .expect("content is text")
+            .text
+            .clone();
+        serde_json::from_str(&text).expect("result body is JSON")
+    }
+
+    /// FTS single-table search scoped to `client_slug`, non-compact so bodies
+    /// (and provenance) are present on allowed items.
+    async fn search_as(
+        brain: &ops_brain::tools::OpsBrain,
+        query: &str,
+        client_slug: &str,
+        acknowledge: bool,
+    ) -> serde_json::Value {
+        let result = handle_search_knowledge(
+            brain,
+            SearchKnowledgeParams {
+                query: Some(query.to_string()),
+                mode: Some("fts".to_string()),
+                tables: None,
+                client_slug: Some(client_slug.to_string()),
+                acknowledge_cross_client: Some(acknowledge),
+                limit: Some(50),
+                compact: Some(false),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(false), "search should not error");
+        extract_json(&result)
+    }
+
+    #[tokio::test]
+    async fn cross_client_gate_withhold_acknowledge_and_audit() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+
+        let client_a = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Alpha Gate Co",
+            &format!("alphagate-{suffix}"),
+            None,
+        )
+        .await
+        .unwrap();
+        let client_b = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Beta Gate Co",
+            &format!("betagate-{suffix}"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Unique FTS term so only our entries match.
+        let secret_term = format!("zqxgate{suffix}");
+        let safe_term = format!("zqxsafe{suffix}");
+
+        // Client A entry, NOT cross-client safe.
+        let secret = ops_brain::repo::knowledge_repo::add_knowledge(
+            &pool,
+            &format!("gate {secret_term} secret"),
+            "sensitive content for A only",
+            Some("safety"),
+            &[],
+            Some(client_a.id),
+            false,
+            Some("CC-Stealth"),
+        )
+        .await
+        .unwrap();
+
+        // Client A entry that IS cross-client safe.
+        let safe = ops_brain::repo::knowledge_repo::add_knowledge(
+            &pool,
+            &format!("gate {safe_term} shareable"),
+            "content marked safe for all clients",
+            Some("safety"),
+            &[],
+            Some(client_a.id),
+            true,
+            Some("CC-Stealth"),
+        )
+        .await
+        .unwrap();
+
+        // 1) Client B searches the secret term WITHOUT acknowledgment → withheld.
+        let withheld = search_as(&brain, &secret_term, &client_b.slug, false).await;
+        let items = withheld["knowledge"].as_array().expect("knowledge array");
+        assert!(
+            items.is_empty(),
+            "secret entry must be withheld, got: {items:?}"
+        );
+        let notices = withheld["cross_client_withheld"]
+            .as_array()
+            .expect("withheld notices present");
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0]["count"], 1);
+        assert_eq!(notices[0]["owning_client_slug"], client_a.slug);
+        // Content must NOT leak anywhere in the withheld response.
+        assert!(
+            !withheld
+                .to_string()
+                .contains("sensitive content for A only"),
+            "withheld content must not appear in the response"
+        );
+
+        // 2) Client B re-calls WITH acknowledgment → released, content present,
+        //    provenance stamped to the owning client.
+        let released = search_as(&brain, &secret_term, &client_b.slug, true).await;
+        let items = released["knowledge"].as_array().expect("knowledge array");
+        assert_eq!(
+            items.len(),
+            1,
+            "acknowledged search should release the item"
+        );
+        assert_eq!(items[0]["id"], secret.id.to_string());
+        assert_eq!(items[0]["content"], "sensitive content for A only");
+        assert_eq!(items[0]["_client_slug"], client_a.slug);
+        assert_eq!(items[0]["_client_name"], client_a.name);
+
+        // 3) audit_log recorded the release for client B.
+        let released_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log
+              WHERE entity_id = $1 AND requesting_client_id = $2
+                AND action = 'released' AND tool_name = 'search_knowledge'",
+        )
+        .bind(secret.id)
+        .bind(client_b.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            released_rows >= 1,
+            "a released audit_log row must exist for the acknowledged surfacing"
+        );
+
+        // 4) cross_client_safe=true entry passes for client B WITHOUT ack.
+        let safe_resp = search_as(&brain, &safe_term, &client_b.slug, false).await;
+        let items = safe_resp["knowledge"].as_array().expect("knowledge array");
+        assert_eq!(items.len(), 1, "safe entry passes without acknowledgment");
+        assert_eq!(items[0]["id"], safe.id.to_string());
+        assert_eq!(items[0]["_client_slug"], client_a.slug);
+        assert_eq!(items[0]["_client_name"], client_a.name);
+        assert!(
+            safe_resp.get("cross_client_withheld").is_none(),
+            "safe entry must not produce a withheld notice"
+        );
+
+        // Cleanup: audit_log FKs requesting_client_id → clients, so purge it
+        // before the clients. knowledge.client_id is ON DELETE SET NULL.
+        sqlx::query("DELETE FROM audit_log WHERE entity_id = ANY($1)")
+            .bind(vec![secret.id, safe.id])
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM knowledge WHERE id = ANY($1)")
+            .bind(vec![secret.id, safe.id])
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM clients WHERE id = ANY($1)")
+            .bind(vec![client_a.id, client_b.id])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// Step 8: an UNSCOPED search (no client_slug) applies no withholding but
+    /// still stamps provenance on every item and carries the `_note` banner.
+    #[tokio::test]
+    async fn unscoped_search_injects_note_and_provenance() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+
+        let client_a = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Unscoped Co",
+            &format!("unscoped-{suffix}"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let term = format!("zqxunscoped{suffix}");
+        let entry = ops_brain::repo::knowledge_repo::add_knowledge(
+            &pool,
+            &format!("open {term} entry"),
+            "unscoped body",
+            None,
+            &[],
+            Some(client_a.id),
+            false,
+            Some("CC-Stealth"),
+        )
+        .await
+        .unwrap();
+
+        // No client_slug → unscoped.
+        let result = handle_search_knowledge(
+            &brain,
+            SearchKnowledgeParams {
+                query: Some(term.clone()),
+                mode: Some("fts".to_string()),
+                tables: None,
+                client_slug: None,
+                acknowledge_cross_client: None,
+                limit: Some(50),
+                compact: Some(false),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(false));
+        let resp = extract_json(&result);
+
+        assert!(
+            resp["_note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("unscoped query"),
+            "unscoped response must carry the _note banner, got: {resp}"
+        );
+        let items = resp["knowledge"].as_array().expect("knowledge array");
+        assert_eq!(items.len(), 1);
+        // Provenance is present even without a requesting client.
+        assert_eq!(items[0]["_client_slug"], client_a.slug);
+        assert_eq!(items[0]["_client_name"], client_a.name);
+        assert!(
+            resp.get("cross_client_withheld").is_none(),
+            "unscoped query never withholds"
+        );
+
+        sqlx::query("DELETE FROM knowledge WHERE id = $1")
+            .bind(entry.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM clients WHERE id = $1")
+            .bind(client_a.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+// ===== bearer_auth middleware enforcement =====
+//
+// Drives the real middleware over a tiny router via tower::oneshot — no DB.
+// Confirms caller classification (Full vs Machine), scope/path gating, and the
+// 401/403/dev-mode boundaries.
+mod auth_middleware_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::{get, post};
+    use axum::{Extension, Router};
+    use ops_brain::auth::{bearer_auth, AuthState, CallerClass, MachineToken};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    const MAIN: &str = "main-secret-token-000000000000000000000000";
+    const MACH: &str = "machine-secret-token-1111111111111111111111";
+
+    async fn echo_caller(Extension(caller): Extension<CallerClass>) -> String {
+        match caller {
+            CallerClass::Full => "Full".to_string(),
+            CallerClass::Machine(t) => format!("Machine:{}", t.from_agent),
+        }
+    }
+
+    fn machine_token(scopes: Vec<&str>) -> MachineToken {
+        MachineToken {
+            token: MACH.to_string(),
+            from_agent: "Test-Producer".to_string(),
+            client: None,
+            agents: vec!["CC-Test".to_string()],
+            scopes: scopes.into_iter().map(String::from).collect(),
+        }
+    }
+
+    fn app(state: AuthState) -> Router {
+        Router::new()
+            .route("/health", get(|| async { "OK" }))
+            .route("/api/briefing", post(echo_caller))
+            .route("/api/handoff", post(echo_caller))
+            .route("/api/pending", get(echo_caller))
+            .route("/mcp", post(echo_caller))
+            .layer(from_fn_with_state(state, bearer_auth))
+    }
+
+    fn full_state(machine: Vec<MachineToken>) -> AuthState {
+        AuthState {
+            main_token: Some(MAIN.to_string()),
+            machine_tokens: Arc::new(machine),
+        }
+    }
+
+    async fn body_text(resp: axum::response::Response) -> String {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    fn req(method: &str, uri: &str, bearer: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().method(method).uri(uri);
+        if let Some(tok) = bearer {
+            b = b.header("authorization", format!("Bearer {tok}"));
+        }
+        b.body(Body::empty()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn main_bearer_is_full() {
+        let resp = app(full_state(vec![]))
+            .oneshot(req("GET", "/api/pending", Some(MAIN)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_text(resp).await, "Full");
+    }
+
+    #[tokio::test]
+    async fn machine_token_on_non_machine_path_is_forbidden() {
+        // POST /api/briefing is not in the machine scope table.
+        let resp = app(full_state(vec![machine_token(vec!["create", "read"])]))
+            .oneshot(req("POST", "/api/briefing", Some(MACH)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn machine_token_wrong_scope_on_own_endpoint_is_forbidden() {
+        // read-only token hitting POST /api/handoff (needs "create").
+        let resp = app(full_state(vec![machine_token(vec!["read"])]))
+            .oneshot(req("POST", "/api/handoff", Some(MACH)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn machine_token_on_granted_endpoint_is_machine() {
+        let resp = app(full_state(vec![machine_token(vec!["create", "read"])]))
+            .oneshot(req("GET", "/api/pending", Some(MACH)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_text(resp).await, "Machine:Test-Producer");
+    }
+
+    #[tokio::test]
+    async fn garbage_bearer_is_unauthorized() {
+        let resp = app(full_state(vec![]))
+            .oneshot(req("GET", "/api/pending", Some("not-a-real-token")))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn missing_header_is_unauthorized() {
+        let resp = app(full_state(vec![]))
+            .oneshot(req("GET", "/api/pending", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn no_main_token_is_dev_mode_full() {
+        let state = AuthState {
+            main_token: None,
+            machine_tokens: Arc::new(vec![]),
+        };
+        let resp = app(state)
+            .oneshot(req("GET", "/api/pending", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_text(resp).await, "Full");
+    }
+}
+
+// ===== api::create_handoff identity-binding branches =====
+//
+// Full router (routes + auth layer + a machine token) driven via oneshot with
+// a real pool, so the machine caller class is produced by the real middleware.
+mod api_handoff_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::post;
+    use axum::Router;
+    use ops_brain::api::ApiState;
+    use ops_brain::auth::{bearer_auth, AuthState, MachineToken};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    const MAIN: &str = "main-secret-token-222222222222222222222222";
+    const MACH: &str = "machine-secret-token-3333333333333333333333";
+
+    fn app(pool: PgPool) -> Router {
+        let api_state = Arc::new(ApiState { pool });
+        let api_routes = Router::new()
+            .route("/handoff", post(ops_brain::api::create_handoff))
+            .with_state(api_state);
+        let auth_state = AuthState {
+            main_token: Some(MAIN.to_string()),
+            machine_tokens: Arc::new(vec![MachineToken {
+                token: MACH.to_string(),
+                from_agent: "Test-Producer".to_string(),
+                client: None,
+                agents: vec!["Codex-HSR".to_string()],
+                scopes: vec!["create".to_string(), "read".to_string()],
+            }]),
+        };
+        Router::new()
+            .nest("/api", api_routes)
+            .layer(from_fn_with_state(auth_state, bearer_auth))
+    }
+
+    fn post_handoff(body: serde_json::Value) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/api/handoff")
+            .header("authorization", format!("Bearer {MACH}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn from_agent_mismatch_is_bad_request() {
+        let resp = app(pool().await)
+            .oneshot(post_handoff(serde_json::json!({
+                "from_agent": "Someone-Else",
+                "to_agent": "Codex-HSR",
+                "title": "t",
+                "body": "b"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn missing_to_agent_is_bad_request() {
+        let resp = app(pool().await)
+            .oneshot(post_handoff(serde_json::json!({
+                "title": "t",
+                "body": "b"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn to_agent_outside_allowlist_is_forbidden() {
+        let resp = app(pool().await)
+            .oneshot(post_handoff(serde_json::json!({
+                "to_agent": "CC-Other",
+                "title": "t",
+                "body": "b"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn happy_path_creates_machine_origin_handoff() {
+        let pool = pool().await;
+        let title = format!("machine handoff {}", Uuid::now_v7().simple());
+        let resp = app(pool.clone())
+            .oneshot(post_handoff(serde_json::json!({
+                "to_agent": "Codex-HSR",
+                "title": title,
+                "body": "filed via REST"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        // origin isn't in the response shape — verify it landed server-stamped.
+        let origin: String = sqlx::query_scalar("SELECT origin FROM handoffs WHERE title = $1")
+            .bind(&title)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(origin, "machine");
+
+        sqlx::query("DELETE FROM handoffs WHERE title = $1")
+            .bind(&title)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+// ===== Exact agent-name matching on list filters =====
+//
+// `_` is legal in agent names; the list filters must use LOWER()=LOWER(), not
+// ILIKE, or the `_` single-char wildcard over-matches sibling agents.
+mod exact_agent_match_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn list_handoffs_to_agent_filter_is_exact_not_wildcard() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        // Differ only at one position: literal '_' vs 'X'. Same length, so an
+        // ILIKE '_' wildcard would match both; exact matching must not.
+        let underscore_agent = format!("z{uniq}_x");
+        let wildcard_agent = format!("z{uniq}Xx");
+
+        let h_under = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            "CC-Stealth",
+            Some(&underscore_agent),
+            "normal",
+            "action",
+            "exact-match underscore",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let h_wild = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            "CC-Stealth",
+            Some(&wildcard_agent),
+            "normal",
+            "action",
+            "exact-match wildcard",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let results = ops_brain::repo::handoff_repo::list_handoffs(
+            &pool,
+            None,
+            Some(&underscore_agent),
+            None,
+            None,
+            false,
+            50,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            results.len(),
+            1,
+            "filter must match only the exact underscore agent, not the wildcard sibling"
+        );
+        assert_eq!(
+            results[0].to_agent.as_deref(),
+            Some(underscore_agent.as_str())
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![h_under.id, h_wild.id])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
