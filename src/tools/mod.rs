@@ -218,7 +218,7 @@ impl OpsBrain {
     #[tool(
         name = "generate_briefing",
         description = "Generate a daily/weekly operational briefing. Summarizes pending \
-        handoffs. Optionally client-scoped. Stored for history."
+        fleet-wide handoffs. Stored for history."
     )]
     async fn generate_briefing(
         &self,
