@@ -62,3 +62,7 @@
 ## Machine-Filed Handoffs
 
 - **Replies to machine-filed handoffs are invisible to the operating agent's `list_replies_to_me`.** A machine-filed handoff's `from_agent` is the *token binding* (e.g. `Stealth-WS`), not the agent that operates that producer. `list_replies_to_me` matches `parent.from_agent` — so when a recipient replies on-thread, the human/agent who actually cares never sees it via reply tracking. Hit on the very first production wake (2026-07-17): the headless smoke reply threaded to `Stealth-WS` and CC-Cloud (who filed the smoke via that token) would have missed it. Until/unless a design change lands: when replying to an `origin=machine` handoff, ALSO send a direct notify to the operating agent, or address the reply `to_agent` = the operator, not the token binding.
+
+## GitHub PR Workflow
+
+- **`gh pr merge --delete-branch` on a stacked PR's base CLOSES the stacked PR — GitHub does not retarget it.** Hit on the v4.1.0 audit series (2026-07-17): #66 was stacked on #65's branch; merging #65 with `--delete-branch` auto-closed #66, and a closed PR whose base ref is gone can be neither reopened nor retargeted (`gh pr reopen` / `gh pr edit --base` both fail). Recovery is a rebase onto main (`git rebase --onto main <old-base-tip> <branch>`), force-push, and a fresh PR. When merging a stack bottom-up, either skip `--delete-branch` until the whole stack is in, or expect to re-file the upper PRs.
