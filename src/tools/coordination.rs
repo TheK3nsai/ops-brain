@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::validation::deserialize_flexible_i64;
 
-use super::helpers::{error_result, json_result, not_found};
+use super::helpers::{error_result, json_result, not_found, truncate_str};
 use super::shared::{embed_and_store, get_query_embedding};
 use rmcp::model::*;
 
@@ -410,7 +410,7 @@ pub async fn handle_list_handoffs(
                         if let Some(obj) = val.as_object_mut() {
                             if let Some(serde_json::Value::String(body)) = obj.get("body") {
                                 let truncated = if body.len() > 200 {
-                                    format!("{}...", &body[..body.floor_char_boundary(200)])
+                                    format!("{}...", truncate_str(body, 200))
                                 } else {
                                     body.clone()
                                 };

@@ -14,6 +14,22 @@ pub(crate) fn error_result(msg: &str) -> CallToolResult {
     CallToolResult::error(vec![Content::text(msg.to_string())])
 }
 
+/// Truncate `s` to at most `max_bytes`, walking back to the nearest UTF-8 char
+/// boundary so the result is always valid UTF-8. No suffix is appended — each
+/// caller owns its own ellipsis/format. If `s` already fits, it is returned
+/// unchanged. This is the single boundary-walk used by the compact-mode body
+/// and snippet truncation across coordination.rs and knowledge.rs.
+pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
 pub(crate) fn not_found(entity: &str, key: &str) -> CallToolResult {
     CallToolResult::error(vec![Content::text(format!("{entity} not found: {key}"))])
 }
@@ -36,6 +52,28 @@ pub(crate) async fn not_found_with_suggestions(
             "{entity} not found: {key}. Did you mean: {}?",
             suggestions.join(", ")
         ))])
+    }
+}
+
+/// Resolve an optional client slug to its id.
+///
+/// - `Ok(None)` when `slug` is `None` — no client scope requested.
+/// - `Ok(Some(id))` on a hit.
+/// - `Err(CallToolResult)` on a miss (slug suggestions attached) or a DB
+///   error. The `Err` value is a ready-to-return tool error, so call sites
+///   collapse the old five-line resolution block to:
+///   `match resolve_client_id(pool, slug).await { Ok(v) => v, Err(r) => return r }`.
+pub(crate) async fn resolve_client_id(
+    pool: &sqlx::PgPool,
+    slug: Option<&str>,
+) -> Result<Option<uuid::Uuid>, CallToolResult> {
+    match slug {
+        Some(slug) => match crate::repo::client_repo::get_client_by_slug(pool, slug).await {
+            Ok(Some(c)) => Ok(Some(c.id)),
+            Ok(None) => Err(not_found_with_suggestions(pool, "Client", slug).await),
+            Err(e) => Err(error_result(&format!("Database error: {e}"))),
+        },
+        None => Ok(None),
     }
 }
 

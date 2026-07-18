@@ -4,7 +4,8 @@ use serde::Deserialize;
 use crate::validation::deserialize_flexible_i64;
 
 use super::helpers::{
-    error_result, filter_cross_client, json_result, not_found, not_found_with_suggestions,
+    error_result, filter_cross_client, inject_provenance, json_result, not_found,
+    resolve_client_id, truncate_str,
 };
 use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
@@ -45,7 +46,6 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
     };
 
     let content_field = match entity_type {
-        "knowledge" => "content",
         "handoff" => "body",
         _ => "content",
     };
@@ -57,18 +57,10 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
         }
     }
 
-    // Add a snippet from the content field (first 200 chars)
+    // Add a snippet from the content field (first 200 bytes, char-boundary safe)
     if let Some(content) = obj.get(content_field).and_then(|v| v.as_str()) {
         let snippet = if content.len() > 200 {
-            format!(
-                "{}...",
-                &content[..content
-                    .char_indices()
-                    .take_while(|(i, _)| *i < 200)
-                    .last()
-                    .map(|(i, c)| i + c.len_utf8())
-                    .unwrap_or(200)]
-            )
+            format!("{}...", truncate_str(content, 200))
         } else {
             content.to_string()
         };
@@ -89,6 +81,63 @@ fn compact_search_results(
         .collect()
 }
 
+/// Processed knowledge arm: the final (compacted-if-requested) items plus the
+/// cross-client withheld notices and audit entries the caller decides what to
+/// do with. Shared by `search_knowledge_single`, the multi-table search arm,
+/// and browse — the filter→gate→compact→provenance shape lived in three
+/// copies before. The audit entries are returned rather than logged here so
+/// the search paths can log them while browse deliberately does not (browse is
+/// not an explicit cross-client surfacing attempt).
+#[allow(clippy::type_complexity)]
+fn process_knowledge_arm(
+    items: &[crate::models::knowledge::Knowledge],
+    requesting_client_id: Option<uuid::Uuid>,
+    acknowledge: bool,
+    compact: bool,
+    client_lookup: &std::collections::HashMap<uuid::Uuid, (String, String)>,
+) -> (
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+    Vec<(uuid::Uuid, Option<uuid::Uuid>, String)>,
+) {
+    let json_items = knowledge_entries_to_json(items);
+    let filtered = filter_cross_client(
+        json_items,
+        "knowledge",
+        requesting_client_id,
+        acknowledge,
+        client_lookup,
+    );
+    let final_items = if compact {
+        compact_search_results(&filtered.allowed, "knowledge")
+    } else {
+        filtered.allowed
+    };
+    (
+        final_items,
+        filtered.withheld_notices,
+        filtered.audit_entries,
+    )
+}
+
+/// Processed handoff arm: handoffs carry no client_id, so there is no
+/// cross-client gate — just serialize and optionally compact. Shared by the
+/// multi-table search arm and browse.
+fn process_handoff_arm(
+    items: &[crate::models::handoff::Handoff],
+    compact: bool,
+) -> Vec<serde_json::Value> {
+    let json_items: Vec<serde_json::Value> = items
+        .iter()
+        .filter_map(|h| serde_json::to_value(h).ok())
+        .collect();
+    if compact {
+        compact_search_results(&json_items, "handoff")
+    } else {
+        json_items
+    }
+}
+
 fn insert_cross_client_withheld(
     results: &mut serde_json::Map<String, serde_json::Value>,
     notices: &[serde_json::Value],
@@ -101,6 +150,13 @@ fn insert_cross_client_withheld(
         serde_json::to_value(notices).unwrap_or_default(),
     );
 }
+
+/// Top-level `_note` injected on any knowledge query that runs WITHOUT a
+/// `client_slug`. Without a requesting client there is no scope to enforce, so
+/// the cross-client withholding gate is inert — this makes that explicit
+/// rather than silently returning every client's content unfiltered.
+const UNSCOPED_NOTE: &str =
+    "unscoped query — cross-client withholding is not applied; pass client_slug to enable the safety gate";
 
 /// v1.6: knowledge staleness threshold in days. An entry is considered stale
 /// if (now - last_verified_at.unwrap_or(created_at)) exceeds this. Computed
@@ -231,13 +287,9 @@ pub async fn handle_add_knowledge(
     let force = p.force.unwrap_or(false);
 
     // Resolve optional client_slug
-    let client_id = match &p.client_slug {
-        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
-            Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        },
-        None => None,
+    let client_id = match resolve_client_id(&brain.pool, p.client_slug.as_deref()).await {
+        Ok(v) => v,
+        Err(r) => return r,
     };
 
     // Embed once: the same text feeds both dup-detection and the stored
@@ -399,7 +451,7 @@ pub(crate) async fn handle_delete_knowledge(
     }
 }
 
-pub(crate) async fn handle_search_knowledge(
+pub async fn handle_search_knowledge(
     brain: &super::OpsBrain,
     p: SearchKnowledgeParams,
 ) -> CallToolResult {
@@ -445,13 +497,10 @@ pub(crate) async fn handle_search_knowledge(
     }
 
     // Resolve optional client_slug for cross-client gate
-    let requesting_client_id = match &p.client_slug {
-        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
-            Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        },
-        None => None,
+    let requesting_client_id = match resolve_client_id(&brain.pool, p.client_slug.as_deref()).await
+    {
+        Ok(v) => v,
+        Err(r) => return r,
     };
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
     let limit = p.limit.unwrap_or(20).clamp(1, 200);
@@ -518,30 +567,24 @@ pub(crate) async fn handle_search_knowledge(
                 };
                 match search_result {
                     Ok(items) => {
-                        let json_items = knowledge_entries_to_json(&items);
-                        let filtered = filter_cross_client(
-                            json_items,
-                            "knowledge",
+                        let (final_items, withheld, audit) = process_knowledge_arm(
+                            &items,
                             requesting_client_id,
                             acknowledge,
+                            compact,
                             &client_lookup,
                         );
-                        let final_items = if compact {
-                            compact_search_results(&filtered.allowed, "knowledge")
-                        } else {
-                            filtered.allowed
-                        };
                         results.insert(
                             "knowledge".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
                         );
-                        all_withheld.extend(filtered.withheld_notices);
+                        all_withheld.extend(withheld);
                         log_audit_entries(
                             &brain.pool,
                             "search_knowledge",
                             requesting_client_id,
                             "knowledge",
-                            &filtered.audit_entries,
+                            &audit,
                         )
                         .await;
                     }
@@ -580,15 +623,7 @@ pub(crate) async fn handle_search_knowledge(
                 };
                 match search_result {
                     Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items
-                            .iter()
-                            .filter_map(|h| serde_json::to_value(h).ok())
-                            .collect();
-                        let final_items = if compact {
-                            compact_search_results(&json_items, "handoff")
-                        } else {
-                            json_items
-                        };
+                        let final_items = process_handoff_arm(&items, compact);
                         results.insert(
                             "handoffs".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
@@ -627,6 +662,15 @@ pub(crate) async fn handle_search_knowledge(
         );
     }
 
+    // Unscoped query: the safety gate is inert. Don't clobber an embedding
+    // `_note` if one was set above — surface the unscoped caveat only when the
+    // slot is free.
+    if requesting_client_id.is_none() {
+        results
+            .entry("_note".to_string())
+            .or_insert_with(|| serde_json::Value::String(UNSCOPED_NOTE.to_string()));
+    }
+
     json_result(&serde_json::Value::Object(results))
 }
 
@@ -641,13 +685,9 @@ async fn browse_recent_entries(
     limit: i64,
     compact: bool,
 ) -> CallToolResult {
-    let requesting_client_id = match client_slug {
-        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
-            Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        },
-        None => None,
+    let requesting_client_id = match resolve_client_id(&brain.pool, client_slug).await {
+        Ok(v) => v,
+        Err(r) => return r,
     };
     let client_lookup = build_client_lookup(&brain.pool).await;
     let mut results = serde_json::Map::new();
@@ -660,24 +700,21 @@ async fn browse_recent_entries(
                     .await
                 {
                     Ok(items) => {
-                        let json_items = knowledge_entries_to_json(&items);
-                        let filtered = filter_cross_client(
-                            json_items,
-                            "knowledge",
+                        // Browse does NOT audit-log — it is not an explicit
+                        // cross-client surfacing attempt, so the audit entries
+                        // are intentionally dropped.
+                        let (final_items, withheld, _audit) = process_knowledge_arm(
+                            &items,
                             requesting_client_id,
                             acknowledge,
+                            compact,
                             &client_lookup,
                         );
-                        let final_items = if compact {
-                            compact_search_results(&filtered.allowed, "knowledge")
-                        } else {
-                            filtered.allowed
-                        };
                         results.insert(
                             "knowledge".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
                         );
-                        all_withheld.extend(filtered.withheld_notices);
+                        all_withheld.extend(withheld);
                     }
                     Err(e) => {
                         results.insert(
@@ -700,15 +737,7 @@ async fn browse_recent_entries(
                 .await
                 {
                     Ok(items) => {
-                        let json_items: Vec<serde_json::Value> = items
-                            .iter()
-                            .filter_map(|h| serde_json::to_value(h).ok())
-                            .collect();
-                        let final_items = if compact {
-                            compact_search_results(&json_items, "handoff")
-                        } else {
-                            json_items
-                        };
+                        let final_items = process_handoff_arm(&items, compact);
                         results.insert(
                             "handoffs".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
@@ -736,6 +765,12 @@ async fn browse_recent_entries(
                 .to_string(),
         ),
     );
+    if requesting_client_id.is_none() {
+        results.insert(
+            "_note".to_string(),
+            serde_json::Value::String(UNSCOPED_NOTE.to_string()),
+        );
+    }
 
     json_result(&serde_json::Value::Object(results))
 }
@@ -773,13 +808,12 @@ async fn search_knowledge_single(
     };
     match result {
         Ok(entries) => {
-            let items = knowledge_entries_to_json(&entries);
             let client_lookup = build_client_lookup(&brain.pool).await;
-            let filtered = filter_cross_client(
-                items,
-                "knowledge",
+            let (final_items, withheld, audit) = process_knowledge_arm(
+                &entries,
                 requesting_client_id,
                 acknowledge,
+                compact,
                 &client_lookup,
             );
 
@@ -788,18 +822,16 @@ async fn search_knowledge_single(
                 "search_knowledge",
                 requesting_client_id,
                 "knowledge",
-                &filtered.audit_entries,
+                &audit,
             )
             .await;
 
-            let final_items = if compact {
-                compact_search_results(&filtered.allowed, "knowledge")
-            } else {
-                filtered.allowed
-            };
             let mut response = serde_json::json!({ "knowledge": final_items });
-            if !filtered.withheld_notices.is_empty() {
-                response["cross_client_withheld"] = serde_json::json!(filtered.withheld_notices);
+            if !withheld.is_empty() {
+                response["cross_client_withheld"] = serde_json::json!(withheld);
+            }
+            if requesting_client_id.is_none() {
+                response["_note"] = serde_json::Value::String(UNSCOPED_NOTE.to_string());
             }
             json_result(&response)
         }
@@ -812,13 +844,9 @@ pub async fn handle_list_knowledge(
     p: ListKnowledgeParams,
 ) -> CallToolResult {
     // Resolve optional client_slug
-    let client_id = match &p.client_slug {
-        Some(slug) => match crate::repo::client_repo::get_client_by_slug(&brain.pool, slug).await {
-            Ok(Some(c)) => Some(c.id),
-            Ok(None) => return not_found_with_suggestions(&brain.pool, "Client", slug).await,
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        },
-        None => None,
+    let client_id = match resolve_client_id(&brain.pool, p.client_slug.as_deref()).await {
+        Ok(v) => v,
+        Err(r) => return r,
     };
 
     let limit = p.limit.unwrap_or(50).clamp(1, 200);
@@ -830,8 +858,23 @@ pub async fn handle_list_knowledge(
     )
     .await
     {
-        // v1.6: surface provenance + staleness warnings on list results.
-        Ok(entries) => json_result(&knowledge_entries_to_json(&entries)),
+        // v1.6: surface staleness warnings; always stamp provenance
+        // (_client_slug/_client_name) on every item — list_knowledge is not
+        // gated, so provenance is the only cross-client signal it carries.
+        Ok(entries) => {
+            let client_lookup = build_client_lookup(&brain.pool).await;
+            let mut items = knowledge_entries_to_json(&entries);
+            for item in &mut items {
+                inject_provenance(item, &client_lookup);
+            }
+            let mut response = serde_json::json!({ "knowledge": items });
+            // Unscoped list: no requesting client → the withholding gate is
+            // inert. Say so, mirroring search_knowledge.
+            if client_id.is_none() {
+                response["_note"] = serde_json::Value::String(UNSCOPED_NOTE.to_string());
+            }
+            json_result(&response)
+        }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
