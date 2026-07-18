@@ -50,7 +50,7 @@ Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_
 - **Handoffs** — `create_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit-linkage via `commit_hash` on completion + `mark_merged` at integration time.
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
 - **Search** — `backfill_embeddings` for the FTS+vector hybrid (PostgreSQL tsvector + pgvector HNSW + RRF fusion).
-- **Briefings** — `generate_briefing` produces daily/weekly markdown summaries of pending handoffs, optionally client-scoped, stored for history. Same logic available at `POST /api/briefing`.
+- **Briefings** — `generate_briefing` produces daily/weekly markdown summaries of pending handoffs (fleet-wide), stored for history. Same logic available at `POST /api/briefing`.
 
 ## Cross-client safety
 
@@ -102,7 +102,7 @@ Claude Code, Codex CLI, Gemini CLI, and future agents can each have their own on
 ## REST endpoints
 
 ```
-POST /api/briefing  { "type": "daily" | "weekly", "client_slug": "..." (optional) }
+POST /api/briefing  { "type": "daily" | "weekly" }
 GET  /health
 ```
 

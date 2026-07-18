@@ -12,7 +12,7 @@ For roadmap philosophy + hard stops (what we will/won't build, and why), see `RO
 - **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
 - **Team bus** (1): `check_in` — open action handoffs (pending + accepted) + recent notify-class handoffs for `agent_name`
 - **Search** (1): `backfill_embeddings`
-- **Briefings** (1): `generate_briefing` (daily/weekly handoffs summary, optionally client-scoped)
+- **Briefings** (1): `generate_briefing` (daily/weekly handoffs summary, fleet-wide — handoffs carry no client column; `client_slug` was dropped in v4.1.0)
 
 REST-only (no MCP tools, zero agent token cost): `POST /api/handoff` + `GET /api/pending` — machine-filed handoffs and wake polling for non-interactive producers, authenticated by scoped machine tokens (`OPS_BRAIN_MACHINE_TOKENS`). Producer contract in `docs/machine-callers.md`. Recurrence/dead-man stay on producers' own schedulers — ops-brain never owns execution timing.
 
@@ -45,6 +45,7 @@ Multi-client data handling for a solo operator managing clients with different c
 - Different client + `cross_client_safe = true` → allowed (marked safe)
 - Different client + `cross_client_safe = false` + `acknowledge_cross_client = true` → released (audit logged)
 - Different client + `cross_client_safe = false` + no acknowledgment → **WITHHELD** (notice returned, audit logged)
+- No `client_slug` on the query → gate is inert (all rows returned), but every item carries provenance and the response carries a `_note` saying the gate is off (v4.1.0)
 
 ## Coordination
 

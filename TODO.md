@@ -2,6 +2,15 @@
 
 External-user release sweep (#56 + #57) shipped on 2026-05-18: repo description, topics, GitHub Releases backfilled, README lede + quick-start, GHCR multi-arch image pipeline, standalone `docker-compose.example.yml`. The release-intent doctrine — _"don't sharpen for optics; build for the 4 CCs"_ — still applies: no further external-polish work without actual external signal (someone files an issue, asks for help, or otherwise shows up).
 
+## Audit disposition (2026-07-17, v4.1.0 — don't re-flag these)
+
+Four-lens full-codebase audit (security/correctness/performance/refactor) shipped as PRs #64/#65/#67. Every finding was fixed, tested, or **consciously declined**. Declined by doctrine — do not re-propose without new evidence:
+
+- **Verbatim DB error strings to callers** — all callers are our own authenticated agents; informative errors beat sanitization theater here.
+- **`build_client_lookup` caching / backfill batching / embedding retry-backoff** — real but irrelevant at 4-agent scale (perf audit's "theater" list).
+- **Unified error enum** — current boundary-appropriate typing (sqlx::Error → CallToolResult / (StatusCode, String)) is deliberate, not mess.
+- **Briefing cosmetic nits** (section omitted when a LIMIT-20 page holds none of a counted status; unscoped `_note` yields to the rarer embedding note on multi-table) — edge-case cosmetic, flagged in PR #67 body.
+
 ## Open
 
 - **Automation-backbone charter (2026-07-17) — phases 1+2 shipped on `feat/machine-filed-handoffs`; phase 3 evidence-gated.** Joint design with CC-HSR (handoff thread `019f7094` → `019f709f`): machine-filed handoffs + wake poll, contract in `docs/machine-callers.md`. Deliberately NOT built (doctrine intact): server-side recurrence (producers' own schedulers + `dedupe_key` idempotency cover it), structured handoff columns (versioned `context` convention instead — promote fields only if the pilot bleeds from prose-parsing), webhooks-out (poll `GET /api/pending`; additive upgrade if sub-minute latency ever becomes real pain). Pilot consumer: CC-HSR's nightly backup-posture sweep; acceptance = file FAIL → wake poll shows it → repeat suppresses+bumps → complete → next FAIL files fresh. **Stealth wake path smoke-verified 2026-07-17**: Stealth-WS machine token live on stealth, `019f70e2` smoke handoff filed via `POST /api/handoff` → 5-min poll → headless CC-Stealth wake → accept/reply/complete, full loop green.
