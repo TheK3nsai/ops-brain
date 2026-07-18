@@ -114,12 +114,21 @@ fn truncate_for_embedding(text: String) -> String {
     truncated
 }
 
+/// Build the embedding text for a title/body pair: title repeated (weight
+/// boost) then the body, truncated to the embedding budget. This is the
+/// single source of truth for the embedded-text shape — callers that need
+/// the text *before* a row exists (e.g. dup-check on add) use this directly
+/// so they embed the exact same string the post-insert store would.
+pub fn prepare_text(title: &str, body: &str) -> String {
+    truncate_for_embedding(format!("{title}\n{title}\n\n{body}"))
+}
+
 pub fn prepare_knowledge_text(k: &Knowledge) -> String {
-    truncate_for_embedding(format!("{}\n{}\n\n{}", k.title, k.title, k.content))
+    prepare_text(&k.title, &k.content)
 }
 
 pub fn prepare_handoff_text(h: &Handoff) -> String {
-    truncate_for_embedding(format!("{}\n{}\n\n{}", h.title, h.title, h.body))
+    prepare_text(&h.title, &h.body)
 }
 
 #[cfg(test)]

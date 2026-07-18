@@ -2,6 +2,8 @@ use pgvector::Vector;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::handoff_repo::HANDOFF_COLS;
+use super::knowledge_repo::KNOWLEDGE_COLS;
 use crate::models::handoff::Handoff;
 use crate::models::knowledge::Knowledge;
 
@@ -46,7 +48,7 @@ pub async fn hybrid_search_knowledge(
     match query_embedding {
         Some(emb) => {
             let vec = Vector::from(emb.to_vec());
-            sqlx::query_as::<_, Knowledge>(
+            sqlx::query_as::<_, Knowledge>(&format!(
                 "WITH fts AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM knowledge
@@ -67,8 +69,9 @@ pub async fn hybrid_search_knowledge(
                     ORDER BY COALESCE(1.0 / (60 + f.rank), 0) + COALESCE(1.0 / (60 + v.rank), 0) DESC
                     LIMIT $3
                 )
-                SELECT k.* FROM knowledge k JOIN rrf ON k.id = rrf.id ORDER BY rrf.score DESC",
-            )
+                SELECT {} FROM knowledge k JOIN rrf ON k.id = rrf.id ORDER BY rrf.score DESC",
+                super::aliased_cols(KNOWLEDGE_COLS, "k")
+            ))
             .bind(query_text)
             .bind(vec)
             .bind(limit)
@@ -76,12 +79,12 @@ pub async fn hybrid_search_knowledge(
             .await
         }
         None => {
-            let results = sqlx::query_as::<_, Knowledge>(
-                "SELECT * FROM knowledge
+            let results = sqlx::query_as::<_, Knowledge>(&format!(
+                "SELECT {KNOWLEDGE_COLS} FROM knowledge
                  WHERE search_vector @@ websearch_to_tsquery('english', $1)
                  ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
-                 LIMIT $2",
-            )
+                 LIMIT $2"
+            ))
             .bind(query_text)
             .bind(limit)
             .fetch_all(pool)
@@ -89,12 +92,12 @@ pub async fn hybrid_search_knowledge(
 
             if results.is_empty() {
                 if let Some(or_text) = super::build_or_tsquery_text(query_text) {
-                    return sqlx::query_as::<_, Knowledge>(
-                        "SELECT * FROM knowledge
+                    return sqlx::query_as::<_, Knowledge>(&format!(
+                        "SELECT {KNOWLEDGE_COLS} FROM knowledge
                          WHERE search_vector @@ to_tsquery('english', $1)
                          ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
-                         LIMIT $2",
-                    )
+                         LIMIT $2"
+                    ))
                     .bind(&or_text)
                     .bind(limit)
                     .fetch_all(pool)
@@ -116,7 +119,7 @@ pub async fn hybrid_search_handoffs(
     match query_embedding {
         Some(emb) => {
             let vec = Vector::from(emb.to_vec());
-            sqlx::query_as::<_, Handoff>(
+            sqlx::query_as::<_, Handoff>(&format!(
                 "WITH fts AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM handoffs
@@ -137,8 +140,9 @@ pub async fn hybrid_search_handoffs(
                     ORDER BY COALESCE(1.0 / (60 + f.rank), 0) + COALESCE(1.0 / (60 + v.rank), 0) DESC
                     LIMIT $3
                 )
-                SELECT h.* FROM handoffs h JOIN rrf ON h.id = rrf.id ORDER BY rrf.score DESC",
-            )
+                SELECT {} FROM handoffs h JOIN rrf ON h.id = rrf.id ORDER BY rrf.score DESC",
+                super::aliased_cols(HANDOFF_COLS, "h")
+            ))
             .bind(query_text)
             .bind(vec)
             .bind(limit)
@@ -146,12 +150,12 @@ pub async fn hybrid_search_handoffs(
             .await
         }
         None => {
-            let results = sqlx::query_as::<_, Handoff>(
-                "SELECT * FROM handoffs
+            let results = sqlx::query_as::<_, Handoff>(&format!(
+                "SELECT {HANDOFF_COLS} FROM handoffs
                  WHERE search_vector @@ websearch_to_tsquery('english', $1)
                  ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
-                 LIMIT $2",
-            )
+                 LIMIT $2"
+            ))
             .bind(query_text)
             .bind(limit)
             .fetch_all(pool)
@@ -159,12 +163,12 @@ pub async fn hybrid_search_handoffs(
 
             if results.is_empty() {
                 if let Some(or_text) = super::build_or_tsquery_text(query_text) {
-                    return sqlx::query_as::<_, Handoff>(
-                        "SELECT * FROM handoffs
+                    return sqlx::query_as::<_, Handoff>(&format!(
+                        "SELECT {HANDOFF_COLS} FROM handoffs
                          WHERE search_vector @@ to_tsquery('english', $1)
                          ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
-                         LIMIT $2",
-                    )
+                         LIMIT $2"
+                    ))
                     .bind(&or_text)
                     .bind(limit)
                     .fetch_all(pool)
@@ -185,9 +189,9 @@ pub async fn vector_search_knowledge(
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
     let vec = Vector::from(query_embedding.to_vec());
-    sqlx::query_as::<_, Knowledge>(
-        "SELECT * FROM knowledge WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2",
-    )
+    sqlx::query_as::<_, Knowledge>(&format!(
+        "SELECT {KNOWLEDGE_COLS} FROM knowledge WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2"
+    ))
     .bind(vec)
     .bind(limit)
     .fetch_all(pool)
@@ -229,9 +233,9 @@ pub async fn vector_search_handoffs(
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let vec = Vector::from(query_embedding.to_vec());
-    sqlx::query_as::<_, Handoff>(
-        "SELECT * FROM handoffs WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2",
-    )
+    sqlx::query_as::<_, Handoff>(&format!(
+        "SELECT {HANDOFF_COLS} FROM handoffs WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2"
+    ))
     .bind(vec)
     .bind(limit)
     .fetch_all(pool)
@@ -265,9 +269,9 @@ pub async fn get_knowledge_without_embeddings(
     pool: &PgPool,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
-    sqlx::query_as::<_, Knowledge>(
-        "SELECT * FROM knowledge WHERE embedding IS NULL ORDER BY created_at LIMIT $1",
-    )
+    sqlx::query_as::<_, Knowledge>(&format!(
+        "SELECT {KNOWLEDGE_COLS} FROM knowledge WHERE embedding IS NULL ORDER BY created_at LIMIT $1"
+    ))
     .bind(limit)
     .fetch_all(pool)
     .await
@@ -277,9 +281,9 @@ pub async fn get_handoffs_without_embeddings(
     pool: &PgPool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
-    sqlx::query_as::<_, Handoff>(
-        "SELECT * FROM handoffs WHERE embedding IS NULL ORDER BY created_at LIMIT $1",
-    )
+    sqlx::query_as::<_, Handoff>(&format!(
+        "SELECT {HANDOFF_COLS} FROM handoffs WHERE embedding IS NULL ORDER BY created_at LIMIT $1"
+    ))
     .bind(limit)
     .fetch_all(pool)
     .await

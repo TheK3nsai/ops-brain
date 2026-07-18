@@ -240,10 +240,15 @@ pub async fn handle_add_knowledge(
         None => None,
     };
 
-    // Duplicate detection: compute embedding and check for similar entries
+    // Embed once: the same text feeds both dup-detection and the stored
+    // vector. Build it with the exact shape/truncation `prepare_knowledge_text`
+    // uses post-insert, so the vector we reuse below matches byte-for-byte.
+    let candidate_text = crate::embeddings::prepare_text(&p.title, &p.content);
+    let mut precomputed_embedding: Option<Vec<f32>> = None;
+
+    // Duplicate detection: reuse the candidate embedding to check for similar entries
     if !force {
         if let Some(ref client) = brain.embedding_client {
-            let candidate_text = format!("{}\n{}\n\n{}", p.title, p.title, p.content);
             if let Ok(embedding) = client.embed_text(&candidate_text).await {
                 // Cosine distance < 0.15 means similarity > 0.85
                 if let Ok(similar) = crate::repo::embedding_repo::find_similar_knowledge(
@@ -273,6 +278,8 @@ pub async fn handle_add_knowledge(
                         }));
                     }
                 }
+                // No dup — hold the vector so insert doesn't re-embed.
+                precomputed_embedding = Some(embedding);
             }
         }
     }
@@ -290,15 +297,35 @@ pub async fn handle_add_knowledge(
     .await
     {
         Ok(entry) => {
-            let text = crate::embeddings::prepare_knowledge_text(&entry);
-            embed_and_store(
-                &brain.pool,
-                &brain.embedding_client,
-                "knowledge",
-                entry.id,
-                &text,
-            )
-            .await;
+            match precomputed_embedding {
+                // Reuse the vector already computed for the dup-check —
+                // `candidate_text` is byte-identical to what
+                // `prepare_knowledge_text(&entry)` would produce.
+                Some(embedding) => {
+                    if let Err(e) = crate::repo::embedding_repo::store_knowledge_embedding(
+                        &brain.pool,
+                        entry.id,
+                        &embedding,
+                    )
+                    .await
+                    {
+                        tracing::warn!("Failed to store embedding for knowledge/{}: {e}", entry.id);
+                    }
+                }
+                // force=true, no embedding client, or the dup-check embed
+                // failed — fall back to embed-then-store.
+                None => {
+                    let text = crate::embeddings::prepare_knowledge_text(&entry);
+                    embed_and_store(
+                        &brain.pool,
+                        &brain.embedding_client,
+                        "knowledge",
+                        entry.id,
+                        &text,
+                    )
+                    .await;
+                }
+            }
             json_result(&entry)
         }
         Err(e) => error_result(&format!("Database error: {e}")),

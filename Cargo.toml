@@ -11,7 +11,15 @@ repository = "https://github.com/TheK3nsai/ops-brain"
 rmcp = { version = "1.6", features = ["server", "transport-io", "transport-streamable-http-server"] }
 
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "time",
+    "sync",
+    "io-std",
+    "io-util",
+] }
 
 # Database
 sqlx = { version = "0.8", features = [
@@ -51,3 +59,8 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-feature
 
 # Error handling
 anyhow = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

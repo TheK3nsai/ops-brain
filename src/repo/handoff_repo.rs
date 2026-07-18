@@ -3,16 +3,28 @@ use uuid::Uuid;
 
 use crate::models::handoff::Handoff;
 
+/// Explicit column list for `Handoff` reads — matches the model fields exactly
+/// and deliberately omits `embedding` (768-dim vector, ~3KB/row) and
+/// `search_vector`, which `FromRow` discards anyway. Use this instead of
+/// `SELECT *` (or `SELECT h.*` via `aliased_cols`) so vectors never cross the
+/// wire on read paths. Writes keep `RETURNING *`.
+pub const HANDOFF_COLS: &str =
+    "id, from_agent, to_agent, status, priority, category, title, body, context, \
+     in_reply_to, commit_hash, merge_commit, merged_at, origin, dedupe_key, \
+     repeat_count, created_at, updated_at";
+
 /// How long a notify-class handoff stays visible in operational queries
 /// (list_handoffs, check_in) before being filtered out at read time. The row
 /// itself is preserved for audit and search history.
 pub const NOTIFY_TTL_DAYS: i32 = 7;
 
 pub async fn get_handoff(pool: &PgPool, id: Uuid) -> Result<Option<Handoff>, sqlx::Error> {
-    sqlx::query_as::<_, Handoff>("SELECT * FROM handoffs WHERE id = $1")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as::<_, Handoff>(&format!(
+        "SELECT {HANDOFF_COLS} FROM handoffs WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -103,11 +115,11 @@ pub async fn list_pending_for_agent(
     // Exact case-insensitive match, NOT ILIKE: this query sits behind the
     // machine-token agent allowlist (an exact compare), and ILIKE's `_`
     // wildcard — legal in agent names — would over-match past that gate.
-    let mut q = String::from(
-        "SELECT * FROM handoffs
+    let mut q = format!(
+        "SELECT {HANDOFF_COLS} FROM handoffs
           WHERE status IN ('pending', 'accepted')
             AND category = 'action'
-            AND LOWER(to_agent) = LOWER($1)",
+            AND LOWER(to_agent) = LOWER($1)"
     );
     if since.is_some() {
         q.push_str(" AND updated_at > $2 ORDER BY updated_at DESC LIMIT $3");
@@ -199,11 +211,12 @@ pub async fn list_replies_to_me(
     since: Option<chrono::DateTime<chrono::Utc>>,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
-    let mut q = String::from(
-        "SELECT r.*
+    let mut q = format!(
+        "SELECT {}
            FROM handoffs r
            JOIN handoffs parent ON parent.id = r.in_reply_to
           WHERE LOWER(parent.from_agent) = LOWER($1)",
+        super::aliased_cols(HANDOFF_COLS, "r")
     );
     if since.is_some() {
         q.push_str(" AND r.created_at > $2");
@@ -230,7 +243,7 @@ pub async fn list_handoffs(
     include_notify: bool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
-    let mut query = String::from("SELECT * FROM handoffs");
+    let mut query = format!("SELECT {HANDOFF_COLS} FROM handoffs");
     let mut conditions: Vec<String> = Vec::new();
     let mut param_idx = 1u32;
 
@@ -297,7 +310,7 @@ pub async fn list_open_handoffs(
     include_notify: bool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
-    let mut query = String::from("SELECT * FROM handoffs");
+    let mut query = format!("SELECT {HANDOFF_COLS} FROM handoffs");
     let mut conditions: Vec<String> = vec!["status IN ('pending', 'accepted')".to_string()];
     let mut param_idx = 1u32;
 
@@ -354,12 +367,12 @@ pub async fn search_handoffs(
     query: &str,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
-    sqlx::query_as::<_, Handoff>(
-        "SELECT * FROM handoffs
+    sqlx::query_as::<_, Handoff>(&format!(
+        "SELECT {HANDOFF_COLS} FROM handoffs
          WHERE search_vector @@ plainto_tsquery('english', $1)
          ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-         LIMIT $2",
-    )
+         LIMIT $2"
+    ))
     .bind(query)
     .bind(limit)
     .fetch_all(pool)
