@@ -2,7 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [4.1.0] — 2026-07-17
+
+Hardening release from a four-lens full-codebase audit (security / correctness / performance / refactor) run after the automation backbone shipped. PRs #64, #65, #67.
 
 ### Changed — refactor + safety tests
 
