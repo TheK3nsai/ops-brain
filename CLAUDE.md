@@ -74,9 +74,9 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 
 ## Development Workflow
 
-- **Before committing non-trivial changes**: run `/prereview` — spawns the project reviewer agent to catch logic and safety issues the pre-commit hook can't. (The built-in `/review` is for an already-open PR.)
-- **Pre-commit hook** catches fmt, clippy, and check automatically — no need to run these manually
-- **After merging to main**: hand off the deploy to **CC-Cloud** or **Codex-Cloud** on the VPS. The `/deploy` skill creates the handoff for CC flows; Codex deploy handoffs should spell out the same prod-compose rule. SSH escape hatch is reserved for cases where the cloud deployer is unavailable AND the change is genuinely urgent; even then, **always** pass `-f docker-compose.prod.yml` and smoke via container health plus the deploy's public `/health` URL behind the reverse proxy (port 3000 is not published to the host in prod).
+- **Before committing non-trivial changes**: use the project `reviewer` agent for a local, findings-first review. The `review-pr` skill is for an already-open PR or a requested PR review.
+- **Pre-commit hook** runs a staged `gitleaks` scan. Run the Rust fmt, clippy, check/test, and audit commands through the `test` skill before committing; the secret scan does not replace them.
+- **After merging to main**: hand off the deploy to **CC-Cloud** or **Codex-Cloud** on the VPS. Use the `deploy-ops-brain` skill on the cloud deployer; handoffs must spell out the same prod-compose rule. SSH escape hatch is reserved for cases where the cloud deployer is unavailable AND the change is genuinely urgent; even then, **always** pass `-f docker-compose.prod.yml` and smoke via container health plus the deploy's public `/health` URL behind the reverse proxy (port 3000 is not published to the host in prod).
 - **Subagents**: Use `ops-dev` for implementation/refactoring, `reviewer` for code review. Both are in `.claude/agents/`.
 
 ## What NOT to Do
