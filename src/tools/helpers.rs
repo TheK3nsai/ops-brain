@@ -14,6 +14,29 @@ pub(crate) fn error_result(msg: &str) -> CallToolResult {
     CallToolResult::error(vec![Content::text(msg.to_string())])
 }
 
+/// Resolve the caller's server-bound agent identity from the MCP tool-call
+/// context, if they authenticated with a per-agent token.
+///
+/// The chain: `bearer_auth` inserts a [`crate::auth::CallerClass`] into the
+/// HTTP request extensions; rmcp's streamable-HTTP transport injects that
+/// request's [`http::request::Parts`] (extensions included) into the tool-call
+/// context. So the identity travels transport → middleware → tool with no
+/// schema change. Returns `None` when the caller is unbound — the main bearer,
+/// a machine caller (which never reaches `/mcp`), or the stdio transport (no
+/// HTTP parts at all). `None` means "no identity enforcement", which is correct
+/// for every context in which it can occur: main bearer is operator
+/// break-glass, and stdio/dev are trusted-local.
+///
+/// Note `axum::http::request::Parts` is the exact type rmcp inserts — the crate
+/// graph resolves `http` to a single version, so the type identity holds and
+/// the downcast actually fires (a version split would silently return `None`
+/// and disable enforcement).
+pub(crate) fn bound_agent(ext: &Extensions) -> Option<String> {
+    ext.get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<crate::auth::CallerClass>())
+        .and_then(|caller| caller.bound_agent().map(str::to_string))
+}
+
 /// Truncate `s` to at most `max_bytes`, walking back to the nearest UTF-8 char
 /// boundary so the result is always valid UTF-8. No suffix is appended — each
 /// caller owns its own ellipsis/format. If `s` already fits, it is returned

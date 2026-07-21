@@ -273,6 +273,7 @@ pub struct ListKnowledgeParams {
 pub async fn handle_add_knowledge(
     brain: &super::OpsBrain,
     p: AddKnowledgeParams,
+    bound: Option<&str>,
 ) -> CallToolResult {
     // v2.0: free-form agent identifier replaces the v1.x CC-fleet allowlist.
     // Provenance is still required on every new entry, but agents are
@@ -281,6 +282,13 @@ pub async fn handle_add_knowledge(
         Ok(n) => n.to_string(),
         Err(e) => return error_result(&format!("author: {e}")),
     };
+
+    // Identity binding: a per-agent token may only author as its own slug, so
+    // provenance on knowledge is a server guarantee. Unbound callers (main
+    // bearer, stdio/dev) pass through unchanged.
+    if let Err(msg) = crate::auth::check_bound_identity(bound, &author) {
+        return error_result(&msg);
+    }
 
     let tags = p.tags.unwrap_or_default();
     let cross_client_safe = p.cross_client_safe.unwrap_or(false);

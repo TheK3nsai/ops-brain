@@ -699,6 +699,7 @@ mod check_in_tests {
             ops_brain::tools::check_in::CheckInParams {
                 agent_name: "bad agent".to_string(),
             },
+            None,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
@@ -714,6 +715,7 @@ mod check_in_tests {
             ops_brain::tools::check_in::CheckInParams {
                 agent_name: "CC-Stealth".to_string(),
             },
+            None,
         )
         .await;
         assert_eq!(result.is_error, Some(false));
@@ -762,6 +764,7 @@ mod check_in_tests {
         let result = ops_brain::tools::check_in::handle_check_in(
             &brain,
             ops_brain::tools::check_in::CheckInParams { agent_name: agent },
+            None,
         )
         .await;
         assert_eq!(result.is_error, Some(false));
@@ -817,6 +820,7 @@ mod coordination_handler_tests {
                 context: None,
                 in_reply_to: Some("not-a-uuid".to_string()),
             },
+            None,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
@@ -824,6 +828,59 @@ mod coordination_handler_tests {
         assert!(
             text.contains("Invalid in_reply_to UUID"),
             "expected in_reply_to validation error, got: {text}"
+        );
+    }
+
+    fn handoff_params(from_agent: &str) -> CreateHandoffParams {
+        CreateHandoffParams {
+            from_agent: from_agent.to_string(),
+            to_agent: Some("CC-Cloud".to_string()),
+            priority: None,
+            category: Some("notify".to_string()),
+            title: "identity-binding smoke".to_string(),
+            body: "body".to_string(),
+            context: None,
+            in_reply_to: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_handoff_bound_token_rejects_mismatched_from_agent() {
+        // A per-agent token bound to CC-Stealth cannot file as CC-Cloud.
+        let brain = build_brain(pool().await);
+        let result =
+            handle_create_handoff(&brain, handoff_params("CC-Cloud"), Some("CC-Stealth")).await;
+        assert_eq!(result.is_error, Some(true));
+        let text = extract_text(&result);
+        assert!(
+            text.contains("CC-Stealth") && text.contains("CC-Cloud"),
+            "expected identity-mismatch error naming both slugs, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_handoff_bound_token_allows_matching_from_agent_case_insensitive() {
+        let brain = build_brain(pool().await);
+        let result =
+            handle_create_handoff(&brain, handoff_params("cc-stealth"), Some("CC-Stealth")).await;
+        assert_eq!(
+            result.is_error,
+            Some(false),
+            "matching (case-insensitive) identity must be accepted: {}",
+            extract_text(&result)
+        );
+    }
+
+    #[tokio::test]
+    async fn create_handoff_unbound_caller_files_any_identity() {
+        // The main bearer (bound = None) keeps the pre-tokens behavior.
+        let brain = build_brain(pool().await);
+        let result = handle_create_handoff(&brain, handoff_params("CC-Anything"), None).await;
+        assert_eq!(
+            result.is_error,
+            Some(false),
+            "unbound caller must file freely: {}",
+            extract_text(&result)
         );
     }
 
@@ -1611,17 +1668,19 @@ mod auth_middleware_tests {
     use axum::middleware::from_fn_with_state;
     use axum::routing::{get, post};
     use axum::{Extension, Router};
-    use ops_brain::auth::{bearer_auth, AuthState, CallerClass, MachineToken};
+    use ops_brain::auth::{bearer_auth, AgentToken, AuthState, CallerClass, MachineToken};
     use std::sync::Arc;
     use tower::ServiceExt;
 
     const MAIN: &str = "main-secret-token-000000000000000000000000";
     const MACH: &str = "machine-secret-token-1111111111111111111111";
+    const AGENT: &str = "agent-secret-token-22222222222222222222222";
 
     async fn echo_caller(Extension(caller): Extension<CallerClass>) -> String {
         match caller {
             CallerClass::Full => "Full".to_string(),
             CallerClass::Machine(t) => format!("Machine:{}", t.from_agent),
+            CallerClass::Agent(t) => format!("Agent:{}", t.from_agent),
         }
     }
 
@@ -1632,6 +1691,14 @@ mod auth_middleware_tests {
             client: None,
             agents: vec!["CC-Test".to_string()],
             scopes: scopes.into_iter().map(String::from).collect(),
+        }
+    }
+
+    fn agent_token() -> AgentToken {
+        AgentToken {
+            token: AGENT.to_string(),
+            from_agent: "CC-Test".to_string(),
+            client: None,
         }
     }
 
@@ -1646,9 +1713,14 @@ mod auth_middleware_tests {
     }
 
     fn full_state(machine: Vec<MachineToken>) -> AuthState {
+        state_with(machine, vec![])
+    }
+
+    fn state_with(machine: Vec<MachineToken>, agents: Vec<AgentToken>) -> AuthState {
         AuthState {
             main_token: Some(MAIN.to_string()),
             machine_tokens: Arc::new(machine),
+            agent_tokens: Arc::new(agents),
         }
     }
 
@@ -1730,9 +1802,53 @@ mod auth_middleware_tests {
         let state = AuthState {
             main_token: None,
             machine_tokens: Arc::new(vec![]),
+            agent_tokens: Arc::new(vec![]),
         };
         let resp = app(state)
             .oneshot(req("GET", "/api/pending", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_text(resp).await, "Full");
+    }
+
+    // ----- per-agent token routing -----
+
+    #[tokio::test]
+    async fn agent_token_on_mcp_is_agent() {
+        let resp = app(state_with(vec![], vec![agent_token()]))
+            .oneshot(req("POST", "/mcp", Some(AGENT)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_text(resp).await, "Agent:CC-Test");
+    }
+
+    #[tokio::test]
+    async fn agent_token_on_rest_handoff_is_forbidden() {
+        // Agent tokens reach the MCP surface only — never the REST ingestion path.
+        let resp = app(state_with(vec![], vec![agent_token()]))
+            .oneshot(req("POST", "/api/handoff", Some(AGENT)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn agent_token_on_rest_pending_is_forbidden() {
+        let resp = app(state_with(vec![], vec![agent_token()]))
+            .oneshot(req("GET", "/api/pending", Some(AGENT)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn main_bearer_still_full_on_mcp_alongside_agent_tokens() {
+        // The main bearer stays unbound (operator break-glass) even when
+        // per-agent tokens are configured.
+        let resp = app(state_with(vec![], vec![agent_token()]))
+            .oneshot(req("POST", "/mcp", Some(MAIN)))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1773,6 +1889,7 @@ mod api_handoff_tests {
                 agents: vec!["Codex-HSR".to_string()],
                 scopes: vec!["create".to_string(), "read".to_string()],
             }]),
+            agent_tokens: Arc::new(vec![]),
         };
         Router::new()
             .nest("/api", api_routes)

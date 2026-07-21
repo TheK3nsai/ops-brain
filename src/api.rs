@@ -167,6 +167,16 @@ pub async fn create_handoff(
                 .map_err(bad_request)?
                 .to_string()
         }
+        // Agent tokens are 403'd at the middleware before reaching any /api
+        // route; this arm is defense-in-depth if that ever regresses. Interactive
+        // agents file through the MCP create_handoff tool, not REST ingestion.
+        CallerClass::Agent(_) => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "per-agent tokens use the MCP create_handoff tool, not the REST ingestion path"
+                    .to_string(),
+            ));
+        }
     };
 
     // Routing scope.
@@ -190,6 +200,16 @@ pub async fn create_handoff(
         (CallerClass::Full, None) => {
             return Err(bad_request(
                 "to_agent is required on the REST ingestion path",
+            ));
+        }
+        // An Agent caller already returned Err in the from_agent match above
+        // (and is 403'd at the middleware before that), so this is unreachable
+        // today — but return a graceful 403 rather than panic if a future
+        // refactor ever lets an agent caller through.
+        (CallerClass::Agent(_), _) => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "per-agent tokens use the MCP surface, not the REST ingestion path".to_string(),
             ));
         }
     };

@@ -24,6 +24,8 @@ services:
       - OPS_BRAIN_AUTH_TOKEN=${OPS_BRAIN_AUTH_TOKEN:?OPS_BRAIN_AUTH_TOKEN must be set — refusing to start unauthenticated}
       # Scoped machine tokens (JSON array) for POST /api/handoff + GET /api/pending
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
+      # Per-agent tokens (JSON array): identity-bound /mcp sessions (see docs/agent-tokens.md)
+      - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
       - OPS_BRAIN_MIGRATE=true
       # rmcp 1.4+ Host header allowlist (DNS-rebind mitigation, default loopback-only)
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}
