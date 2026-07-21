@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added — per-agent MCP tokens (server-bound identity)
+
+- **`OPS_BRAIN_AGENT_TOKENS`**: per-agent credentials for interactive MCP sessions, the identity sibling of the REST-only machine tokens. Each token binds a `from_agent` slug server-side and reaches the full `/mcp` surface (never the REST endpoints; machine tokens remain the inverse — REST-only, never `/mcp`). A third `CallerClass::Agent` variant carries the binding from the auth middleware into the tool handlers via rmcp's injected `http::request::Parts` — **zero transport change, zero MCP schema change** (identity rides the context, not a tool parameter).
+- **Write enforcement**: `create_handoff.from_agent` and `add_knowledge.author` must match the token-bound slug (case-insensitive) or the call is rejected — the bus gains a sender guarantee the single shared main bearer never had. **Read visibility**: `check_in` and `list_replies_to_me` serve any queried slug but warn-log a mismatch (cross-agent triage reads stay legitimate; the anomaly is still surfaced).
+- **Main bearer stays unbound** (`CallerClass::Full`) as operator break-glass; the stdio transport is inert (trusted-local, no HTTP auth). Absence of a binding always means "no enforcement", which can only arise in those trusted contexts.
+- **Startup fails fast** on a malformed agent-token config or a secret shared with the main bearer or any machine token — a silently dropped token would read as "identity enforced" while the agent still filed unbound.
+- **Rotation becomes a per-host rollover** instead of a fleet-wide atomic cutover: a future bearer exposure rotates one token on one host. Operator contract in `docs/agent-tokens.md`.
+- **Bus-trust convention** (`docs/bus-trust.md`): verify-before-comply for security-sensitive handoffs (credential/secret ops, config/infra changes, urgent asks from unfamiliar slugs). The behavioral floor that survives even server-bound identity — a valid token proves which key filed a request, not that the host is uncompromised.
+
 ## [4.1.0] — 2026-07-17
 
 Hardening release from a four-lens full-codebase audit (security / correctness / performance / refactor) run after the automation backbone shipped. PRs #64, #65, #67.

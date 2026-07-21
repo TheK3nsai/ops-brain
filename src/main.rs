@@ -150,9 +150,52 @@ async fn main() -> anyhow::Result<()> {
                     "machine tokens configured"
                 );
             }
+            // Per-agent tokens: identity-bound credentials for interactive MCP
+            // sessions. Cross-checked against the main + machine secrets so a
+            // shared secret can't blur the credential classes. Parse failures
+            // abort startup — a dropped agent token would read as "identity
+            // enforced" while that agent still files unbound.
+            let agent_tokens = auth::parse_agent_tokens(
+                config.agent_tokens.as_deref(),
+                main_token.as_deref(),
+                &machine_tokens,
+            )
+            .map_err(|e| anyhow::anyhow!("OPS_BRAIN_AGENT_TOKENS: {e}"))?;
+            if !agent_tokens.is_empty() {
+                tracing::info!(
+                    count = agent_tokens.len(),
+                    bindings = ?agent_tokens
+                        .iter()
+                        .map(|t| format!(
+                            "{} (client={})",
+                            t.from_agent,
+                            t.client.as_deref().unwrap_or("-")
+                        ))
+                        .collect::<Vec<_>>(),
+                    "agent tokens configured"
+                );
+            }
+
+            // Scoped tokens are meaningless without a main token: dev mode
+            // (no main token) classifies every caller as Full and returns
+            // before the machine/agent scans, so configured scopes would
+            // silently vanish and identity enforcement would fail open. Only
+            // reachable via --dev-no-auth (a missing token otherwise aborts
+            // above); refuse the contradictory config rather than pretend to
+            // enforce.
+            if main_token.is_none() && !(machine_tokens.is_empty() && agent_tokens.is_empty()) {
+                anyhow::bail!(
+                    "OPS_BRAIN_MACHINE_TOKENS / OPS_BRAIN_AGENT_TOKENS are set but no \
+                     OPS_BRAIN_AUTH_TOKEN is configured — scoped tokens require a main token to \
+                     enforce against. --dev-no-auth disables all scoping; drop the scoped tokens \
+                     or set a real main token."
+                );
+            }
+
             let auth_state = auth::AuthState {
                 main_token,
                 machine_tokens: Arc::new(machine_tokens),
+                agent_tokens: Arc::new(agent_tokens),
             };
 
             let api_routes = axum::Router::new()

@@ -27,11 +27,18 @@ pub struct CheckInParams {
     pub agent_name: String,
 }
 
-pub async fn handle_check_in(brain: &super::OpsBrain, p: CheckInParams) -> CallToolResult {
+pub async fn handle_check_in(
+    brain: &super::OpsBrain,
+    p: CheckInParams,
+    bound: Option<&str>,
+) -> CallToolResult {
     let agent_name = match validate_agent_name(&p.agent_name) {
         Ok(n) => n.to_string(),
         Err(e) => return error_result(&e),
     };
+    // Read path: checking in as another agent is legitimate (e.g. an
+    // interactive session triaging a peer's queue) but worth surfacing.
+    crate::auth::warn_identity_mismatch(bound, &agent_name, "check_in");
 
     // Open action handoffs targeted at this agent. Match is exact on the
     // canonical stored value; v1.x normalized hostname aliases to CC names

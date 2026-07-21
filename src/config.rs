@@ -34,6 +34,16 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_MACHINE_TOKENS")]
     pub machine_tokens: Option<String>,
 
+    /// Per-agent tokens for interactive MCP sessions (http transport only).
+    /// JSON array of identity-bound token bindings, e.g.:
+    /// `[{"token":"...","from_agent":"CC-Stealth","client":"stealth"}]`
+    /// Each token reaches the full `/mcp` surface (never the REST endpoints)
+    /// with its `from_agent` bound server-side: MCP write tools reject a
+    /// mismatching claimed identity. The main bearer stays unbound as operator
+    /// break-glass. Secrets must be distinct from the main and machine tokens.
+    #[arg(long, env = "OPS_BRAIN_AGENT_TOKENS")]
+    pub agent_tokens: Option<String>,
+
     /// Comma-separated allowed Host header values for HTTP transport (DNS-rebind mitigation
     /// added in rmcp 1.4). Defaults to loopback only — public deployments behind a reverse
     /// proxy must list their public hostname (e.g. `ops.example.com,ops.example.com:443`).

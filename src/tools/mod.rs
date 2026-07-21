@@ -38,8 +38,10 @@ impl OpsBrain {
     async fn add_knowledge(
         &self,
         params: Parameters<knowledge::AddKnowledgeParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(knowledge::handle_add_knowledge(self, params.0).await)
+        let bound = helpers::bound_agent(&ext);
+        Ok(knowledge::handle_add_knowledge(self, params.0, bound.as_deref()).await)
     }
 
     #[tool(
@@ -97,8 +99,10 @@ impl OpsBrain {
     async fn create_handoff(
         &self,
         params: Parameters<coordination::CreateHandoffParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_create_handoff(self, params.0).await)
+        let bound = helpers::bound_agent(&ext);
+        Ok(coordination::handle_create_handoff(self, params.0, bound.as_deref()).await)
     }
 
     #[tool(
@@ -134,8 +138,10 @@ impl OpsBrain {
     async fn list_replies_to_me(
         &self,
         params: Parameters<coordination::ListRepliesToMeParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_list_replies_to_me(self, params.0).await)
+        let bound = helpers::bound_agent(&ext);
+        Ok(coordination::handle_list_replies_to_me(self, params.0, bound.as_deref()).await)
     }
 
     #[tool(
@@ -196,8 +202,10 @@ impl OpsBrain {
     async fn check_in(
         &self,
         params: Parameters<check_in::CheckInParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(check_in::handle_check_in(self, params.0).await)
+        let bound = helpers::bound_agent(&ext);
+        Ok(check_in::handle_check_in(self, params.0, bound.as_deref()).await)
     }
 
     // ===== SEMANTIC SEARCH TOOLS =====

@@ -16,6 +16,8 @@ For roadmap philosophy + hard stops (what we will/won't build, and why), see `RO
 
 REST-only (no MCP tools, zero agent token cost): `POST /api/handoff` + `GET /api/pending` — machine-filed handoffs and wake polling for non-interactive producers, authenticated by scoped machine tokens (`OPS_BRAIN_MACHINE_TOKENS`). Producer contract in `docs/machine-callers.md`. Recurrence/dead-man stay on producers' own schedulers — ops-brain never owns execution timing.
 
+Identity: interactive MCP sessions may authenticate with **per-agent tokens** (`OPS_BRAIN_AGENT_TOKENS`) that bind `from_agent` server-side — MCP write tools (`create_handoff`, `add_knowledge`) reject a mismatching identity; reads warn-log it. `/mcp`-only, never the REST endpoints. The main bearer stays unbound as operator break-glass. Rotation is per-host, not a fleet cutover. Contract in `docs/agent-tokens.md`.
+
 ## Architecture Constraints
 
 - All `#[tool]` stubs MUST remain in the single `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs` — rmcp macro requirement. Each stub delegates to a `handle_*` function in the appropriate category module.

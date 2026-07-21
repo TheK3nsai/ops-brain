@@ -123,6 +123,7 @@ pub struct DeleteHandoffParams {
 pub async fn handle_create_handoff(
     brain: &super::OpsBrain,
     p: CreateHandoffParams,
+    bound: Option<&str>,
 ) -> CallToolResult {
     let priority = p.priority.as_deref().unwrap_or("normal");
     let category = p.category.as_deref().unwrap_or("action");
@@ -162,6 +163,13 @@ pub async fn handle_create_handoff(
         Ok(n) => n.to_string(),
         Err(e) => return error_result(&format!("from_agent: {e}")),
     };
+
+    // Identity binding: a per-agent token may only file as its own slug. The
+    // main bearer and stdio/dev are unbound and pass through unchanged.
+    if let Err(msg) = crate::auth::check_bound_identity(bound, &from_agent) {
+        return error_result(&msg);
+    }
+
     let to_agent = match p.to_agent.as_deref() {
         Some(raw) => match crate::validation::validate_agent_name(raw) {
             Ok(n) => Some(n.to_string()),
@@ -262,11 +270,16 @@ pub async fn handle_complete_handoff(
 pub async fn handle_list_replies_to_me(
     brain: &super::OpsBrain,
     p: ListRepliesToMeParams,
+    bound: Option<&str>,
 ) -> CallToolResult {
     let agent = match crate::validation::validate_agent_name(&p.agent_name) {
         Ok(n) => n.to_string(),
         Err(e) => return error_result(&e),
     };
+    // Read path: an agent normally polls its own thread replies. Querying
+    // another slug is legitimate during triage, so it is served — but logged,
+    // because "token X reading Y's replies" is a signal worth seeing.
+    crate::auth::warn_identity_mismatch(bound, &agent, "list_replies_to_me");
     let since = match p.since.as_deref() {
         Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
             Ok(ts) => Some(ts.with_timezone(&chrono::Utc)),
