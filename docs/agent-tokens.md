@@ -118,6 +118,32 @@ The main bearer, still unbound, covers any host mid-rollover. This is the
 sequencing win: a future exposure rotates one token on one host rather than
 disconnecting the fleet.
 
+### Revoking a compromised token
+
+The four-step rollover above is for a *healthy* token being cycled. It is the
+wrong shape when a token is known-exposed, because step 1 deliberately keeps the
+old secret valid — for a leaked credential that window is pure risk with no
+availability benefit.
+
+Replace instead of overlapping:
+
+1. Overwrite the `token` field on that entry in place; do not add a second one.
+2. Recreate the container. The old secret is dead the moment the process
+   restarts — verify with a `POST /mcp initialize` on the old value and expect
+   **401**, rather than assuming it.
+3. Deliver the new secret out-of-band and cut the host over.
+
+Availability during the gap comes from the unbound main bearer, which the host
+can keep using until it installs the replacement. This is strictly better when
+the exposed token was **never installed anywhere** (leaked during handling, e.g.
+echoed into a shell transcript): nothing is authenticating with it, so there is
+no host to keep alive and no reason to leave it valid for a second.
+
+Assert the new secret differs from the burned one before writing. The startup
+guard catches collisions against *other* live tokens, but re-minting the exact
+value you are revoking is not a collision — it would abort nothing and silently
+un-revoke the credential.
+
 ## Bus trust still applies
 
 Server-bound identity shrinks the "is this slug real" problem to a server
