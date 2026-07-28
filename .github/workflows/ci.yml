@@ -70,6 +70,32 @@ jobs:
       - name: Run tests
         run: cargo test
 
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # -x follows sourced files; --source-path=SCRIPTDIR resolves
+      # `# shellcheck source=` relative to the script rather than the CWD.
+      # Without both, any script sourcing a sibling library trips SC1091.
+      - name: Run shellcheck
+        run: |
+          mapfile -t files < <(
+            find scripts -type f \( -name '*.sh' -o -name '*.bash' \) 2>/dev/null
+            find scripts -type f -perm -u+x ! -name '*.*' 2>/dev/null \
+              | while read -r f; do
+                  head -c 60 "$f" | grep -qE '^#!.*(bash|sh)' && echo "$f"
+                done
+          )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts to check."
+            exit 0
+          fi
+          printf 'Checking %s file(s):\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          shellcheck -x --source-path=SCRIPTDIR "${files[@]}"
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
