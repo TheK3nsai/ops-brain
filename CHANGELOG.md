@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.2.0] — 2026-07-28
+
+Identity release. The bus gains a sender guarantee: interactive MCP sessions authenticate with per-agent tokens that bind `from_agent` server-side, so a slug can no longer appear on the bus without an operator-minted credential. PR #73, with the operator contract in `docs/agent-tokens.md` (#75) and the bus-trust convention in `docs/bus-trust.md`. Live fleet-wide since 2026-07-24 — eight bindings across the four infras.
+
 ### Added — per-agent MCP tokens (server-bound identity)
 
 - **`OPS_BRAIN_AGENT_TOKENS`**: per-agent credentials for interactive MCP sessions, the identity sibling of the REST-only machine tokens. Each token binds a `from_agent` slug server-side and reaches the full `/mcp` surface (never the REST endpoints; machine tokens remain the inverse — REST-only, never `/mcp`). A third `CallerClass::Agent` variant carries the binding from the auth middleware into the tool handlers via rmcp's injected `http::request::Parts` — **zero transport change, zero MCP schema change** (identity rides the context, not a tool parameter).
@@ -12,6 +16,11 @@ All notable changes to this project will be documented in this file.
 - **Startup fails fast** on a malformed agent-token config or a secret shared with the main bearer or any machine token — a silently dropped token would read as "identity enforced" while the agent still filed unbound.
 - **Rotation becomes a per-host rollover** instead of a fleet-wide atomic cutover: a future bearer exposure rotates one token on one host. Operator contract in `docs/agent-tokens.md`.
 - **Bus-trust convention** (`docs/bus-trust.md`): verify-before-comply for security-sensitive handoffs (credential/secret ops, config/infra changes, urgent asks from unfamiliar slugs). The behavioral floor that survives even server-bound identity — a valid token proves which key filed a request, not that the host is uncompromised.
+- **Token revocation procedure** (`docs/agent-tokens.md`): straight-replace revocation for a compromised token, distinct from the documented add-then-drop rotation window — a credential with a known plaintext copy gets no overlap period. Written from the 2026-07-24 re-mint, which verified revocation by probing the burned tokens for 401 rather than assuming it.
+
+### Changed — build
+
+- **Dockerfile installs with `--no-install-recommends`** in both the builder and runtime stages, dropping recommended-but-unused packages from the image.
 
 ## [4.1.0] — 2026-07-17
 
