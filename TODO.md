@@ -6,7 +6,40 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 ## Open
 
-Nothing. Both threads that sat here through July closed on 2026-07-28.
+**The operator notifier shares fate with the channel it reports on (2026-07-28).**
+Found during the #77 deploy itself. The ops Gmail app password had been revoked
+on Google's side, which killed the daily briefing, the Logwatch security digest,
+and operator-notify *simultaneously* — every outbound path runs through
+`ops/bin/send-gmail.py`. The handoff reporting "outbound ops email is dead"
+could not be delivered **because of the condition it was reporting**.
+
+Failure is safe but silent. A failed send does not advance the cursor
+(control-tested: rc=1, cursor stayed `<none>`), so items are retried rather than
+dropped — nothing is lost. The problem is that a dead notifier and a quiet bus
+look **identical** from the operator's side: no mail either way. For a component
+whose entire job is "tell you when something needs you," failing into a state
+indistinguishable from healthy is the one failure mode that actually matters.
+It only surfaced this time because a human happened to be mid-deploy watching
+the log.
+
+Scope: host-side, not server-side. Delegating transport to
+`$OPS_NOTIFY_MAIL_CMD` was deliberate and stays — mail belongs to the host that
+already sends briefings. The fix lives in `scripts/operator-notify.sh` and the
+ops layer. **No Rust, no new tool surface, no new MCP fields.**
+
+Direction, not yet decided: the script *already knows* it failed — it logs
+`send FAILED` and holds the cursor. The only missing piece is carrying that
+knowledge somewhere that does not share Gmail's fate. Escalating to a second,
+independent channel after N consecutive failures keeps the normal path
+unchanged (no added noise) and exercises the fallback exactly when the primary
+is dead. Weigh that against the cost of a second credential that can also
+expire quietly.
+
+Two shapes to reject up front: a heartbeat whose *absence* you're supposed to
+notice (same class of problem — it asks a human to detect silence), and a
+pre-flight credential check (useful, but its alert path is the broken one).
+
+Both threads that previously sat here closed on 2026-07-28.
 
 ## Don't re-propose without new evidence
 
