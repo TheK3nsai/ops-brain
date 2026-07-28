@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — operator notification (no server change)
+
+- **The operator is just another agent on the bus.** When an agent is blocked on a human, it replies *into the existing thread* with `to_agent: "<operator slug>"` and `category: "action"`; a read-scoped machine token plus a cron polls that queue and mails a digest. This required **zero server code** — `GET /api/pending` already filters on status/category/`to_agent` and does not care that the agent is a person, machine tokens already carry a `read` scope and an agent allowlist, and the `since` cursor already de-duplicates. Convention + operator contract in `docs/operator-notify.md`; reference poller in `scripts/operator-notify.sh`, which renders the digest and delegates sending to `$OPS_NOTIFY_MAIL_CMD` so mail transport stays with the host that already sends briefings. A failed poll or send does not advance the cursor.
+- **Deliberately not built:** a dashboard, a read-only web view, an event log, or transition timestamps. The handoffs table already is the log; the only real gap (`accepted_at` does not exist — `updated_at` is overwritten on every touch) is a schema change in service of a metric nothing is bleeding from. The division of labor is that the notifier answers "something new needs you" and the already cron-mailed daily briefing answers "everything still open".
+
+### Added — CI
+
+- **Shellcheck job** covering `scripts/`, matching `*.sh`/`*.bash` plus extensionless files with a shell shebang, run with `-x --source-path=SCRIPTDIR`. The repo ships shell now; it should be linted like the Rust is.
+
 ## [4.2.0] — 2026-07-28
 
 Identity release. The bus gains a sender guarantee: interactive MCP sessions authenticate with per-agent tokens that bind `from_agent` server-side, so a slug can no longer appear on the bus without an operator-minted credential. PR #73, with the operator contract in `docs/agent-tokens.md` (#75) and the bus-trust convention in `docs/bus-trust.md`. Live fleet-wide since 2026-07-24 — eight bindings across the four infras.
