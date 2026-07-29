@@ -6,19 +6,7 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 ## Open
 
-**Uptime Kuma has no notification provider (2026-07-29).** Not an ops-brain
-change — recorded here because it is the load-bearing half of the fix below,
-and because it is live right now. Kuma runs 25 monitors on the cloud host, 12
-of them push dead-man monitors including `Wake Shim`. Its `notification` table
-is **empty**: it alerts nowhere and is a dashboard someone has to remember to
-open. At the time of writing, `System Updates` (10 security updates pending),
-`Container Resources`, and `Disk Usage` had been red for hours with no one
-told — the same silence as a dead mail credential, a different cause.
-
-Until Kuma has a default notification provider **that does not share the ops
-Gmail credential**, `$OPS_NOTIFY_HEARTBEAT_URL` reports into a void. Handed to
-CC-Cloud with the deploy (`019fae27`), provider decided 2026-07-29: hosted
-ntfy.sh — see the rejection below for why not self-hosted.
+Nothing open. The operator-notification thread closed 2026-07-29 — see below.
 
 ## Don't re-propose without new evidence
 
@@ -61,6 +49,32 @@ and "a credential that died quietly" is the failure being fixed.
 **Operator visibility, tier 2 (2026-07-28).** A log or view of everything happening headless. The handoffs table already *is* the log — `origin`, `status`, `repeat_count`, threading, timestamps. The only real gap is that `updated_at` is destructive, so there's no `accepted_at` and "how long did this sit on a human" isn't answerable. That's a schema change in service of a metric nothing is bleeding from. If friction shows up, the cheapest next step is a section in the briefing that already gets read — not a web view, not event sourcing. Full reasoning in `docs/operator-notify.md`.
 
 ## Closed
+
+- **Uptime Kuma had no notification provider** — 2026-07-29. The load-bearing
+  half of the item below, and the one that made it real rather than latent.
+  Kuma ran **30 monitors** (12 push dead-man, including `Wake Shim`) with an
+  **empty `notification` table**: it alerted nowhere and was a dashboard
+  someone had to remember to open. `System Updates`, `Container Resources`,
+  and `Disk Usage` had been red for hours with nobody told — the same silence
+  as a dead mail credential, a different cause.
+
+  Closed with hosted ntfy.sh as a default-enabled provider, 128-bit topic in
+  `~/ops/conf/.env` (0600). Plus the `Operator Notify` push monitor (id 39,
+  1800s / 1 retry) and the crontab rewritten to source `conf/.env` and pass
+  `$OPS_NOTIFY_HEARTBEAT_URL`, keeping the push token out of a `ps`-visible
+  command line.
+
+  **The trap worth keeping:** Kuma's *"Default enabled"* applies to **new
+  monitors only** — its own help text says so. Backfilling the existing 30 is
+  a **separate** "Apply on all existing monitors" toggle, default off. Ticking
+  only the first would have produced a provider that looked configured, tested
+  green, and notified for nothing that already existed. Verified by counting
+  `monitor_notification` rows (31) against active monitors (31) rather than
+  trusting the checkbox. Live heartbeat confirmed end-to-end:
+  `Operator Notify | status=1 | "nothing pending"`.
+
+  Earlier notes in this file said "25 monitors"; the real count was 30 before
+  the new one. Corrected here rather than left to propagate.
 
 - **The operator notifier shares fate with the channel it reports on** —
   2026-07-29. Opened 07-28 during the #77 deploy: one revoked Gmail app
