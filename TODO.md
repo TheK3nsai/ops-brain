@@ -17,11 +17,37 @@ told — the same silence as a dead mail credential, a different cause.
 
 Until Kuma has a default notification provider **that does not share the ops
 Gmail credential**, `$OPS_NOTIFY_HEARTBEAT_URL` reports into a void. Handed to
-CC-Cloud with the deploy.
+CC-Cloud with the deploy (`019fae27`), provider decided 2026-07-29: hosted
+ntfy.sh — see the rejection below for why not self-hosted.
 
 ## Don't re-propose without new evidence
 
 Deliberate decisions with their reasons. If real friction ever shows up, re-open the question from first principles — don't resurrect the design.
+
+**Self-hosting the alert relay on the monitored box (2026-07-29).** When
+picking a notification provider for Kuma, self-hosted ntfy behind the existing
+Caddy looks like the tidy, no-third-party answer. It isn't: **it shares fate
+with Caddy, and Caddy is one of the monitored services.** Caddy down, cert
+expired, proxy misconfigured — the alert about it cannot get out, because it
+routes through the thing that broke. That is the #77 defect wearing a different
+hat, and the generalization is worth more than the specific call: *an alert
+path must not traverse anything it is responsible for reporting on.*
+
+Hosted ntfy.sh needs only outbound HTTPS from the container, so it survives
+every partial failure short of host death — and host death takes Kuma with it
+regardless of provider, which is why that gap is scoped out separately. It also
+keeps the off-box-check door open: an external checker can publish to the same
+topic, which a relay living on the monitored box forecloses.
+
+The privacy tradeoff is bounded by *what we send*, not by a promise about ntfy:
+monitor names and short status strings about our own services, no client data,
+no PHI. If a monitor ever carries client-identifying content, re-run this
+reasoning rather than inheriting it.
+
+Pushover was the closest alternative — stable tokens, real auth rather than an
+unguessable topic — and is the upgrade path if obscurity-based auth ever
+bothers us. Declined because it reintroduces a credential to store and rotate,
+and "a credential that died quietly" is the failure being fixed.
 
 **Four-lens audit declines (2026-07-17, v4.1.0, PRs #64/#65/#67).** Every finding was fixed, tested, or consciously declined. The declines:
 
