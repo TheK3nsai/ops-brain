@@ -6,40 +6,18 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 ## Open
 
-**The operator notifier shares fate with the channel it reports on (2026-07-28).**
-Found during the #77 deploy itself. The ops Gmail app password had been revoked
-on Google's side, which killed the daily briefing, the Logwatch security digest,
-and operator-notify *simultaneously* — every outbound path runs through
-`ops/bin/send-gmail.py`. The handoff reporting "outbound ops email is dead"
-could not be delivered **because of the condition it was reporting**.
+**Uptime Kuma has no notification provider (2026-07-29).** Not an ops-brain
+change — recorded here because it is the load-bearing half of the fix below,
+and because it is live right now. Kuma runs 25 monitors on the cloud host, 12
+of them push dead-man monitors including `Wake Shim`. Its `notification` table
+is **empty**: it alerts nowhere and is a dashboard someone has to remember to
+open. At the time of writing, `System Updates` (10 security updates pending),
+`Container Resources`, and `Disk Usage` had been red for hours with no one
+told — the same silence as a dead mail credential, a different cause.
 
-Failure is safe but silent. A failed send does not advance the cursor
-(control-tested: rc=1, cursor stayed `<none>`), so items are retried rather than
-dropped — nothing is lost. The problem is that a dead notifier and a quiet bus
-look **identical** from the operator's side: no mail either way. For a component
-whose entire job is "tell you when something needs you," failing into a state
-indistinguishable from healthy is the one failure mode that actually matters.
-It only surfaced this time because a human happened to be mid-deploy watching
-the log.
-
-Scope: host-side, not server-side. Delegating transport to
-`$OPS_NOTIFY_MAIL_CMD` was deliberate and stays — mail belongs to the host that
-already sends briefings. The fix lives in `scripts/operator-notify.sh` and the
-ops layer. **No Rust, no new tool surface, no new MCP fields.**
-
-Direction, not yet decided: the script *already knows* it failed — it logs
-`send FAILED` and holds the cursor. The only missing piece is carrying that
-knowledge somewhere that does not share Gmail's fate. Escalating to a second,
-independent channel after N consecutive failures keeps the normal path
-unchanged (no added noise) and exercises the fallback exactly when the primary
-is dead. Weigh that against the cost of a second credential that can also
-expire quietly.
-
-Two shapes to reject up front: a heartbeat whose *absence* you're supposed to
-notice (same class of problem — it asks a human to detect silence), and a
-pre-flight credential check (useful, but its alert path is the broken one).
-
-Both threads that previously sat here closed on 2026-07-28.
+Until Kuma has a default notification provider **that does not share the ops
+Gmail credential**, `$OPS_NOTIFY_HEARTBEAT_URL` reports into a void. Handed to
+CC-Cloud with the deploy.
 
 ## Don't re-propose without new evidence
 
@@ -57,6 +35,38 @@ Deliberate decisions with their reasons. If real friction ever shows up, re-open
 **Operator visibility, tier 2 (2026-07-28).** A log or view of everything happening headless. The handoffs table already *is* the log — `origin`, `status`, `repeat_count`, threading, timestamps. The only real gap is that `updated_at` is destructive, so there's no `accepted_at` and "how long did this sit on a human" isn't answerable. That's a schema change in service of a metric nothing is bleeding from. If friction shows up, the cheapest next step is a section in the briefing that already gets read — not a web view, not event sourcing. Full reasoning in `docs/operator-notify.md`.
 
 ## Closed
+
+- **The operator notifier shares fate with the channel it reports on** —
+  2026-07-29. Opened 07-28 during the #77 deploy: one revoked Gmail app
+  password killed the briefing, the security digest, and operator-notify at
+  once, so the handoff reporting "outbound ops email is dead" could not be
+  delivered *because of the condition it was reporting*. Nothing was ever lost
+  (a failed send holds the cursor and retries), but a dead notifier and a quiet
+  bus looked identical.
+
+  Resolved without the second credential the item was weighing. The escalation
+  channel already existed and was already exercised daily — Uptime Kuma, which
+  the sibling wake shim has pushed to since day one and which owns monitoring
+  by doctrine. `operator-notify.sh` gained an optional
+  `$OPS_NOTIFY_HEARTBEAT_URL` it pings `up`/`down` on every real run;
+  monitoring, thresholds, and alert routing stay in the product that owns them.
+  No Rust, no MCP surface, no new state, no failure counter — and no
+  outage-only path that could rot unnoticed. Pinging is best-effort: an
+  unreachable monitor logs and changes neither exit code nor cursor.
+  Control-tested 12/12 across every exit path, including that cursor retry
+  semantics are unchanged and that a dead monitor is not a new failure mode.
+  Reasoning in `docs/operator-notify.md`.
+
+  Scope boundary held deliberately: this covers a dead *channel*, not a dead
+  *host*. If the box dies, monitor and notifier die together — that wants an
+  off-box check and is a different problem.
+
+  The two shapes the item rejected up front stay rejected, and neither is what
+  shipped: a heartbeat whose absence a *human* must notice is the same failure
+  with more steps, and a pre-flight credential check alerts down the broken
+  path. A dead-man monitor differs on exactly that axis — the silence is
+  noticed by a machine whose only job is noticing silence, on the first missed
+  window.
 
 - **Operator visibility, tier 1** — 2026-07-28, #77. The design session resolved it to a convention plus a cron with **zero lines of Rust**: agents reply into the existing thread addressed to the operator's slug, and a read-scoped machine token plus a cron polls that queue and mails a digest. Contract in `docs/operator-notify.md`, poller in `scripts/operator-notify.sh`. Deployment and token mint handed to CC-Cloud (`019fa9fe`).
 - **Per-agent MCP tokens with server-bound `from_agent`** — 2026-07-28, #73 and #75, released in v4.2.0. Deployed 2026-07-21; minting completed fleet-wide 2026-07-24 (prod boots `agent tokens configured count=8`), binding control-tested per host, and revoked tokens verified dead by probing for 401 rather than assumed. Remaining residuals are ops on other lanes: CC-HSR's local install of the re-minted pair (`019f95df`) and demoting the old shared bearer to break-glass.
