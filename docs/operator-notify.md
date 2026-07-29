@@ -140,6 +140,31 @@ For this to mean anything, **the monitoring system needs a notification
 channel that does not depend on the same credential as the mailer.** A dead-man
 monitor wired back into the mail path that just died buys nothing.
 
+### Two ways to build this and still hear nothing
+
+Both were hit while wiring it up on Uptime Kuma. Both produce a system that
+looks configured, tests green, and is silent.
+
+**1. The provider is attached to no monitors.** Kuma's *"Default enabled"*
+applies to **new monitors only** — its own help text says so. Backfilling the
+ones that already exist is a **separate** *"Apply on all existing monitors"*
+toggle that defaults to off. Tick only the first and you get an active,
+`is_default=1` provider that passes the Test button and notifies for nothing
+you already had. Verify by counting rather than by reading the checkbox:
+
+```bash
+sqlite3 kuma.db 'select count(*) from monitor_notification;'   # must equal…
+sqlite3 kuma.db 'select count(*) from monitor where active=1;'
+```
+
+**2. The relay shares fate with a monitored service.** Self-hosting the relay
+behind the same reverse proxy the monitors watch means a proxy or certificate
+failure takes out the alert about itself — this page's own defect, one layer
+out. See `TODO.md` on why hosted was chosen over self-hosted.
+
+Neither is caught by a test button, because a test exercises the provider in
+isolation. Only counting rows and reasoning about the failure path catch them.
+
 ## Division of labor with the briefing
 
 | Surface | Answers |
