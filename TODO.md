@@ -6,38 +6,7 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 ## Open
 
-**Reopened 2026-08-02 — Kuma's alerts still reach no human.** The 07-29 close
-below was made on the provider existing. CC-Cloud verified the whole path on
-08-02: the provider is active, `is_default`, bound to all 32 monitors (the
-"Default enabled" backfill trap was handled), and a real production alert was
-confirmed *landing on the ntfy topic* — polled back off ntfy.sh, matching the
-heartbeat to the millisecond. **No device has ever been subscribed to that
-topic.**
-
-ntfy returns HTTP 200 for any topic string whether or not anyone is listening,
-so from the box a topic with no reader is indistinguishable from a working
-channel: same 200, same clean logs, same green dashboard. And the provider row
-is *named* for the phone it was never connected to — an assertion by whoever
-created it, not an observation, which is what let the close survive review.
-Gotcha `019fc421-a935`; it generalizes to any alert path terminating off-box.
-
-This is the #77 defect one hop further out. The alert path was moved off the
-thing it reports on; it still ended in a room with nobody in it. Which is what
-the subscriber gap actually costs — a dead-man monitor's whole value is that a
-*machine* notices the silence, and a machine shouting into an empty room has
-quietly degraded back to "a dashboard someone has to remember to open".
-
-Remaining work is one operator action: install the ntfy app, subscribe to the
-topic, confirm a priority-5 test *on the device*. There is no server-side
-substitute — a 200 from the relay is not receipt. Closes on that confirmation.
-
-Fixed en route, same session: **`resend_interval = 0` on all 32 monitors**, the
-Kuma default, which alerts once on the DOWN transition and then goes silent
-forever. `Image Drift` had been DOWN 3 days while degrading 5 → 6 images behind
-registry, `Memory & Swap` 2 days, each having alerted exactly once — both would
-have stayed invisible even with a subscribed phone. Now ~6h via
-`max(1, round(21600 / interval))` per monitor; it counts consecutive failed
-checks, not minutes. Mechanics in the cloud host's `docker/CLAUDE.md`.
+Nothing open.
 
 ## Don't re-propose without new evidence
 
@@ -81,7 +50,9 @@ and "a credential that died quietly" is the failure being fixed.
 
 ## Closed
 
-- **The operator notifier shares fate with the channel it reports on** — 2026-07-29, #79, live the same day. Opened 07-28 during the #77 deploy: one revoked Gmail app password killed the briefing, the security digest, and operator-notify at once, so the handoff reporting "outbound ops email is dead" could not be delivered *because of the condition it was reporting*. Nothing was ever lost — a failed send holds the cursor and retries — but a dead notifier and a quiet bus looked identical. Resolved **without** the second credential the item was weighing: the escalation channel already existed and was already exercised daily (Uptime Kuma, which the sibling wake shim has pushed to since day one, and which owns monitoring by doctrine). `operator-notify.sh` gained an optional `$OPS_NOTIFY_HEARTBEAT_URL` it pings `up`/`down` on every real run — no Rust, no MCP surface, no failure counter, no outage-only path that could rot unnoticed. Thresholds and routing stay in the product that owns them. Control-tested 12/12 including unchanged cursor retry semantics and that an unreachable monitor is not a new failure mode. Kuma's side landed the same day: hosted ntfy.sh as a default-enabled provider, `Operator Notify` push monitor (1800s/1), crontab sourcing `conf/.env` so the push token stays out of a `ps`-visible command line. Setup gotchas — including the "Default enabled" backfill trap — in `docs/operator-notify.md`. **Correction (2026-08-02): "Kuma's side landed" overclaimed.** The provider was wired correctly and does deliver to the topic — verified — but no device was ever subscribed, so nothing reached a human. The ops-brain half of this item (`$OPS_NOTIFY_HEARTBEAT_URL`) is genuinely closed; the Kuma half is reopened above. **Scope held:** this covers a dead *channel*, not a dead *host*; if the box dies, monitor and notifier die together, which wants an off-box check and is a different problem.
+- **Kuma's alerts reach no human** — reopened 2026-08-02, **closed 2026-08-03**. The 08-02 reopen was correct: the provider delivered to the ntfy topic (verified by polling the message back off ntfy.sh) while no device had ever subscribed, and ntfy's 200-for-any-topic makes those two states identical from the box. The operator subscribed on 08-03; the cloud host's `TODO.md` records the follow-on decisions taken "with alerting finally reaching a phone", and `kuma-watchdog.sh` was built on top of it. Closed here on that operator confirmation — **there is no server-side test that could close it**, which is the durable lesson (gotcha `019fc421-a935`, generalizing to any alert path terminating off-box). Fixed en route: `resend_interval = 0` on all 32 monitors, the Kuma default that alerts once on the DOWN transition and then goes silent forever — now ~6h via `max(1, round(21600 / interval))`, counting consecutive failed checks rather than minutes; mechanics in the cloud host's `docker/CLAUDE.md`. **Residual, tracked and deliberately open elsewhere:** nothing verifies the phone *stays* subscribed, so iOS delivery rot would silently return us to "alerts nowhere" with every server signal green. That is logged as an accepted gap in the cloud host's `TODO.md` (2026-08-03) — don't re-file it here as newly discovered.
+
+- **The operator notifier shares fate with the channel it reports on** — 2026-07-29, #79, live the same day. Opened 07-28 during the #77 deploy: one revoked Gmail app password killed the briefing, the security digest, and operator-notify at once, so the handoff reporting "outbound ops email is dead" could not be delivered *because of the condition it was reporting*. Nothing was ever lost — a failed send holds the cursor and retries — but a dead notifier and a quiet bus looked identical. Resolved **without** the second credential the item was weighing: the escalation channel already existed and was already exercised daily (Uptime Kuma, which the sibling wake shim has pushed to since day one, and which owns monitoring by doctrine). `operator-notify.sh` gained an optional `$OPS_NOTIFY_HEARTBEAT_URL` it pings `up`/`down` on every real run — no Rust, no MCP surface, no failure counter, no outage-only path that could rot unnoticed. Thresholds and routing stay in the product that owns them. Control-tested 12/12 including unchanged cursor retry semantics and that an unreachable monitor is not a new failure mode. Kuma's side landed the same day: hosted ntfy.sh as a default-enabled provider, `Operator Notify` push monitor (1800s/1), crontab sourcing `conf/.env` so the push token stays out of a `ps`-visible command line. Setup gotchas — including the "Default enabled" backfill trap — in `docs/operator-notify.md`. **Correction (2026-08-02): "Kuma's side landed" overclaimed.** The provider was wired correctly and does deliver to the topic — verified — but no device was ever subscribed, so nothing reached a human. The ops-brain half of this item (`$OPS_NOTIFY_HEARTBEAT_URL`) is genuinely closed; the Kuma half was reopened 08-02 and closed 08-03 — see the entry above it. **Scope held:** this covers a dead *channel*, not a dead *host*; if the box dies, monitor and notifier die together, which wants an off-box check and is a different problem.
 
 - **Operator visibility, tier 1** — 2026-07-28, #77. The design session resolved it to a convention plus a cron with **zero lines of Rust**: agents reply into the existing thread addressed to the operator's slug, and a read-scoped machine token plus a cron polls that queue and mails a digest. Contract in `docs/operator-notify.md`, poller in `scripts/operator-notify.sh`. Deployment and token mint handed to CC-Cloud (`019fa9fe`).
 - **Per-agent MCP tokens with server-bound `from_agent`** — 2026-07-28, #73 and #75, released in v4.2.0. Deployed 2026-07-21; minting completed fleet-wide 2026-07-24 (prod boots `agent tokens configured count=8`), binding control-tested per host, and revoked tokens verified dead by probing for 401 rather than assumed. Remaining residuals are ops on other lanes: CC-HSR's local install of the re-minted pair (`019f95df`) and demoting the old shared bearer to break-glass.
