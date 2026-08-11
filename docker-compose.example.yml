@@ -6,8 +6,7 @@
 #    curl -O https://raw.githubusercontent.com/TheK3nsai/ops-brain/main/docker-compose.example.yml
 #    echo "OPS_BRAIN_AUTH_TOKEN=$(openssl rand -hex 32)" > .env
 #    docker compose -f docker-compose.example.yml up -d
-#    curl -sf -H "Authorization: Bearer $(grep AUTH_TOKEN .env | cut -d= -f2)" \
-#         http://localhost:3000/health
+#    curl -fsS http://localhost:3000/ready && echo "ready"
 #
 #  USE THIS FILE WHEN: you want to try ops-brain end-to-end without cloning
 #  the repo or building from source.

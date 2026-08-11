@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Changed — v5.0.0 MCP surface and trust contract
+## [5.0.0] — 2026-08-11
+
+### Changed — MCP surface and trust contract
 
 - **MCP surface 16 → 13 tools.** Added exact `get_handoff(handoff_id)` retrieval; renamed the unified multi-table search to `search_bus`; removed duplicate `list_knowledge` and `search_handoffs`; moved embedding backfill to the `ops-brain backfill-embeddings` operator subcommand; and kept briefing generation only at stateless `POST /api/briefing`.
 - **Briefing persistence removed.** Migration `20260811000000_drop_briefings.sql` drops a table that had no supported read surface. The REST response remains the delivery artifact and no longer returns `briefing_id`.
@@ -210,7 +212,7 @@ Cleaned from `.env.example`, `docker-compose.yml`, `docker-compose.prod.yml`, an
 - Doctrine codified in CLAUDE.md (commit `369a6d0`) and broadcast in the MCP server `instructions` payload at handshake.
 - New `GOTCHAS.md` (load-bearing footguns) and `TODO.md` (work tracker).
 
-## [Unreleased]
+## [2.0.0] — 2026-05-08
 
 ### Changed (v2.0 — agent-agnostic)
 

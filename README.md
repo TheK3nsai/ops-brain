@@ -16,7 +16,7 @@ No clone required — grab the standalone compose file, set a token, run it. The
 curl -O https://raw.githubusercontent.com/TheK3nsai/ops-brain/main/docker-compose.example.yml
 echo "OPS_BRAIN_AUTH_TOKEN=$(openssl rand -hex 32)" > .env
 docker compose -f docker-compose.example.yml up -d
-curl -sf http://localhost:3000/health   # → "OK"
+curl -fsS http://localhost:3000/ready && echo "ready"
 ```
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) on [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin a specific version with `:vX.Y.Z` instead of `:latest`.
