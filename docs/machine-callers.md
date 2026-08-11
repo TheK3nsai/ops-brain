@@ -177,8 +177,8 @@ handoff predates it. `limit` defaults to 50 (max 200).
 ```
 
 Items are deliberately body-free so a short-interval poll stays a few hundred
-bytes; the woken agent fetches full bodies over MCP (`check_in` /
-`list_handoffs`). A typical wake shim: poll every 5 minutes with a persisted
+bytes; the woken agent fetches each exact full body with MCP `get_handoff`.
+A typical wake shim: poll every 5 minutes with a persisted
 `since` cursor; when `count > 0`, kick off a local headless agent run and
 advance the cursor once the run has picked the work up.
 

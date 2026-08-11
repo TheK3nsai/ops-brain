@@ -73,7 +73,7 @@ pub async fn list_knowledge(
         query.push_str(" WHERE ");
         query.push_str(&conditions.join(" AND "));
     }
-    query.push_str(" ORDER BY title");
+    query.push_str(" ORDER BY updated_at DESC");
     query.push_str(&format!(" LIMIT ${param_idx}"));
 
     let mut q = sqlx::query_as::<_, Knowledge>(&query);

@@ -5,6 +5,47 @@
 
 use serde::Deserialize;
 
+pub const MAX_TITLE_BYTES: usize = 200;
+pub const MAX_BODY_BYTES: usize = 100_000;
+pub const MAX_CONTEXT_BYTES: usize = 8_192;
+
+/// Validate a required free-form text field without silently rewriting it.
+/// Limits are byte-based so the bound matches what is stored and sent over
+/// the wire, including multi-byte UTF-8 content.
+pub fn validate_bounded_text(
+    value: &str,
+    field_name: &str,
+    max_bytes: usize,
+) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{field_name} cannot be empty"));
+    }
+    if value.len() > max_bytes {
+        return Err(format!(
+            "{field_name} too large ({} bytes, max {max_bytes})",
+            value.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Validate the common handoff context envelope. The machine REST endpoint
+/// layers convention warnings on top; interactive MCP context remains
+/// intentionally free-form, but it must still be a small JSON object.
+pub fn validate_context(context: &serde_json::Value) -> Result<(), String> {
+    if !context.is_object() {
+        return Err("context must be a JSON object when present".to_string());
+    }
+    let serialized_len = context.to_string().len();
+    if serialized_len > MAX_CONTEXT_BYTES {
+        return Err(format!(
+            "context too large ({serialized_len} bytes serialized, max {MAX_CONTEXT_BYTES}) — \
+             point at evidence instead of inlining it"
+        ));
+    }
+    Ok(())
+}
+
 /// Deserialize an `Option<i64>` that accepts both `50` (number) and `"50"` (string).
 ///
 /// Some MCP clients serialize integers as JSON strings. This deserializer
@@ -107,6 +148,22 @@ pub fn validate_agent_name(input: &str) -> Result<&str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_text_rejects_blank_and_oversized_values() {
+        assert!(validate_bounded_text("  ", "title", 10).is_err());
+        assert!(validate_bounded_text("12345678901", "title", 10).is_err());
+        assert!(validate_bounded_text("valid", "title", 10).is_ok());
+    }
+
+    #[test]
+    fn context_requires_a_bounded_object() {
+        assert!(validate_context(&serde_json::json!(["not", "object"])).is_err());
+        assert!(validate_context(&serde_json::json!({"key": "value"})).is_ok());
+        assert!(
+            validate_context(&serde_json::json!({"body": "x".repeat(MAX_CONTEXT_BYTES)})).is_err()
+        );
+    }
 
     // validate_option
 

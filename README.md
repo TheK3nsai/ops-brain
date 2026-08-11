@@ -44,17 +44,25 @@ ops-brain speaks MCP over either stdio (default) or HTTP. Most multi-machine set
 
 Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_HOSTS` to your hostname — see the config table below.
 
-## Surface (16 tools)
+## Surface (13 tools)
 
-- **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`. Cross-agent gotchas, safety warnings, compliance rules, vendor behavior. Per-agent provenance via `author`. Default-deny across clients.
-- **Handoffs** — `create_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit-linkage via `commit_hash` on completion + `mark_merged` at integration time.
+- **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus`. Cross-agent gotchas, safety warnings, compliance rules, and vendor behavior, with per-agent provenance via `author`. `search_bus` searches knowledge by default and can include handoffs when requested.
+- **Handoffs** — `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit linkage via `commit_hash` on completion + `mark_merged` at integration time. `get_handoff` retrieves one exact handoff without pulling unrelated queue entries.
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
-- **Search** — `backfill_embeddings` for the FTS+vector hybrid (PostgreSQL tsvector + pgvector HNSW + RRF fusion).
-- **Briefings** — `generate_briefing` produces daily/weekly markdown summaries of pending handoffs (fleet-wide), stored for history. Same logic available at `POST /api/briefing`.
+
+Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context.
+
+Run embedding maintenance from an operator shell when needed:
+
+```bash
+ops-brain backfill-embeddings [--table knowledge|handoffs] [--batch-size 10]
+```
 
 ## Cross-client safety
 
-Designed for solo operators managing clients with different compliance domains (e.g. HIPAA healthcare vs tax/accounting). The system itself is the gate:
+One ops-brain deployment is one trusted coordination domain. All authenticated MCP agents can reach fleet-wide handoffs, and the main bearer remains an unbound operator credential. Per-agent tokens bind identity; they are not tenant authorization.
+
+Within that trust domain, client scoping provides a strong accidental-disclosure guard for knowledge searches:
 
 - `client_id IS NULL` → always allowed (global)
 - Same client → always allowed
@@ -63,6 +71,8 @@ Designed for solo operators managing clients with different compliance domains (
 - Otherwise → **withheld**, replaced with a scope-mismatch notice (logged)
 
 Every audit event lands in the `audit_log` table.
+
+The gate is inactive when a knowledge query omits `client_slug`, so it is not a tenant-isolation or hostile-user security boundary. Deploy separate ops-brain instances when clients or operators must not be able to access one another's data.
 
 ## Stack
 
@@ -85,6 +95,8 @@ Every audit event lands in the `audit_log` table.
 | `OPS_BRAIN_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth. Required for `http` transport — a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true` explicitly opts into an open dev server. |
+| `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped, identity-bound tokens for non-interactive `POST /api/handoff` and `GET /api/pending` callers. See [`docs/machine-callers.md`](docs/machine-callers.md). |
+| `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for interactive `/mcp` sessions. These enforce identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Explicitly serve HTTP without authentication (dev only — never expose beyond localhost) |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` header values for HTTP transport (rmcp DNS-rebind mitigation). Public deploys behind a reverse proxy must set their hostname. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
@@ -92,6 +104,11 @@ Every audit event lands in the `audit_log` table.
 | `OPS_BRAIN_EMBEDDING_URL` | `http://localhost:11434/v1/embeddings` | OpenAI-compatible embedding API |
 | `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
 | `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | Bearer for the embedding API, if needed |
+
+The configured embedding endpoint receives knowledge/handoff text during
+writes and search queries in semantic or hybrid mode. Use a local endpoint or
+disable embeddings when that content must not leave the deployment's trust
+boundary.
 
 Recommended agent names mirror the CC fleet convention: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. Names are still free-form slugs for compatibility; ops-brain stores exactly what the caller sends.
 
@@ -102,14 +119,17 @@ Claude Code, Codex CLI, Gemini CLI, and future agents can each have their own on
 ## REST endpoints
 
 ```
-POST /api/briefing  { "type": "daily" | "weekly" }
-GET  /health
+POST /api/handoff   machine token with `create` scope
+GET  /api/pending   machine token with `read` scope
+POST /api/briefing  main bearer; `{ "type": "daily" | "weekly" }`
+GET  /health        unauthenticated liveness probe
+GET  /ready         unauthenticated database-readiness probe
 ```
 
-Bearer auth protects `/api` and `/mcp`. `/health` is intentionally unauthenticated so container healthchecks and reverse proxies can probe liveness without carrying the MCP bearer.
+Bearer auth protects `/mcp` and the three `/api` endpoints, with machine tokens restricted to their documented endpoints and scopes. `/health` and `/ready` intentionally require no bearer so container healthchecks and reverse proxies can distinguish a running process from a database-ready service. Read the complete machine-caller contract in [`docs/machine-callers.md`](docs/machine-callers.md).
 
 Production compose does not publish port 3000 on the host; the service is reached through the Docker networks and the reverse proxy. For local production-host checks, run health probes inside the container or use the public reverse-proxy URL.
 
 ## Status
 
-ops-brain is designed for solo operators managing multiple clients. v4.0.0 is the current shape: handoffs, knowledge, briefings. See `CLAUDE.md` for architecture constraints and `GOTCHAS.md` for the load-bearing footguns.
+ops-brain is designed for solo operators and small trusted teams coordinating agents across hosts and vendors. v5.0.0 is the current shape: a 13-tool MCP focused on handoffs, bounded shared knowledge, and check-in, plus narrow machine-ingestion, wake-polling, and briefing REST endpoints. See `CLAUDE.md` for architecture constraints and `GOTCHAS.md` for the load-bearing footguns.

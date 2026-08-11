@@ -7,8 +7,9 @@ What we build, what we don't, why. Philosophy first. Shipped-work history lives 
 **ops-brain is the team bus, not a brain.** Local is the source of truth — each
 agent's per-machine instructions are its scope, its filesystem is its state, its
 git history is its memory. ops-brain exists for the handful of things agents
-genuinely cannot do alone: handoffs between machines, shared incidents,
-cross-client knowledge with isolation rules, tickets that span systems.
+genuinely cannot do alone: handoffs between machines and vendors, bounded
+cross-agent knowledge, exact work retrieval, and narrow machine-to-agent wake
+signals.
 **If a question can be answered without ops-brain, it should be.**
 
 **We kill without mercy.** Any tool, feature, or scaffolding that an agent can
@@ -54,9 +55,11 @@ Non-negotiable. Any idea that violates one of these is DOA.
   forever.
 - **No workflow chains on handoffs.** No `workflow_id`, no `list_workflows`,
   no deploy-chain measurement.
-- **No identity storage server-side.** `cc_identities` was dropped in v1.5 for
-  good reason — identity lives in each agent's per-machine instructions, full
-  stop. Don't reintroduce it under any other name.
+- **No mutable identity registry server-side.** `cc_identities` was dropped in
+  v1.5 for good reason — identity names and behavior live in each agent's
+  per-machine instructions. Static, operator-managed token bindings may enforce
+  the identity presented by a caller, but ops-brain does not own agent profiles,
+  capabilities, heartbeats, or lifecycle state.
 - **No server-side preferences table.** `preferences` was dropped in v1.5 for
   good reason — per-agent config belongs in each agent's local instructions or
   in per-call parameters, not in a shared row that mutates other agents'
@@ -117,6 +120,15 @@ briefing ticket summary, and the `zammad_*` columns on `clients`. Tool count
 the "Zammad retirement audit" that sat dormant here — the audit happened
 (export + dumps), and the shutdown landed.
 
+### ❌ Duplicate and operator-only MCP tools
+
+Removed in v5.0.0. `list_knowledge` and `search_handoffs` duplicated filtering
+already available through the unified `search_bus`; `generate_briefing` remains
+available only through its stateless REST endpoint; and embedding backfill is
+operator maintenance rather than agent coordination. Removing all four while
+adding exact `get_handoff` retrieval reduced the MCP surface from 16 to 13
+tools and made the next natural action clearer.
+
 ## How to apply this file
 
 When sitting down to work on ops-brain **features** (not bug fixes, not security
@@ -128,5 +140,7 @@ patches, not cosmetic polish):
    don't build it.
 3. Do NOT resurrect a dead item without re-opening the question from first
    principles. "Wait for demand" is not the same as "dead."
-4. As of v3.1.0, ops-brain is in operator mode — new features should be the
-   exception, removals the norm. Read `CHANGELOG.md` for shipped history.
+4. ops-brain is in operator mode — new features should be the exception,
+   removals the norm. v5.0.0's 16 → 13 tool reduction is the model: consolidate
+   overlapping paths and keep maintenance out of agent context. Read
+   `CHANGELOG.md` for shipped history.

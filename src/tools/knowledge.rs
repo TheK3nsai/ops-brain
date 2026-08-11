@@ -4,8 +4,7 @@ use serde::Deserialize;
 use crate::validation::deserialize_flexible_i64;
 
 use super::helpers::{
-    error_result, filter_cross_client, inject_provenance, json_result, not_found,
-    resolve_client_id, truncate_str,
+    error_result, filter_cross_client, json_result, not_found, resolve_client_id, truncate_str,
 };
 use super::shared::{build_client_lookup, embed_and_store, get_query_embedding, log_audit_entries};
 use rmcp::model::*;
@@ -221,6 +220,9 @@ pub struct SearchKnowledgeParams {
     pub mode: Option<String>,
     /// Tables to search: knowledge (default), handoffs
     pub tables: Option<Vec<String>>,
+    /// Exact knowledge category filter in browse mode (`query` empty or `*`).
+    /// Category filtering is not applied to ranked searches or handoffs.
+    pub category: Option<String>,
     /// Scope to client. Cross-client results withheld unless acknowledged.
     pub client_slug: Option<String>,
     /// Release cross-client results withheld due to scope mismatch
@@ -259,15 +261,6 @@ pub struct DeleteKnowledgeParams {
     pub id: String,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListKnowledgeParams {
-    pub category: Option<String>,
-    pub client_slug: Option<String>,
-    /// Max results (default 50)
-    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
-    pub limit: Option<i64>,
-}
-
 // ===== HANDLERS =====
 
 pub async fn handle_add_knowledge(
@@ -275,6 +268,21 @@ pub async fn handle_add_knowledge(
     p: AddKnowledgeParams,
     bound: Option<&str>,
 ) -> CallToolResult {
+    if let Err(msg) = crate::validation::validate_bounded_text(
+        &p.title,
+        "title",
+        crate::validation::MAX_TITLE_BYTES,
+    ) {
+        return error_result(&msg);
+    }
+    if let Err(msg) = crate::validation::validate_bounded_text(
+        &p.content,
+        "content",
+        crate::validation::MAX_BODY_BYTES,
+    ) {
+        return error_result(&msg);
+    }
+
     // v2.0: free-form agent identifier replaces the v1.x CC-fleet allowlist.
     // Provenance is still required on every new entry, but agents are
     // self-identified — whatever the caller says it is, it is.
@@ -396,6 +404,25 @@ pub async fn handle_update_knowledge(
     brain: &super::OpsBrain,
     p: UpdateKnowledgeParams,
 ) -> CallToolResult {
+    if let Some(title) = p.title.as_deref() {
+        if let Err(msg) = crate::validation::validate_bounded_text(
+            title,
+            "title",
+            crate::validation::MAX_TITLE_BYTES,
+        ) {
+            return error_result(&msg);
+        }
+    }
+    if let Some(content) = p.content.as_deref() {
+        if let Err(msg) = crate::validation::validate_bounded_text(
+            content,
+            "content",
+            crate::validation::MAX_BODY_BYTES,
+        ) {
+            return error_result(&msg);
+        }
+    }
+
     let id = match uuid::Uuid::parse_str(&p.id) {
         Ok(id) => id,
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.id)),
@@ -464,7 +491,23 @@ pub async fn handle_search_knowledge(
     p: SearchKnowledgeParams,
 ) -> CallToolResult {
     let tables = p.tables.unwrap_or_else(|| vec!["knowledge".to_string()]);
+    if tables.is_empty() {
+        return error_result("tables must include knowledge and/or handoffs");
+    }
     let multi_table = tables.len() > 1 || tables.iter().any(|t| t != "knowledge");
+
+    let valid_tables = ["knowledge", "handoffs"];
+    for table in &tables {
+        if !valid_tables.contains(&table.as_str()) {
+            return error_result(&format!(
+                "Invalid table '{table}'. Valid options: {}",
+                valid_tables.join(", ")
+            ));
+        }
+    }
+    if p.category.is_some() && tables.iter().any(|table| table == "handoffs") {
+        return error_result("category browse filter applies to knowledge only");
+    }
 
     // Detect browse mode: empty or "*" query means "show me recent entries"
     let raw_query = p.query.unwrap_or_default();
@@ -476,7 +519,7 @@ pub async fn handle_search_knowledge(
         return browse_recent_entries(
             brain,
             &tables,
-            multi_table,
+            p.category.as_deref(),
             p.client_slug.as_deref(),
             p.acknowledge_cross_client.unwrap_or(false),
             p.limit.unwrap_or(20).clamp(1, 200),
@@ -485,23 +528,16 @@ pub async fn handle_search_knowledge(
         .await;
     }
 
+    if p.category.is_some() {
+        return error_result("category is only supported in browse mode (query empty or '*')");
+    }
+
     // Default mode: "hybrid" for all searches (single or multi-table)
     let mode = p.mode.as_deref().unwrap_or("hybrid");
     if let Err(msg) =
         crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
     {
         return error_result(&msg);
-    }
-
-    // Validate table names
-    let valid_tables = ["knowledge", "handoffs"];
-    for t in &tables {
-        if !valid_tables.contains(&t.as_str()) {
-            return error_result(&format!(
-                "Invalid table '{t}'. Valid options: {}",
-                valid_tables.join(", ")
-            ));
-        }
     }
 
     // Resolve optional client_slug for cross-client gate
@@ -589,7 +625,7 @@ pub async fn handle_search_knowledge(
                         all_withheld.extend(withheld);
                         log_audit_entries(
                             &brain.pool,
-                            "search_knowledge",
+                            "search_bus",
                             requesting_client_id,
                             "knowledge",
                             &audit,
@@ -687,7 +723,7 @@ pub async fn handle_search_knowledge(
 async fn browse_recent_entries(
     brain: &super::OpsBrain,
     tables: &[String],
-    _multi_table: bool,
+    category: Option<&str>,
     client_slug: Option<&str>,
     acknowledge: bool,
     limit: i64,
@@ -704,20 +740,30 @@ async fn browse_recent_entries(
     for table in tables {
         match table.as_str() {
             "knowledge" => {
-                match crate::repo::knowledge_repo::list_knowledge(&brain.pool, None, None, limit)
-                    .await
+                match crate::repo::knowledge_repo::list_knowledge(
+                    &brain.pool,
+                    category,
+                    None,
+                    limit,
+                )
+                .await
                 {
                     Ok(items) => {
-                        // Browse does NOT audit-log — it is not an explicit
-                        // cross-client surfacing attempt, so the audit entries
-                        // are intentionally dropped.
-                        let (final_items, withheld, _audit) = process_knowledge_arm(
+                        let (final_items, withheld, audit) = process_knowledge_arm(
                             &items,
                             requesting_client_id,
                             acknowledge,
                             compact,
                             &client_lookup,
                         );
+                        log_audit_entries(
+                            &brain.pool,
+                            "search_bus",
+                            requesting_client_id,
+                            "knowledge",
+                            &audit,
+                        )
+                        .await;
                         results.insert(
                             "knowledge".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
@@ -783,7 +829,7 @@ async fn browse_recent_entries(
     json_result(&serde_json::Value::Object(results))
 }
 
-/// Single-table knowledge search (preserves original search_knowledge behavior exactly)
+/// Single-table knowledge search.
 async fn search_knowledge_single(
     brain: &super::OpsBrain,
     query: &str,
@@ -827,7 +873,7 @@ async fn search_knowledge_single(
 
             log_audit_entries(
                 &brain.pool,
-                "search_knowledge",
+                "search_bus",
                 requesting_client_id,
                 "knowledge",
                 &audit,
@@ -844,46 +890,6 @@ async fn search_knowledge_single(
             json_result(&response)
         }
         Err(e) => error_result(&format!("Search error: {e}")),
-    }
-}
-
-pub async fn handle_list_knowledge(
-    brain: &super::OpsBrain,
-    p: ListKnowledgeParams,
-) -> CallToolResult {
-    // Resolve optional client_slug
-    let client_id = match resolve_client_id(&brain.pool, p.client_slug.as_deref()).await {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
-
-    let limit = p.limit.unwrap_or(50).clamp(1, 200);
-    match crate::repo::knowledge_repo::list_knowledge(
-        &brain.pool,
-        p.category.as_deref(),
-        client_id,
-        limit,
-    )
-    .await
-    {
-        // v1.6: surface staleness warnings; always stamp provenance
-        // (_client_slug/_client_name) on every item — list_knowledge is not
-        // gated, so provenance is the only cross-client signal it carries.
-        Ok(entries) => {
-            let client_lookup = build_client_lookup(&brain.pool).await;
-            let mut items = knowledge_entries_to_json(&entries);
-            for item in &mut items {
-                inject_provenance(item, &client_lookup);
-            }
-            let mut response = serde_json::json!({ "knowledge": items });
-            // Unscoped list: no requesting client → the withholding gate is
-            // inert. Say so, mirroring search_knowledge.
-            if client_id.is_none() {
-                response["_note"] = serde_json::Value::String(UNSCOPED_NOTE.to_string());
-            }
-            json_result(&response)
-        }
-        Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
 

@@ -331,7 +331,8 @@ fn required_machine_scope(method: &axum::http::Method, path: &str) -> Option<&'s
     }
 }
 
-/// Axum middleware: validates Bearer token on all non-health requests.
+/// Axum middleware: validates Bearer token on all requests except public
+/// liveness/readiness probes.
 ///
 /// Main bearer → full access (CallerClass::Full). Machine token → only its
 /// granted machine endpoints (CallerClass::Machine). No token configured at
@@ -341,8 +342,8 @@ pub async fn bearer_auth(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // Health endpoint is always public
-    if request.uri().path() == "/health" {
+    // Probes are always public and reveal only OK vs unavailable.
+    if matches!(request.uri().path(), "/health" | "/ready") {
         return Ok(next.run(request).await);
     }
 

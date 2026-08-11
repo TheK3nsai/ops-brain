@@ -2,10 +2,12 @@ use rmcp::model::*;
 use serde::Serialize;
 use std::collections::HashMap;
 
-/// Helper to format tool results as JSON text content.
+/// Return protocol-native structured JSON. rmcp also mirrors the compact JSON
+/// into text content for clients that have not adopted `structuredContent`.
 pub(crate) fn json_result<T: Serialize>(data: &T) -> CallToolResult {
-    match serde_json::to_string_pretty(data) {
-        Ok(json) => CallToolResult::success(vec![Content::text(json)]),
+    match serde_json::to_value(data) {
+        Ok(json @ serde_json::Value::Object(_)) => CallToolResult::structured(json),
+        Ok(json) => CallToolResult::structured(serde_json::json!({ "result": json })),
         Err(e) => CallToolResult::error(vec![Content::text(format!("Serialization error: {e}"))]),
     }
 }

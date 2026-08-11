@@ -559,6 +559,113 @@ mod coordination_tests {
     }
 }
 
+// ===== v5 exact retrieval + consolidated browse =====
+
+mod v5_surface_tests {
+    use super::*;
+    use ops_brain::tools::coordination::{handle_get_handoff, GetHandoffParams};
+    use ops_brain::tools::knowledge::{handle_search_knowledge, SearchKnowledgeParams};
+    use ops_brain::tools::OpsBrain;
+
+    #[tokio::test]
+    async fn get_handoff_returns_one_full_record() {
+        let pool = pool().await;
+        let brain = OpsBrain::new(pool.clone(), None);
+        let handoff = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            "Codex-Stealth",
+            Some("CC-HSR"),
+            "normal",
+            "action",
+            "exact v5 retrieval",
+            "full body returned by exact UUID",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let result = handle_get_handoff(
+            &brain,
+            GetHandoffParams {
+                handoff_id: handoff.id.to_string(),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(false));
+        let value = result.structured_content.expect("structured handoff");
+        assert_eq!(value["id"], handoff.id.to_string());
+        assert_eq!(value["body"], "full body returned by exact UUID");
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(handoff.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn search_bus_browse_preserves_knowledge_category_filter() {
+        let pool = pool().await;
+        let brain = OpsBrain::new(pool.clone(), None);
+        let category = format!("v5-category-{}", Uuid::now_v7().simple());
+        let entry = ops_brain::repo::knowledge_repo::add_knowledge(
+            &pool,
+            "v5 category browse",
+            "category-filtered knowledge",
+            Some(&category),
+            &[],
+            None,
+            false,
+            Some("Codex-Stealth"),
+        )
+        .await
+        .unwrap();
+
+        let result = handle_search_knowledge(
+            &brain,
+            SearchKnowledgeParams {
+                query: Some("*".to_string()),
+                mode: None,
+                tables: None,
+                category: Some(category),
+                client_slug: None,
+                acknowledge_cross_client: None,
+                limit: Some(20),
+                compact: Some(false),
+            },
+        )
+        .await;
+        assert_eq!(result.is_error, Some(false));
+        let value = result.structured_content.expect("structured browse");
+        let items = value["knowledge"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["id"], entry.id.to_string());
+
+        sqlx::query("DELETE FROM knowledge WHERE id = $1")
+            .bind(entry.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rest_briefing_is_stateless() {
+        let pool = pool().await;
+        let value = ops_brain::tools::briefings::generate_briefing_inner(&pool, "daily")
+            .await
+            .unwrap();
+        assert_eq!(value["briefing_type"], "daily");
+        assert!(value.get("briefing_id").is_none());
+        let table: Option<String> =
+            sqlx::query_scalar("SELECT to_regclass('public.briefings')::text")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(table.is_none(), "briefings table should be removed in v5");
+    }
+}
+
 // ===== Audit Log Repo =====
 
 mod audit_log_tests {
@@ -621,40 +728,6 @@ mod audit_log_tests {
             .unwrap();
         sqlx::query("DELETE FROM clients WHERE id = ANY($1)")
             .bind([req_client.id, own_client.id])
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-}
-
-// ===== Briefing Repo =====
-
-mod briefing_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn insert_briefing() {
-        let pool = pool().await;
-
-        let briefing = ops_brain::repo::briefing_repo::insert_briefing(
-            &pool,
-            "daily",
-            None,
-            "# Daily Briefing\n\nAll systems operational.",
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(briefing.briefing_type, "daily");
-        assert!(briefing.client_id.is_none());
-        assert_eq!(
-            briefing.content,
-            "# Daily Briefing\n\nAll systems operational."
-        );
-
-        // Cleanup
-        sqlx::query("DELETE FROM briefings WHERE id = $1")
-            .bind(briefing.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -770,7 +843,11 @@ mod check_in_tests {
         assert_eq!(result.is_error, Some(false));
         let text = extract_text(&result);
         assert!(text.contains("accepted visibility smoke"));
-        assert!(text.contains("\"accepted_count\": 1"));
+        let structured = result
+            .structured_content
+            .as_ref()
+            .expect("check_in should return structured JSON");
+        assert_eq!(structured["open_handoffs_to_you"]["accepted_count"], 1);
 
         sqlx::query("DELETE FROM handoffs WHERE id = $1")
             .bind(h.id)
@@ -1431,6 +1508,7 @@ mod knowledge_safety_tests {
                 query: Some(query.to_string()),
                 mode: Some("fts".to_string()),
                 tables: None,
+                category: None,
                 client_slug: Some(client_slug.to_string()),
                 acknowledge_cross_client: Some(acknowledge),
                 limit: Some(50),
@@ -1536,7 +1614,7 @@ mod knowledge_safety_tests {
         let released_rows: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM audit_log
               WHERE entity_id = $1 AND requesting_client_id = $2
-                AND action = 'released' AND tool_name = 'search_knowledge'",
+                AND action = 'released' AND tool_name = 'search_bus'",
         )
         .bind(secret.id)
         .bind(client_b.id)
@@ -1617,6 +1695,7 @@ mod knowledge_safety_tests {
                 query: Some(term.clone()),
                 mode: Some("fts".to_string()),
                 tables: None,
+                category: None,
                 client_slug: None,
                 acknowledge_cross_client: None,
                 limit: Some(50),
@@ -1705,6 +1784,7 @@ mod auth_middleware_tests {
     fn app(state: AuthState) -> Router {
         Router::new()
             .route("/health", get(|| async { "OK" }))
+            .route("/ready", get(|| async { "READY" }))
             .route("/api/briefing", post(echo_caller))
             .route("/api/handoff", post(echo_caller))
             .route("/api/pending", get(echo_caller))
@@ -1798,6 +1878,16 @@ mod auth_middleware_tests {
     }
 
     #[tokio::test]
+    async fn readiness_probe_is_public() {
+        let resp = app(full_state(vec![]))
+            .oneshot(req("GET", "/ready", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_text(resp).await, "READY");
+    }
+
+    #[tokio::test]
     async fn no_main_token_is_dev_mode_full() {
         let state = AuthState {
             main_token: None,
@@ -1853,6 +1943,126 @@ mod auth_middleware_tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_text(resp).await, "Full");
+    }
+}
+
+mod readiness_tests {
+    use super::*;
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use ops_brain::api::ApiState;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn ready_checks_the_database() {
+        let state = Arc::new(ApiState { pool: pool().await });
+        assert_eq!(ops_brain::api::ready(State(state)).await, StatusCode::OK);
+    }
+}
+
+// ===== Per-agent identity through the real HTTP MCP transport =====
+//
+// This locks the TypeId-sensitive path documented in GOTCHAS.md: axum auth
+// inserts CallerClass into request parts, rmcp carries those parts into the
+// tool-call Extensions bag, and the handler rejects forged provenance.
+mod mcp_identity_transport_tests {
+    use axum::middleware::from_fn_with_state;
+    use ops_brain::auth::{bearer_auth, AgentToken, AuthState};
+    use ops_brain::tools::OpsBrain;
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+    };
+    use sqlx::postgres::PgPoolOptions;
+    use std::sync::Arc;
+
+    const MAIN: &str = "main-secret-token-transport-00000000000000000";
+    const AGENT: &str = "agent-secret-token-transport-111111111111111";
+
+    #[tokio::test]
+    async fn bound_identity_survives_transport_and_rejects_forged_sender() {
+        // Lazy pool deliberately points nowhere: identity rejection happens
+        // before the handler can touch PostgreSQL.
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgresql://unused:unused@127.0.0.1:1/unused")
+            .unwrap();
+        let pool_for_service = pool.clone();
+        let mcp_service: StreamableHttpService<OpsBrain, LocalSessionManager> =
+            StreamableHttpService::new(
+                move || Ok(OpsBrain::new(pool_for_service.clone(), None)),
+                Default::default(),
+                StreamableHttpServerConfig::default().with_sse_keep_alive(None),
+            );
+        let auth_state = AuthState {
+            main_token: Some(MAIN.to_string()),
+            machine_tokens: Arc::new(vec![]),
+            agent_tokens: Arc::new(vec![AgentToken {
+                token: AGENT.to_string(),
+                from_agent: "Codex-Stealth".to_string(),
+                client: None,
+            }]),
+        };
+        let app = axum::Router::new()
+            .nest_service("/mcp", mcp_service)
+            .layer(from_fn_with_state(auth_state, bearer_auth));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let init = client
+            .post(format!("http://{addr}/mcp"))
+            .bearer_auth(AGENT)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"identity-test","version":"1.0"}}}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(init.status(), reqwest::StatusCode::OK);
+        let session_id = init
+            .headers()
+            .get("mcp-session-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let initialized = client
+            .post(format!("http://{addr}/mcp"))
+            .bearer_auth(AGENT)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("mcp-session-id", &session_id)
+            .header("Mcp-Protocol-Version", "2025-06-18")
+            .body(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(initialized.status(), reqwest::StatusCode::ACCEPTED);
+
+        let response = client
+            .post(format!("http://{addr}/mcp"))
+            .bearer_auth(AGENT)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("mcp-session-id", &session_id)
+            .header("Mcp-Protocol-Version", "2025-06-18")
+            .body(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_handoff","arguments":{"from_agent":"Forged-Agent","to_agent":"CC-HSR","title":"must reject","body":"must not reach the database"}}}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body = response.text().await.unwrap();
+        assert!(
+            body.contains("does not match your token-bound agent")
+                && body.contains("Codex-Stealth"),
+            "identity mismatch must be rejected by the tool handler: {body}"
+        );
+
+        server.abort();
+        let _ = server.await;
     }
 }
 

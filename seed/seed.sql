@@ -4,7 +4,7 @@
 -- v3.0.0: inventory tables (sites, networks, servers, services, vendors)
 -- and incidents/monitors are gone. v4.0.0: Zammad ticketing retired too.
 -- The only foundational data ops-brain needs is the client list — used to
--- scope knowledge entries and briefings. Everything else is owned by config
+-- scope knowledge entries. Everything else is owned by config
 -- management or the client's own systems.
 --
 -- Knowledge entries and handoffs are populated by live agents at runtime.

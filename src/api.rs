@@ -15,13 +15,27 @@ use std::sync::Arc;
 use crate::auth::CallerClass;
 use crate::tools::briefings;
 use crate::validation::{
-    validate_agent_name, validate_option, HANDOFF_CATEGORIES, HANDOFF_PRIORITIES,
+    validate_agent_name, validate_bounded_text, validate_context, validate_option,
+    HANDOFF_CATEGORIES, HANDOFF_PRIORITIES, MAX_BODY_BYTES, MAX_TITLE_BYTES,
 };
 
 /// Shared state for REST API handlers.
 #[derive(Clone)]
 pub struct ApiState {
     pub pool: PgPool,
+}
+
+/// GET /ready — dependency readiness without exposing database details.
+/// Liveness remains `/health`; this endpoint turns 503 whenever PostgreSQL is
+/// unavailable so monitors can distinguish a process from a usable bus.
+pub async fn ready(State(state): State<Arc<ApiState>>) -> StatusCode {
+    match sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(1) => StatusCode::OK,
+        Ok(_) | Err(_) => StatusCode::SERVICE_UNAVAILABLE,
+    }
 }
 
 // ===== Machine ingestion: POST /api/handoff =====
@@ -40,13 +54,7 @@ const CONTEXT_V1_KEYS: &[&str] = &[
 ];
 const CONTEXT_VERDICTS: &[&str] = &["PASS", "WARN", "FAIL", "UNKNOWN"];
 
-const MAX_TITLE_CHARS: usize = 500;
-const MAX_BODY_CHARS: usize = 100_000;
 const MAX_DEDUPE_KEY_CHARS: usize = 200;
-/// Context is stored uncompressed and serialized into every MCP reader
-/// response untruncated (unlike body) — keep it a small structured payload,
-/// not an evidence dump. Evidence belongs behind `evidence_ref`.
-const MAX_CONTEXT_CHARS: usize = 8_192;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateHandoffRequest {
@@ -105,16 +113,10 @@ fn validate_dedupe_key(key: &str) -> Result<(), String> {
 /// (non-object), warn on everything else. The producer sees the warnings in
 /// the response; nothing is dropped.
 fn check_context(context: &serde_json::Value) -> Result<Vec<String>, String> {
+    validate_context(context)?;
     let Some(obj) = context.as_object() else {
-        return Err("context must be a JSON object when present".into());
+        return Err("context must be a JSON object when present".to_string());
     };
-    let serialized_len = context.to_string().len();
-    if serialized_len > MAX_CONTEXT_CHARS {
-        return Err(format!(
-            "context too large ({serialized_len} chars serialized, max {MAX_CONTEXT_CHARS}) — \
-             point at evidence via evidence_ref instead of inlining it"
-        ));
-    }
     let mut warnings = Vec::new();
     for key in obj.keys() {
         if !CONTEXT_V1_KEYS.contains(&key.as_str()) {
@@ -221,16 +223,8 @@ pub async fn create_handoff(
     let priority = req.priority.as_deref().unwrap_or("normal").to_lowercase();
     let category = req.category.as_deref().unwrap_or("action").to_lowercase();
 
-    if req.title.trim().is_empty() || req.title.len() > MAX_TITLE_CHARS {
-        return Err(bad_request(format!(
-            "title must be 1–{MAX_TITLE_CHARS} chars"
-        )));
-    }
-    if req.body.trim().is_empty() || req.body.len() > MAX_BODY_CHARS {
-        return Err(bad_request(format!(
-            "body must be 1–{MAX_BODY_CHARS} chars"
-        )));
-    }
+    validate_bounded_text(&req.title, "title", MAX_TITLE_BYTES).map_err(bad_request)?;
+    validate_bounded_text(&req.body, "body", MAX_BODY_BYTES).map_err(bad_request)?;
     if let Some(key) = req.dedupe_key.as_deref() {
         validate_dedupe_key(key).map_err(bad_request)?;
     }

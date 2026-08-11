@@ -1,5 +1,10 @@
 use clap::Parser;
-use ops_brain::{api, auth, config::Config, db, embeddings, tools::OpsBrain};
+use ops_brain::{
+    api, auth,
+    config::{Command, Config},
+    db, embeddings,
+    tools::OpsBrain,
+};
 use rmcp::service::ServiceExt;
 use tracing_subscriber::EnvFilter;
 
@@ -39,6 +44,28 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Embeddings disabled via OPS_BRAIN_EMBEDDINGS_ENABLED=false");
         None
     };
+
+    if let Some(Command::BackfillEmbeddings { table, batch_size }) = config.command.as_ref() {
+        let client = embedding_client.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "embedding client is disabled; enable OPS_BRAIN_EMBEDDINGS_ENABLED to backfill"
+            )
+        })?;
+        if let Some(table) = table.as_deref() {
+            if !matches!(table, "knowledge" | "handoffs") {
+                anyhow::bail!("unknown table '{table}'; use knowledge or handoffs");
+            }
+        }
+        let result = ops_brain::tools::search::backfill_embeddings(
+            &pool,
+            client,
+            table.as_deref(),
+            *batch_size,
+        )
+        .await?;
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
 
     let server = OpsBrain::new(pool.clone(), embedding_client.clone());
 
@@ -202,13 +229,15 @@ async fn main() -> anyhow::Result<()> {
                 .route("/briefing", axum::routing::post(api::generate_briefing))
                 .route("/handoff", axum::routing::post(api::create_handoff))
                 .route("/pending", axum::routing::get(api::list_pending))
-                .with_state(api_state);
+                .with_state(api_state.clone());
 
             // Outer .layer wraps everything below — auth runs BEFORE rmcp's
             // host check inside /mcp. Don't reorder: unauthenticated callers
             // shouldn't be able to enumerate which Host values are accepted.
             let app = axum::Router::new()
                 .route("/health", axum::routing::get(|| async { "OK" }))
+                .route("/ready", axum::routing::get(api::ready))
+                .with_state(api_state)
                 .nest("/api", api_routes)
                 .nest_service("/mcp", mcp_service)
                 .layer(axum::middleware::from_fn_with_state(

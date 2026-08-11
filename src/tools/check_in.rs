@@ -18,6 +18,9 @@ use super::helpers::{error_result, json_result};
 use crate::repo::handoff_repo;
 use crate::validation::validate_agent_name;
 
+const ACTION_LIMIT: i64 = 20;
+const NOTIFICATION_LIMIT: i64 = 5;
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CheckInParams {
     /// Your agent identifier (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
@@ -50,7 +53,7 @@ pub async fn handle_check_in(
         None,
         Some("action"),
         false,
-        20,
+        ACTION_LIMIT,
     )
     .await
     {
@@ -67,7 +70,7 @@ pub async fn handle_check_in(
         None,
         Some("notify"),
         false,
-        20,
+        NOTIFICATION_LIMIT,
     )
     .await
     {

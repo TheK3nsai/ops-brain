@@ -1,15 +1,5 @@
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::PgPool;
-
-use super::helpers::{error_result, json_result};
-use rmcp::model::*;
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GenerateBriefingParams {
-    /// Briefing type: "daily" or "weekly"
-    pub briefing_type: String,
-}
 
 /// Structured briefing data returned alongside the markdown content.
 #[derive(Debug, Serialize)]
@@ -29,31 +19,7 @@ pub struct HandoffSummaryData {
     pub accepted_titles: Vec<String>,
 }
 
-// ===== HANDLERS =====
-
-pub(crate) async fn handle_generate_briefing(
-    brain: &super::OpsBrain,
-    p: GenerateBriefingParams,
-) -> CallToolResult {
-    if let Err(msg) = crate::validation::validate_required(
-        &p.briefing_type,
-        "briefing_type",
-        crate::validation::BRIEFING_TYPES,
-    ) {
-        return error_result(&msg);
-    }
-
-    match generate_briefing_inner(&brain.pool, &p.briefing_type.to_lowercase()).await {
-        Ok(output) => json_result(&output),
-        Err(e) => error_result(&e),
-    }
-}
-
-/// Core briefing generation. Fleet-wide: client scoping was removed (the server
-/// cron only ever posted `{"type": ...}`), so every briefing now covers all
-/// clients' handoffs. Shared by the MCP `generate_briefing` tool and the REST
-/// `POST /api/briefing` wrapper. The `briefings.client_id` column is retained
-/// for historical rows; new rows are inserted with NULL.
+/// Stateless fleet-wide briefing generation for the REST delivery endpoint.
 pub async fn generate_briefing_inner(
     pool: &PgPool,
     briefing_type: &str,
@@ -72,7 +38,7 @@ pub async fn generate_briefing_inner(
     let open_handoffs =
         crate::repo::handoff_repo::list_open_handoffs(pool, None, None, None, false, 20)
             .await
-            .unwrap_or_default();
+            .map_err(|e| format!("Failed to list handoffs: {e}"))?;
 
     let pending_titles: Vec<String> = open_handoffs
         .iter()
@@ -97,11 +63,6 @@ pub async fn generate_briefing_inner(
     let now = chrono::Utc::now();
     let md = build_markdown(is_weekly, &now, &handoff_data);
 
-    // Store (client_id NULL — briefings are fleet-wide now).
-    let briefing = crate::repo::briefing_repo::insert_briefing(pool, briefing_type, None, &md)
-        .await
-        .map_err(|e| format!("Failed to store briefing: {e}"))?;
-
     let result = BriefingData {
         briefing_type: briefing_type.to_string(),
         generated_at: now.format("%Y-%m-%d %H:%M UTC").to_string(),
@@ -109,9 +70,7 @@ pub async fn generate_briefing_inner(
         content: md,
     };
 
-    let mut output = serde_json::to_value(&result).unwrap_or_default();
-    output["briefing_id"] = serde_json::Value::String(briefing.id.to_string());
-    Ok(output)
+    serde_json::to_value(&result).map_err(|e| format!("Failed to serialize briefing: {e}"))
 }
 
 fn build_markdown(

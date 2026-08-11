@@ -3,7 +3,7 @@ pub mod check_in;
 pub mod coordination;
 mod helpers;
 pub mod knowledge;
-mod search;
+pub mod search;
 mod shared;
 
 use rmcp::{
@@ -33,7 +33,13 @@ impl OpsBrain {
 
     #[tool(
         name = "add_knowledge",
-        description = "Add a knowledge base entry (lesson, gotcha, tip). Requires author (your agent name)."
+        description = "Add a knowledge base entry (lesson, gotcha, tip). Requires author (your agent name).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
     async fn add_knowledge(
         &self,
@@ -46,7 +52,13 @@ impl OpsBrain {
 
     #[tool(
         name = "update_knowledge",
-        description = "Update an existing knowledge base entry by ID. Only provided fields are updated."
+        description = "Update an existing knowledge base entry by ID. Only provided fields are updated.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
     async fn update_knowledge(
         &self,
@@ -57,7 +69,13 @@ impl OpsBrain {
 
     #[tool(
         name = "delete_knowledge",
-        description = "Delete a knowledge base entry by ID."
+        description = "Delete a knowledge base entry by ID.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
     async fn delete_knowledge(
         &self,
@@ -67,34 +85,35 @@ impl OpsBrain {
     }
 
     #[tool(
-        name = "search_knowledge",
+        name = "search_bus",
         description = "Search knowledge and/or handoffs. \
         Set tables param for multi-table. Modes: fts/semantic/hybrid (default). \
-        Empty query or '*' browses recent entries."
+        Empty query or '*' browses recent entries.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
-    async fn search_knowledge(
+    async fn search_bus(
         &self,
         params: Parameters<knowledge::SearchKnowledgeParams>,
     ) -> Result<CallToolResult, McpError> {
         Ok(knowledge::handle_search_knowledge(self, params.0).await)
     }
 
-    #[tool(
-        name = "list_knowledge",
-        description = "List knowledge base entries, optionally filtered by category or client"
-    )]
-    async fn list_knowledge(
-        &self,
-        params: Parameters<knowledge::ListKnowledgeParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(knowledge::handle_list_knowledge(self, params.0).await)
-    }
-
     // ===== HANDOFF TOOLS =====
 
     #[tool(
         name = "create_handoff",
-        description = "Create a handoff task for another agent/session to continue."
+        description = "Create a handoff task for another agent/session to continue.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
     async fn create_handoff(
         &self,
@@ -106,8 +125,31 @@ impl OpsBrain {
     }
 
     #[tool(
+        name = "get_handoff",
+        description = "Get one handoff by its full UUID, including its complete body and context.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn get_handoff(
+        &self,
+        params: Parameters<coordination::GetHandoffParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(coordination::handle_get_handoff(self, params.0).await)
+    }
+
+    #[tool(
         name = "accept_handoff",
-        description = "Accept a pending handoff, marking it as accepted by you"
+        description = "Accept a pending handoff, marking it as accepted by you",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
     async fn accept_handoff(
         &self,
@@ -120,7 +162,13 @@ impl OpsBrain {
         name = "complete_handoff",
         description = "Mark a handoff as completed. Optional `commit_hash` records the work \
         ref (typically a git SHA) so `mark_merged` can later flip the same handoff to \
-        `merged` when the bundle reaches main."
+        `merged` when the bundle reaches main.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
     async fn complete_handoff(
         &self,
@@ -133,7 +181,13 @@ impl OpsBrain {
         name = "list_replies_to_me",
         description = "List handoffs that reply to ones you sent. Returns handoffs whose \
         `in_reply_to` references a handoff with your `agent_name` as `from_agent`. \
-        Optional ISO-8601 `since` filters by reply timestamp."
+        Optional ISO-8601 `since` filters by reply timestamp.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
     async fn list_replies_to_me(
         &self,
@@ -149,7 +203,13 @@ impl OpsBrain {
         description = "Flip a handoff to status=merged and record the merge commit. \
         Typically called by an integrator script after the bundle containing the \
         handoff's commit_hash lands in main. Idempotent on identical merge_commit; \
-        refuses to overwrite a different one."
+        refuses to overwrite a different one.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
     async fn mark_merged(
         &self,
@@ -160,7 +220,13 @@ impl OpsBrain {
 
     #[tool(
         name = "list_handoffs",
-        description = "List handoffs with optional filters. Use status='pending' to see what needs attention."
+        description = "List handoffs with optional filters. Use status='pending' to see what needs attention.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
     async fn list_handoffs(
         &self,
@@ -170,19 +236,14 @@ impl OpsBrain {
     }
 
     #[tool(
-        name = "search_handoffs",
-        description = "Search handoff titles and bodies. Modes: fts (default), semantic, or hybrid (RRF)."
-    )]
-    async fn search_handoffs(
-        &self,
-        params: Parameters<coordination::SearchHandoffsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_search_handoffs(self, params.0).await)
-    }
-
-    #[tool(
         name = "delete_handoff",
-        description = "Permanently delete a handoff by ID (hard delete)"
+        description = "Permanently delete a handoff by ID (hard delete)",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
     async fn delete_handoff(
         &self,
@@ -197,7 +258,13 @@ impl OpsBrain {
         name = "check_in",
         description = "Pending-work query: open action handoffs addressed to you and recent \
         notify-class handoffs (compact). Pass `agent_name` (your free-form agent \
-        slug — e.g. 'CC-Stealth', 'Codex-HSR')."
+        slug — e.g. 'CC-Stealth', 'Codex-HSR').",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
     async fn check_in(
         &self,
@@ -206,33 +273,6 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let bound = helpers::bound_agent(&ext);
         Ok(check_in::handle_check_in(self, params.0, bound.as_deref()).await)
-    }
-
-    // ===== SEMANTIC SEARCH TOOLS =====
-
-    #[tool(
-        name = "backfill_embeddings",
-        description = "Generate missing embeddings for records. Use after setup or when API key was unavailable."
-    )]
-    async fn backfill_embeddings(
-        &self,
-        params: Parameters<search::BackfillEmbeddingsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(search::handle_backfill_embeddings(self, params.0).await)
-    }
-
-    // ===== BRIEFING TOOLS =====
-
-    #[tool(
-        name = "generate_briefing",
-        description = "Generate a daily/weekly operational briefing. Summarizes pending \
-        fleet-wide handoffs. Stored for history."
-    )]
-    async fn generate_briefing(
-        &self,
-        params: Parameters<briefings::GenerateBriefingParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(briefings::handle_generate_briefing(self, params.0).await)
     }
 }
 
@@ -244,10 +284,11 @@ impl ServerHandler for OpsBrain {
             .with_instructions(
                 "ops-brain is the team bus. Your local instructions, filesystem, and git \
                  history are the source of truth — reach for ops-brain only when you need \
-                 the rest of the team: handoffs, cross-agent knowledge, and briefings. \
+                 the rest of the team: handoffs and cross-agent knowledge. \
                  Identify yourself with a free-form `agent_name` (slug, \
-                 e.g. 'CC-Stealth', 'Codex-HSR'). Default-deny across clients: \
-                 cross-client content requires acknowledge_cross_client=true.",
+                 e.g. 'CC-Stealth', 'Codex-HSR'). One deployment is one trusted \
+                 coordination domain; scoped knowledge queries withhold unsafe \
+                 cross-client content until acknowledge_cross_client=true.",
             )
     }
 }
@@ -255,6 +296,7 @@ impl ServerHandler for OpsBrain {
 #[cfg(test)]
 mod tests {
     use super::helpers::*;
+    use super::OpsBrain;
     use std::collections::HashMap;
     use uuid::Uuid;
 
@@ -277,6 +319,68 @@ mod tests {
         lookup.insert(alpha_id, ("alpha".to_string(), "Alpha Corp".to_string()));
         lookup.insert(beta_id, ("beta".to_string(), "Beta Inc".to_string()));
         (alpha_id, beta_id, lookup)
+    }
+
+    #[test]
+    fn v5_surface_is_exactly_thirteen_tools() {
+        let tools = OpsBrain::tool_router().list_all();
+        let mut names: Vec<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "accept_handoff",
+                "add_knowledge",
+                "check_in",
+                "complete_handoff",
+                "create_handoff",
+                "delete_handoff",
+                "delete_knowledge",
+                "get_handoff",
+                "list_handoffs",
+                "list_replies_to_me",
+                "mark_merged",
+                "search_bus",
+                "update_knowledge",
+            ]
+        );
+    }
+
+    #[test]
+    fn tool_annotations_distinguish_reads_and_destructive_writes() {
+        let tools = OpsBrain::tool_router().list_all();
+        let search = tools.iter().find(|tool| tool.name == "search_bus").unwrap();
+        let delete = tools
+            .iter()
+            .find(|tool| tool.name == "delete_handoff")
+            .unwrap();
+        assert_eq!(
+            search.annotations.as_ref().unwrap().read_only_hint,
+            Some(true)
+        );
+        assert_eq!(
+            delete.annotations.as_ref().unwrap().destructive_hint,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn json_results_include_structured_content() {
+        let result = json_result(&serde_json::json!({"ok": true}));
+        assert_eq!(
+            result.structured_content,
+            Some(serde_json::json!({"ok": true}))
+        );
+        assert_eq!(result.is_error, Some(false));
+    }
+
+    #[test]
+    fn json_results_wrap_non_object_values() {
+        let result = json_result(&vec!["first", "second"]);
+        assert_eq!(
+            result.structured_content,
+            Some(serde_json::json!({"result": ["first", "second"]}))
+        );
     }
 
     // ===== filter_cross_client tests =====

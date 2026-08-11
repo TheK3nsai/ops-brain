@@ -1,8 +1,24 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Generate missing knowledge/handoff embeddings, then exit.
+    BackfillEmbeddings {
+        /// Specific table: knowledge or handoffs. Omit for both.
+        #[arg(long)]
+        table: Option<String>,
+        /// Maximum records processed per table in this run.
+        #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(i64).range(1..=100))]
+        batch_size: i64,
+    },
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "ops-brain", about = "Operational intelligence MCP server")]
 pub struct Config {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Database connection URL
     #[arg(long, env = "DATABASE_URL")]
     pub database_url: String,

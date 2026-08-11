@@ -31,7 +31,6 @@ pub(crate) fn aliased_cols(cols: &str, alias: &str) -> String {
 }
 
 pub mod audit_log_repo;
-pub mod briefing_repo;
 pub mod client_repo;
 pub mod embedding_repo;
 pub mod handoff_repo;

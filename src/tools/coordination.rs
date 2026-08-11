@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::validation::deserialize_flexible_i64;
 
 use super::helpers::{error_result, json_result, not_found, truncate_str};
-use super::shared::{embed_and_store, get_query_embedding};
+use super::shared::embed_and_store;
 use rmcp::model::*;
 
 // ===== HANDOFF PARAMS =====
@@ -37,6 +37,12 @@ pub struct CreateHandoffParams {
     /// `category` is preserved as written — a reply can legitimately be
     /// `action` (it requires a response) or `notify` (pure FYI).
     pub in_reply_to: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetHandoffParams {
+    /// Full handoff UUID.
+    pub handoff_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -102,17 +108,6 @@ pub struct ListHandoffsParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SearchHandoffsParams {
-    /// Full-text search query
-    pub query: String,
-    /// Search mode: "fts" (default), "semantic" (vector only), or "hybrid" (FTS + vector RRF)
-    pub mode: Option<String>,
-    /// Max results (default 20)
-    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DeleteHandoffParams {
     /// Handoff ID (UUID)
     pub handoff_id: String,
@@ -127,6 +122,24 @@ pub async fn handle_create_handoff(
 ) -> CallToolResult {
     let priority = p.priority.as_deref().unwrap_or("normal");
     let category = p.category.as_deref().unwrap_or("action");
+
+    if let Err(msg) = crate::validation::validate_bounded_text(
+        &p.title,
+        "title",
+        crate::validation::MAX_TITLE_BYTES,
+    ) {
+        return error_result(&msg);
+    }
+    if let Err(msg) =
+        crate::validation::validate_bounded_text(&p.body, "body", crate::validation::MAX_BODY_BYTES)
+    {
+        return error_result(&msg);
+    }
+    if let Some(context) = p.context.as_ref() {
+        if let Err(msg) = crate::validation::validate_context(context) {
+            return error_result(&msg);
+        }
+    }
 
     if let Err(msg) = crate::validation::validate_required(
         priority,
@@ -203,6 +216,19 @@ pub async fn handle_create_handoff(
             .await;
             json_result(&handoff)
         }
+        Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+pub async fn handle_get_handoff(brain: &super::OpsBrain, p: GetHandoffParams) -> CallToolResult {
+    let id = match uuid::Uuid::parse_str(&p.handoff_id) {
+        Ok(id) => id,
+        Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
+    };
+
+    match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
+        Ok(Some(handoff)) => json_result(&handoff),
+        Ok(None) => not_found("Handoff", &p.handoff_id),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -294,7 +320,7 @@ pub async fn handle_list_replies_to_me(
     let limit = p.limit.unwrap_or(20).clamp(1, 200);
 
     match crate::repo::handoff_repo::list_replies_to_me(&brain.pool, &agent, since, limit).await {
-        Ok(replies) => json_result(&replies),
+        Ok(replies) => json_result(&serde_json::json!({ "replies": replies })),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -436,50 +462,12 @@ pub async fn handle_list_handoffs(
                         Some(val)
                     })
                     .collect();
-                json_result(&compacted)
+                json_result(&serde_json::json!({ "handoffs": compacted }))
             } else {
-                json_result(&handoffs)
+                json_result(&serde_json::json!({ "handoffs": handoffs }))
             }
         }
         Err(e) => error_result(&format!("Database error: {e}")),
-    }
-}
-
-pub async fn handle_search_handoffs(
-    brain: &super::OpsBrain,
-    p: SearchHandoffsParams,
-) -> CallToolResult {
-    let mode = p.mode.as_deref().unwrap_or("fts");
-    if let Err(msg) =
-        crate::validation::validate_required(mode, "mode", crate::validation::SEARCH_MODES)
-    {
-        return error_result(&msg);
-    }
-    let limit = p.limit.unwrap_or(20).clamp(1, 200);
-    let result = match mode {
-        "semantic" => {
-            let Some(emb) = get_query_embedding(&brain.embedding_client, &p.query).await else {
-                return error_result(
-                    "Semantic search unavailable (embedding client not configured)",
-                );
-            };
-            crate::repo::embedding_repo::vector_search_handoffs(&brain.pool, &emb, limit).await
-        }
-        "hybrid" => {
-            let emb = get_query_embedding(&brain.embedding_client, &p.query).await;
-            crate::repo::embedding_repo::hybrid_search_handoffs(
-                &brain.pool,
-                &p.query,
-                emb.as_deref(),
-                limit,
-            )
-            .await
-        }
-        _ => crate::repo::handoff_repo::search_handoffs(&brain.pool, &p.query, limit).await,
-    };
-    match result {
-        Ok(handoffs) => json_result(&handoffs),
-        Err(e) => error_result(&format!("Search error: {e}")),
     }
 }
 

@@ -1,35 +1,16 @@
-use schemars::JsonSchema;
-use serde::Deserialize;
+use sqlx::PgPool;
 
-use crate::validation::deserialize_flexible_i64;
-
-use super::helpers::{error_result, json_result};
-use rmcp::model::*;
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BackfillEmbeddingsParams {
-    /// Specific table to backfill (knowledge, handoffs). Default: all.
-    pub table: Option<String>,
-    /// Records per batch (default 10)
-    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
-    pub batch_size: Option<i64>,
-}
-
-// ===== HANDLERS =====
-
-pub(crate) async fn handle_backfill_embeddings(
-    brain: &super::OpsBrain,
-    p: BackfillEmbeddingsParams,
-) -> CallToolResult {
-    let Some(ref client) = brain.embedding_client else {
-        return error_result(
-            "Embedding client not configured — set OPS_BRAIN_EMBEDDING_URL or disable with OPS_BRAIN_EMBEDDINGS_ENABLED=false",
-        );
-    };
-
-    let batch_size = p.batch_size.unwrap_or(10).clamp(1, 100);
-    let tables: Vec<&str> = match &p.table {
-        Some(t) => vec![t.as_str()],
+/// Operator-only embedding maintenance. Kept out of MCP so normal agents do
+/// not pay for or accidentally invoke a database-wide maintenance surface.
+pub async fn backfill_embeddings(
+    pool: &PgPool,
+    client: &crate::embeddings::EmbeddingClient,
+    table: Option<&str>,
+    batch_size: i64,
+) -> anyhow::Result<serde_json::Value> {
+    let batch_size = batch_size.clamp(1, 100);
+    let tables: Vec<&str> = match table {
+        Some(t) => vec![t],
         None => vec!["knowledge", "handoffs"],
     };
 
@@ -37,114 +18,61 @@ pub(crate) async fn handle_backfill_embeddings(
 
     for table in &tables {
         let mut processed = 0i64;
-        let mut failed = 0i64;
 
         match *table {
             "knowledge" => {
-                if let Ok(rows) = crate::repo::embedding_repo::get_knowledge_without_embeddings(
-                    &brain.pool,
-                    batch_size,
-                )
-                .await
-                {
+                let rows =
+                    crate::repo::embedding_repo::get_knowledge_without_embeddings(pool, batch_size)
+                        .await?;
+                if !rows.is_empty() {
                     let texts: Vec<String> = rows
                         .iter()
                         .map(crate::embeddings::prepare_knowledge_text)
                         .collect();
-                    match client.embed_texts(&texts).await {
-                        Ok(embeddings) => {
-                            for (row, emb) in rows.iter().zip(embeddings.iter()) {
-                                if crate::repo::embedding_repo::store_knowledge_embedding(
-                                    &brain.pool,
-                                    row.id,
-                                    emb,
-                                )
-                                .await
-                                .is_ok()
-                                {
-                                    processed += 1;
-                                } else {
-                                    failed += 1;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            summary.insert(
-                                format!("{table}_error"),
-                                serde_json::Value::String(e.to_string()),
-                            );
-                        }
+                    let embeddings = client.embed_texts(&texts).await?;
+                    for (row, emb) in rows.iter().zip(embeddings.iter()) {
+                        crate::repo::embedding_repo::store_knowledge_embedding(pool, row.id, emb)
+                            .await?;
+                        processed += 1;
                     }
                 }
             }
             "handoffs" => {
-                if let Ok(rows) = crate::repo::embedding_repo::get_handoffs_without_embeddings(
-                    &brain.pool,
-                    batch_size,
-                )
-                .await
-                {
+                let rows =
+                    crate::repo::embedding_repo::get_handoffs_without_embeddings(pool, batch_size)
+                        .await?;
+                if !rows.is_empty() {
                     let texts: Vec<String> = rows
                         .iter()
                         .map(crate::embeddings::prepare_handoff_text)
                         .collect();
-                    match client.embed_texts(&texts).await {
-                        Ok(embeddings) => {
-                            for (row, emb) in rows.iter().zip(embeddings.iter()) {
-                                if crate::repo::embedding_repo::store_handoff_embedding(
-                                    &brain.pool,
-                                    row.id,
-                                    emb,
-                                )
-                                .await
-                                .is_ok()
-                                {
-                                    processed += 1;
-                                } else {
-                                    failed += 1;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            summary.insert(
-                                format!("{table}_error"),
-                                serde_json::Value::String(e.to_string()),
-                            );
-                        }
+                    let embeddings = client.embed_texts(&texts).await?;
+                    for (row, emb) in rows.iter().zip(embeddings.iter()) {
+                        crate::repo::embedding_repo::store_handoff_embedding(pool, row.id, emb)
+                            .await?;
+                        processed += 1;
                     }
                 }
             }
-            _ => {
-                summary.insert(
-                    format!("{table}_error"),
-                    serde_json::Value::String("Unknown table".to_string()),
-                );
-                continue;
-            }
+            _ => anyhow::bail!("unknown table '{table}'; use knowledge or handoffs"),
         }
 
         summary.insert(
             format!("{table}_processed"),
             serde_json::Value::Number(processed.into()),
         );
-        summary.insert(
-            format!("{table}_failed"),
-            serde_json::Value::Number(failed.into()),
-        );
     }
 
-    // Get remaining counts
-    if let Ok(counts) = crate::repo::embedding_repo::count_missing_embeddings(&brain.pool).await {
-        summary.insert(
-            "remaining_knowledge".to_string(),
-            serde_json::Value::Number(counts.knowledge.into()),
-        );
+    let counts = crate::repo::embedding_repo::count_missing_embeddings(pool).await?;
+    summary.insert(
+        "remaining_knowledge".to_string(),
+        serde_json::Value::Number(counts.knowledge.into()),
+    );
 
-        summary.insert(
-            "remaining_handoffs".to_string(),
-            serde_json::Value::Number(counts.handoffs.into()),
-        );
-    }
+    summary.insert(
+        "remaining_handoffs".to_string(),
+        serde_json::Value::Number(counts.handoffs.into()),
+    );
 
-    json_result(&serde_json::Value::Object(summary))
+    Ok(serde_json::Value::Object(summary))
 }

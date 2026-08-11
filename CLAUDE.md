@@ -2,19 +2,19 @@
 
 Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18 via sqlx, stdio/HTTP transport.
 
-**v4.0.0 — team bus only.** Inventory, incidents, monitoring, and Zammad ticketing subsystems were all removed (v3.0.0 dropped the first three; v4.0.0 retired Zammad after it was decommissioned fleet-side). Configuration management owns inventory, Uptime Kuma owns monitoring, and tickets/incidents live in each client's own systems. ops-brain stays on its lane: handoffs, knowledge, briefings.
+**v5.0.0 — smaller team bus.** Inventory, incidents, monitoring, and Zammad ticketing remain retired. The MCP surface is handoffs, bounded knowledge, and check-in; machine ingestion, wake polling, and stateless briefings use narrow REST endpoints.
 
 For roadmap philosophy + hard stops (what we will/won't build, and why), see `ROADMAP.md`. For shipped history, see `CHANGELOG.md`.
 
-## Surface (16 tools)
+## Surface (13 tools)
 
-- **Knowledge** (5): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `list_knowledge`
-- **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `search_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
+- **Knowledge** (4): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus` (knowledge by default; optional handoff search; empty/`*` browse)
+- **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `get_handoff` (exact full UUID), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
 - **Team bus** (1): `check_in` — open action handoffs (pending + accepted) + recent notify-class handoffs for `agent_name`
-- **Search** (1): `backfill_embeddings`
-- **Briefings** (1): `generate_briefing` (daily/weekly handoffs summary, fleet-wide — handoffs carry no client column; `client_slug` was dropped in v4.1.0)
 
-REST-only (no MCP tools, zero agent token cost): `POST /api/handoff` + `GET /api/pending` — machine-filed handoffs and wake polling for non-interactive producers, authenticated by scoped machine tokens (`OPS_BRAIN_MACHINE_TOKENS`). Producer contract in `docs/machine-callers.md`. Recurrence/dead-man stay on producers' own schedulers — ops-brain never owns execution timing.
+REST-only (no MCP tools, zero agent token cost): `POST /api/handoff`, `GET /api/pending`, and `POST /api/briefing`. The first two serve machine-filed handoffs and wake polling through scoped machine tokens (`OPS_BRAIN_MACHINE_TOKENS`); briefings are stateless delivery output for the main bearer. `GET /health` is liveness; `GET /ready` checks PostgreSQL readiness. Producer contract in `docs/machine-callers.md`. Recurrence/dead-man stay on producers' own schedulers — ops-brain never owns execution timing.
+
+Operator maintenance: `ops-brain backfill-embeddings [--table knowledge|handoffs] [--batch-size N]` replaces the former agent-visible backfill tool.
 
 Identity: interactive MCP sessions may authenticate with **per-agent tokens** (`OPS_BRAIN_AGENT_TOKENS`) that bind `from_agent` server-side — MCP write tools (`create_handoff`, `add_knowledge`) reject a mismatching identity; reads warn-log it. `/mcp`-only, never the REST endpoints. The main bearer stays unbound as operator break-glass. Rotation is per-host, not a fleet cutover. Contract in `docs/agent-tokens.md`.
 
@@ -31,11 +31,11 @@ Identity: interactive MCP sessions may authenticate with **per-agent tokens** (`
 - Semantic search uses pgvector HNSW cosine + ollama nomic-embed-text (768 dims); embedding column is nullable
 - Hybrid search uses Reciprocal Rank Fusion (RRF) to combine FTS + vector results
 
-## Safety Design Principles
+## Client-Scope Disclosure Guard
 
-Multi-client data handling for a solo operator managing clients with different compliance domains (HIPAA healthcare vs tax/accounting). The system itself acts as the safety gate.
+One deployment is one trusted coordination domain. Per-agent tokens bind provenance, not tenant authorization; every authenticated MCP agent can read fleet-wide handoffs and mutate objects by ID. Client scoping is a knowledge disclosure guard inside that trust domain, not hostile-user isolation. Use separate deployments across real trust boundaries.
 
-1. **Default-deny across clients**: cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
+1. **Scoped queries withhold by default**: cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
 2. **Withhold-by-default on scope mismatch**: when search tools would surface cross-client knowledge, content is **withheld** and replaced with a scope mismatch notice. An explicit `acknowledge_cross_client: true` parameter on a second call releases the result. A gate, not a banner.
 3. **Provenance in all results**: every surfaced entry includes `_client_slug` and `_client_name`. Global content (no `client_id`) shows `_client_name: "Global"`.
 4. **Audit trail**: `audit_log` table records every cross-client surfacing attempt with tool_name, requesting/owning client_id, entity details, and timestamp.
@@ -60,7 +60,7 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 - **Agent names** — use the CC-style fleet convention for every agent family: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. The validator remains free-form for compatibility, but new rows should keep that convention so handoffs route predictably.
 - **Fleet stewardship** — CC, Codex, and Gemini agents may each improve ergonomics for their own client family, but shared ops-brain features must stay generic across all fleets. Family-specific work belongs in local agent instructions, onboarding docs, or compatibility guidance unless it exposes a reusable team-bus primitive.
 - **Knowledge policy** — knowledge entries are for cross-agent gotchas, safety warnings, compliance rules, verified patterns, and vendor behavior ONLY. Every entry costs tokens across all agents. If it would fit in your own local instructions, put it there instead. If local docs are canonical, write a pointer/provenance entry, not a duplicate. `add_knowledge` requires `author` (your agent slug, e.g. `CC-Stealth` or `Codex-HSR`).
-- **Default-deny across clients** — cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
+- **Client-scope guard** — scoped knowledge queries withhold unsafe cross-client content unless explicitly acknowledged. Unscoped searches and handoffs are fleet-wide; one deployment is one trust domain.
 
 ## Gotchas
 

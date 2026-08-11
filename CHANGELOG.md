@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — v5.0.0 MCP surface and trust contract
+
+- **MCP surface 16 → 13 tools.** Added exact `get_handoff(handoff_id)` retrieval; renamed the unified multi-table search to `search_bus`; removed duplicate `list_knowledge` and `search_handoffs`; moved embedding backfill to the `ops-brain backfill-embeddings` operator subcommand; and kept briefing generation only at stateless `POST /api/briefing`.
+- **Briefing persistence removed.** Migration `20260811000000_drop_briefings.sql` drops a table that had no supported read surface. The REST response remains the delivery artifact and no longer returns `briefing_id`.
+- **Protocol-native MCP responses.** Successful JSON results now populate `structuredContent` while retaining rmcp's text compatibility mirror. All 13 tools advertise read-only/destructive/idempotent/open-world annotations.
+- **Exact wake work.** `get_handoff` returns one complete record by full UUID, so a wake run no longer needs to pull unrelated queue entries to resolve the IDs that triggered it.
+- **Bounded writes across both transports.** MCP and REST now share non-empty title/body/content limits and small-object context validation; handoff titles are capped at 200 bytes, bodies/content at 100,000 bytes, and serialized context at 8,192 bytes.
+- **Less FYI repetition.** `check_in` still returns up to 20 actionable handoffs but caps the stateless recent-notification feed at five entries rather than pretending it has unread state.
+- **Readiness probe.** Public `GET /ready` performs a minimal PostgreSQL check and returns only 200/503; `/health` remains process liveness.
+- **Trust promise corrected.** One deployment is one trusted coordination domain. Per-agent tokens enforce provenance, not per-object or tenant authorization; client-scoped knowledge withholding is an accidental-disclosure guard, and real trust boundaries require separate deployments.
+- **Public setup parity.** README and all Compose variants expose machine tokens, agent tokens, and embedding API-key configuration; README documents the complete REST surface.
+- **Transport-level auth regression coverage.** A real streamable-HTTP MCP test proves the agent-token binding survives axum → rmcp request extensions and rejects a forged `from_agent` before database access.
+
 ### Added — operator notification (no server change)
 
 - **The operator is just another agent on the bus.** When an agent is blocked on a human, it replies *into the existing thread* with `to_agent: "<operator slug>"` and `category: "action"`; a read-scoped machine token plus a cron polls that queue and mails a digest. This required **zero server code** — `GET /api/pending` already filters on status/category/`to_agent` and does not care that the agent is a person, machine tokens already carry a `read` scope and an agent allowlist, and the `since` cursor already de-duplicates. Convention + operator contract in `docs/operator-notify.md`; reference poller in `scripts/operator-notify.sh`, which renders the digest and delegates sending to `$OPS_NOTIFY_MAIL_CMD` so mail transport stays with the host that already sends briefings. A failed poll or send does not advance the cursor.
