@@ -25,6 +25,8 @@ The server-side binding is the source of peer identity.
 1. Pull an ops-brain revision containing the live adapters and launchers.
 2. Install Node.js 22 or newer, current Claude Code with Channels support, and
    current Codex CLI with App Server/`--remote` support.
+   On Windows, the Codex launcher requires a native `codex.exe`; an npm-style
+   `codex.cmd` shim cannot host its owned, log-redirected App Server process.
 3. Confirm the host already has the two identity-bound agent tokens. Token
    delivery, minting, and rotation are attended credential operations and are
    outside this runbook.

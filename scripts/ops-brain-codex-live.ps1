@@ -117,7 +117,7 @@ if ($Mode -eq 'Status') {
     "credential: $(if ($AgentCredentialFile) { $AgentCredentialFile } else { '<unset>' }) - $credentialStatus"
     "state: $StateDirectory"
     "codex: $(Get-ApplicationPath 'codex.exe')"
-    "node: $(Get-ApplicationPath 'node.exe')"
+    "node: $(Get-ApplicationPath 'node')"
     exit 0
 }
 
@@ -128,7 +128,7 @@ if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $Agen
 if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
 if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
 $codexCommand = Get-RequiredApplication 'codex.exe'
-[void](Get-RequiredApplication 'node.exe')
+[void](Get-RequiredApplication 'node')
 $pwshCommand = Get-RequiredApplication 'pwsh.exe'
 
 if ($Mode -eq 'DryRun') {

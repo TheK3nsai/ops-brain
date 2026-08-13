@@ -59,8 +59,8 @@ if ($Mode -eq 'Status') {
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"
     "credential: $(if ($AgentCredentialFile) { $AgentCredentialFile } else { '<unset>' }) - $credentialStatus"
-    "claude: $(Get-ApplicationPath 'claude.exe')"
-    "node: $(Get-ApplicationPath 'node.exe')"
+    "claude: $(Get-ApplicationPath 'claude')"
+    "node: $(Get-ApplicationPath 'node')"
     exit 0
 }
 
@@ -70,8 +70,8 @@ if (-not $AgentCredentialFile) { throw 'AgentCredentialFile is required; select 
 if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $AgentCredentialFile" }
 if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
 if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
-$claudeCommand = Get-RequiredApplication 'claude.exe'
-[void](Get-RequiredApplication 'node.exe')
+$claudeCommand = Get-RequiredApplication 'claude'
+[void](Get-RequiredApplication 'node')
 [void](Get-RequiredApplication 'pwsh.exe')
 
 $mcpConfig = @{

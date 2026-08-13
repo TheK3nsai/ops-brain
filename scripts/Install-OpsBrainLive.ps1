@@ -43,10 +43,10 @@ function Get-RequiredApplication {
 if ($Mode -eq 'Status') {
     "repo: $RepoDirectory"
     "bin: $BinDirectory"
-    "node: $(Get-ApplicationPath 'node.exe')"
-    "npm: $(Get-ApplicationPath 'npm.cmd')"
-    "claude: $(Get-ApplicationPath 'claude.exe')"
-    "codex: $(Get-ApplicationPath 'codex.exe')"
+    "node: $(Get-ApplicationPath 'node')"
+    "npm: $(Get-ApplicationPath 'npm')"
+    "claude: $(Get-ApplicationPath 'claude')"
+    "codex (native required): $(Get-ApplicationPath 'codex.exe')"
     foreach ($name in $launchers) {
         $shim = Join-Path $BinDirectory "$name.cmd"
         "$name`: $(if (Test-Path -LiteralPath $shim -PathType Leaf) { $shim } else { '<missing>' })"
@@ -54,8 +54,8 @@ if ($Mode -eq 'Status') {
     exit 0
 }
 
-$nodeCommand = Get-RequiredApplication 'node.exe'
-$npmCommand = Get-RequiredApplication 'npm.cmd'
+$nodeCommand = Get-RequiredApplication 'node'
+$npmCommand = Get-RequiredApplication 'npm'
 $nodeMajor = [int](& $nodeCommand.Source -p 'Number(process.versions.node.split(".")[0])')
 if ($nodeMajor -lt 22) { throw 'Node.js 22 or newer is required' }
 

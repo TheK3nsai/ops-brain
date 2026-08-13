@@ -22,6 +22,8 @@ that message because doing so could inject it twice.
 - Codex CLI with App Server support
 - An ops-brain per-agent bearer (not the main or machine bearer)
 - A local Codex App Server, preferably shared with the open Codex client
+- The Windows fleet launcher requires a native `codex.exe`; `.cmd` shims
+  cannot host its owned, log-redirected App Server process.
 
 Install the one runtime dependency locally:
 

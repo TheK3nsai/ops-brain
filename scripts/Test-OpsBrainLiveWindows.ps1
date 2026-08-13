@@ -73,23 +73,20 @@ try {
     $fakeBin = Join-Path $testDirectory 'fake-bin'
     [IO.Directory]::CreateDirectory($fakeBin) | Out-Null
     $captureFile = Join-Path $testDirectory 'claude-capture.txt'
-    $fakeClaude = Join-Path $fakeBin 'claude.exe'
+    $fakeClaudeScript = Join-Path $fakeBin 'fake-claude.mjs'
+    $fakeClaude = Join-Path $fakeBin 'claude.cmd'
     $source = @'
-using System;
-using System.IO;
-public static class FakeClaude {
-    public static int Main(string[] args) {
-        if (!String.IsNullOrEmpty(Environment.GetEnvironmentVariable("OPS_BRAIN_AGENT_TOKEN"))) return 3;
-        var capture = Environment.GetEnvironmentVariable("OPS_BRAIN_TEST_CAPTURE");
-        var marker = Array.IndexOf(args, "--mcp-config");
-        if (String.IsNullOrEmpty(capture) || marker < 0 || marker + 1 >= args.Length) return 2;
-        var config = File.ReadAllText(args[marker + 1]);
-        File.WriteAllText(capture, config + "\n---ARGS---\n" + String.Join("\n", args));
-        return 0;
-    }
-}
+import fs from 'node:fs';
+if (process.env.OPS_BRAIN_AGENT_TOKEN) process.exit(3);
+const args = process.argv.slice(2);
+const capture = process.env.OPS_BRAIN_TEST_CAPTURE;
+const marker = args.indexOf('--mcp-config');
+if (!capture || marker < 0 || marker + 1 >= args.length) process.exit(2);
+const config = fs.readFileSync(args[marker + 1], 'utf8');
+fs.writeFileSync(capture, `${config}\n---ARGS---\n${args.join('\n')}`);
 '@
-    Add-Type -TypeDefinition $source -OutputAssembly $fakeClaude -OutputType ConsoleApplication
+    [IO.File]::WriteAllText($fakeClaudeScript, $source, [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($fakeClaude, "@echo off`r`nnode `"%~dp0fake-claude.mjs`" %*`r`n", [Text.UTF8Encoding]::new($false))
 
     $credential = Join-Path $testDirectory 'credential.cred.xml'
     [IO.File]::WriteAllText($credential, 'credential fixture is not read by the parent launcher')
@@ -98,7 +95,7 @@ public static class FakeClaude {
     $env:OPS_BRAIN_TEST_CAPTURE = $captureFile
     $env:OPS_BRAIN_AGENT_TOKEN = 'fixture-must-not-reach-claude'
     try {
-        $pwsh = (@(Get-Command pwsh.exe -CommandType Application -ErrorAction Stop) | Select-Object -First 1).Source
+        $pwsh = (@(Get-Command pwsh -CommandType Application -ErrorAction Stop) | Select-Object -First 1).Source
         $startInfo = [Diagnostics.ProcessStartInfo]::new($pwsh)
         $startInfo.UseShellExecute = $false
         foreach ($argument in @(
@@ -132,6 +129,21 @@ public static class FakeClaude {
     Assert-True ($configIndex -ge 0 -and $configIndex + 1 -lt $arguments.Count) 'Claude did not receive one MCP config path argument'
     Assert-True (-not (Test-Path -LiteralPath $arguments[$configIndex + 1])) 'temporary Claude MCP config was not removed'
     Assert-True ($arguments -contains '--dangerously-load-development-channels') 'Claude Channel opt-in flag is missing'
+
+    [IO.File]::WriteAllText((Join-Path $fakeBin 'codex.cmd'), "@echo off`r`nexit /b 0`r`n", [Text.UTF8Encoding]::new($false))
+    $shimRejected = $false
+    try {
+        $env:PATH = "$fakeBin;$env:SystemRoot\System32;$env:SystemRoot"
+        $installerStatus = & "$PSScriptRoot\Install-OpsBrainLive.ps1" -Mode Status -BinDirectory $binDirectory
+        Assert-True (($installerStatus -join "`n") -like '*codex (native required): <missing>*') 'installer status treated codex.cmd as a runnable native Codex binary'
+        & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode DryRun `
+            -LiveUrl 'wss://ops-brain.example/live' `
+            -AgentCredentialFile $credential `
+            -AgentName 'Codex-CI'
+    }
+    catch { $shimRejected = $_.Exception.Message -like '*Required executable is missing: codex.exe*' }
+    finally { $env:PATH = $originalPath }
+    Assert-True $shimRejected 'Codex launcher accepted a .cmd shim that Start-Process cannot own with redirected logs'
 
     'Windows live launcher tests passed'
 }

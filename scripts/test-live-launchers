@@ -85,11 +85,11 @@ for file in \
     "$SCRIPT_DIR/ops-brain-codex-live.ps1" \
     "$SCRIPT_DIR/Install-OpsBrainLive.ps1"; do
     [[ -s $file ]] || fail "missing PowerShell fleet file: $file"
-    rg -q '^#requires -Version 7\.2$' "$file" || fail "PowerShell version gate missing: $file"
+    grep -Eq '^#requires -Version 7\.2$' "$file" || fail "PowerShell version gate missing: $file"
 done
-rg -q 'Import-Clixml -LiteralPath' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'DPAPI credential import missing'
-rg -q 'OPS_BRAIN_AGENT_TOKEN = \$secret' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'adapter-only bearer export missing'
-if rg -q 'AgentCredentialFile.*OPS_BRAIN_AGENT_TOKEN' "$SCRIPT_DIR/ops-brain-claude-live.ps1"; then
+grep -Fq 'Import-Clixml -LiteralPath' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'DPAPI credential import missing'
+grep -Fq "OPS_BRAIN_AGENT_TOKEN = \$secret" "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'adapter-only bearer export missing'
+if grep -Eq 'AgentCredentialFile.*OPS_BRAIN_AGENT_TOKEN' "$SCRIPT_DIR/ops-brain-claude-live.ps1"; then
     fail 'Claude parent launcher appears to export the bearer'
 fi
 
