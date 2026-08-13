@@ -24,7 +24,7 @@ const NOTIFICATION_LIMIT: i64 = 5;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CheckInParams {
     /// Your agent identifier (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "CC-Stealth", "CC-Cloud", "Codex-HSR", "Gemini-Stealth".
+    /// Examples: "CC-Stealth", "CC-Cloud", "Codex-HSR".
     /// Used to filter handoffs addressed to you.
     #[serde(alias = "my_name")]
     pub agent_name: String,

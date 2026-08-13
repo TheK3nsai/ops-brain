@@ -5,6 +5,7 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod embeddings;
+pub mod live;
 pub mod models;
 pub mod repo;
 pub mod tools;

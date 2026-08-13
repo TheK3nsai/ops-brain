@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ops-brain-live": {
+      "command": "node",
+      "args": [
+        "/ABSOLUTE/PATH/TO/ops-brain/adapters/claude-channel/src/main.js"
+      ],
+      "env": {
+        "OPS_BRAIN_LIVE_URL": "wss://YOUR-OPS-BRAIN-HOST/live",
+        "OPS_BRAIN_LIVE_LABEL": "claude-code"
+      }
+    }
+  }
+}

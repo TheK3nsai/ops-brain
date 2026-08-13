@@ -119,9 +119,9 @@ pub fn validate_required(value: &str, field_name: &str, allowed: &[&str]) -> Res
 ///
 /// v2.0 replacement for the v1.x CC-fleet allowlist (CC_TEAM, normalize_machine_name,
 /// is_valid_cc_name). Existing values like `CC-Stealth`, `CC-Cloud`, `Codex-HSR`,
-/// `Gemini-Stealth`, and older lowercase slugs all pass cleanly. Recommended
-/// fleet convention mirrors the CC names: `<Kind>-<Infra>` (`Codex-HSR`,
-/// `Gemini-Stealth`) but this is documentation, not enforcement.
+/// and older lowercase slugs all pass cleanly. Recommended fleet convention
+/// mirrors the CC names: `<Kind>-<Infra>` (`Codex-HSR`) but this is
+/// documentation, not enforcement.
 pub fn validate_agent_name(input: &str) -> Result<&str, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {

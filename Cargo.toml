@@ -51,8 +51,8 @@ dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# HTTP server
-axum = "0.7"
+# HTTP server + ephemeral live-peer WebSocket transport
+axum = { version = "0.7", features = ["ws"] }
 
 # HTTP client (embedding API)
 reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
@@ -64,6 +64,8 @@ anyhow = "1"
 # tower::ServiceExt::oneshot for driving the axum auth middleware + REST
 # handlers in integration tests without binding a TCP listener.
 tower = { version = "0.5", features = ["util"] }
+futures-util = "0.3"
+tokio-tungstenite = "0.24"
 
 [profile.release]
 lto = "thin"

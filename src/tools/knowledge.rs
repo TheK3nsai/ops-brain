@@ -206,7 +206,7 @@ pub struct AddKnowledgeParams {
     /// Skip duplicate detection check. Set to true if you've already seen the warning and want to create anyway.
     pub force: Option<bool>,
     /// Your agent identifier (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "CC-Stealth", "Codex-HSR", "Gemini-Stealth". Immutable
+    /// Examples: "CC-Stealth", "Codex-HSR". Immutable
     /// once set — provenance cannot be rewritten via the tool surface.
     #[serde(alias = "author_cc")]
     pub author: String,

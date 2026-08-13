@@ -1789,6 +1789,7 @@ mod auth_middleware_tests {
             .route("/api/handoff", post(echo_caller))
             .route("/api/pending", get(echo_caller))
             .route("/mcp", post(echo_caller))
+            .route("/live", get(echo_caller))
             .layer(from_fn_with_state(state, bearer_auth))
     }
 
@@ -1912,6 +1913,28 @@ mod auth_middleware_tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_text(resp).await, "Agent:CC-Test");
+    }
+
+    #[tokio::test]
+    async fn agent_token_on_live_is_agent() {
+        let resp = app(state_with(vec![], vec![agent_token()]))
+            .oneshot(req("GET", "/live", Some(AGENT)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_text(resp).await, "Agent:CC-Test");
+    }
+
+    #[tokio::test]
+    async fn machine_token_on_live_is_forbidden() {
+        let resp = app(state_with(
+            vec![machine_token(vec!["create", "read"])],
+            vec![],
+        ))
+        .oneshot(req("GET", "/live", Some(MACH)))
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -2060,6 +2083,157 @@ mod mcp_identity_transport_tests {
                 && body.contains("Codex-Stealth"),
             "identity mismatch must be rejected by the tool handler: {body}"
         );
+
+        server.abort();
+        let _ = server.await;
+    }
+}
+
+// ===== Ephemeral live transport over a real WebSocket =====
+mod live_websocket_transport_tests {
+    use axum::middleware::from_fn_with_state;
+    use futures_util::{SinkExt, StreamExt};
+    use ops_brain::auth::{bearer_auth, AgentToken, AuthState};
+    use ops_brain::live::{live_websocket, LiveEndpointConfig, LiveHub};
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+    use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
+    use uuid::Uuid;
+
+    const MAIN: &str = "main-secret-token-live-0000000000000000000000";
+    const CLAUDE: &str = "agent-secret-token-live-claude-1111111111111";
+    const CODEX: &str = "agent-secret-token-live-codex-22222222222222";
+
+    async fn start_server() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let auth_state = AuthState {
+            main_token: Some(MAIN.to_string()),
+            machine_tokens: Arc::new(vec![]),
+            agent_tokens: Arc::new(vec![
+                AgentToken {
+                    token: CLAUDE.to_string(),
+                    from_agent: "CC-Stealth".to_string(),
+                    client: None,
+                },
+                AgentToken {
+                    token: CODEX.to_string(),
+                    from_agent: "Codex-Stealth".to_string(),
+                    client: None,
+                },
+            ]),
+        };
+        let live_config = LiveEndpointConfig {
+            hub: LiveHub::default(),
+            allowed_hosts: Arc::new(vec!["127.0.0.1".to_string()]),
+        };
+        let app = axum::Router::new()
+            .route("/live", axum::routing::get(live_websocket))
+            .layer(axum::Extension(live_config))
+            .layer(from_fn_with_state(auth_state, bearer_auth));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (addr, server)
+    }
+
+    async fn connect(
+        addr: std::net::SocketAddr,
+        token: &str,
+        adapter: &str,
+        label: &str,
+    ) -> (
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        Uuid,
+    ) {
+        let mut request = format!("ws://{addr}/live").into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let (mut socket, _) = connect_async(request).await.unwrap();
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                json!({
+                    "type": "register",
+                    "protocol": 1,
+                    "adapter": adapter,
+                    "label": label,
+                })
+                .to_string(),
+            ))
+            .await
+            .unwrap();
+        let registered: Value =
+            serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(registered["type"], "registered");
+        let peer_id = Uuid::parse_str(registered["peer"]["peer_id"].as_str().unwrap()).unwrap();
+        (socket, peer_id)
+    }
+
+    #[tokio::test]
+    async fn routes_and_acknowledges_between_two_bound_agents() {
+        let (addr, server) = start_server().await;
+        let (mut claude, _claude_peer) = connect(addr, CLAUDE, "claude_code", "claude-one").await;
+        let (mut codex, codex_peer) = connect(addr, CODEX, "codex", "codex-one").await;
+        let request_id = Uuid::now_v7();
+
+        claude
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                json!({
+                    "type": "send_message",
+                    "request_id": request_id,
+                    "to_peer_id": codex_peer,
+                    "body": "inspect the failing test",
+                    "in_reply_to": null,
+                })
+                .to_string(),
+            ))
+            .await
+            .unwrap();
+
+        let delivered: Value =
+            serde_json::from_str(codex.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(delivered["type"], "message");
+        assert_eq!(delivered["message"]["from_agent"], "CC-Stealth");
+        assert_eq!(delivered["message"]["trust"], "untrusted_peer_input");
+        let message_id = delivered["message"]["message_id"].as_str().unwrap();
+
+        codex
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                json!({
+                    "type": "acknowledge",
+                    "message_id": message_id,
+                    "accepted": true,
+                })
+                .to_string(),
+            ))
+            .await
+            .unwrap();
+        let receipt: Value =
+            serde_json::from_str(claude.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(receipt["type"], "send_result");
+        assert_eq!(receipt["request_id"], request_id.to_string());
+        assert_eq!(receipt["receipt"]["status"], "host_accepted");
+
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn unbound_main_bearer_cannot_upgrade() {
+        let (addr, server) = start_server().await;
+        let mut request = format!("ws://{addr}/live").into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert("authorization", format!("Bearer {MAIN}").parse().unwrap());
+        let error = connect_async(request).await.unwrap_err();
+        let status = match error {
+            tokio_tungstenite::tungstenite::Error::Http(response) => response.status(),
+            other => panic!("expected HTTP rejection, got {other}"),
+        };
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
 
         server.abort();
         let _ = server.await;

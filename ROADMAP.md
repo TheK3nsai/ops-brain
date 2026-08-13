@@ -44,8 +44,11 @@ Non-negotiable. Any idea that violates one of these is DOA.
 - **No scheduling/orchestration features.** cron, systemd timers, Ansible,
   Task Scheduler, and the existing `schedule` skill cover this. ops-brain
   owns memory + coordination, never execution timing.
-- **No session management.** `start_session`/`end_session` were removed in
-  v1.3. Don't add features that require per-session state.
+- **No durable session management.** `start_session`/`end_session` were removed
+  in v1.3. Do not persist sessions, lifecycle state, heartbeats, profiles, or
+  resumable presence. An ephemeral transport connection may expose an opaque
+  live peer while its socket is connected, but it disappears on disconnect and
+  cannot become a second source of truth. Handoffs remain the offline lane.
 - **No new fields on `check_in`.** It's the right size now. Every added field
   dilutes the briefing for every call, for every agent, forever.
 - **No generic wiki / documentation features.** Local docs + GitHub are truth.

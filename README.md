@@ -1,12 +1,12 @@
 # ops-brain
 
-The team bus. An [MCP](https://modelcontextprotocol.io/) server that gives Claude, Codex, Gemini, and other MCP-capable agents a shared coordination surface for the state that must cross sessions, machines, clients, or agent vendors — handoffs, knowledge, and briefings.
+The team bus. An [MCP](https://modelcontextprotocol.io/) server that gives Claude Code and Codex a shared coordination surface for state that must cross sessions, machines, or agent vendors — durable handoffs, bounded knowledge, briefings, and experimental online live messaging.
 
 ops-brain is **not** local truth. Inventory belongs in your config management. Tickets and incidents belong in your ticketing system. Monitoring belongs in your monitoring stack. Reach for ops-brain only when you genuinely need the rest of the team.
 
 ## Who this is for
 
-Solo operators and small teams running **multiple AI agents across multiple machines or vendors** — e.g. a Claude Code instance on your workstation, a Codex CLI on a server, a Gemini CLI on a client site — who keep hitting the same wall: the agents can't see each other's work. ops-brain is the shared surface they coordinate over. If you run a single agent on a single box, you almost certainly don't need this.
+Solo operators and small teams running **multiple AI agents across multiple machines or vendors** — especially Claude Code and Codex sessions that cannot otherwise reach each other. ops-brain is the shared surface they coordinate over. If you run a single agent on a single box, you almost certainly don't need this.
 
 ## Quick start
 
@@ -40,15 +40,16 @@ ops-brain speaks MCP over either stdio (default) or HTTP. Most multi-machine set
 }
 ```
 
-**Codex CLI** and **Gemini CLI** use the same HTTP MCP transport with their own config files — point them at `/mcp` and pass the same bearer token. Once connected, every agent should identify itself with a stable `agent_name` (e.g. `CC-Stealth`, `Codex-HSR`) on its first `check_in` call.
+**Codex CLI** uses the same HTTP MCP transport through its own config — point it at `/mcp` and pass its per-agent bearer token. Once connected, every agent should use a stable `agent_name` such as `CC-Stealth` or `Codex-HSR`.
 
 Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_HOSTS` to your hostname — see the config table below.
 
-## Surface (13 tools)
+## Surface (15 tools)
 
 - **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus`. Cross-agent gotchas, safety warnings, compliance rules, and vendor behavior, with per-agent provenance via `author`. `search_bus` searches knowledge by default and can include handoffs when requested.
 - **Handoffs** — `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit linkage via `commit_hash` on completion + `mark_merged` at integration time. `get_handoff` retrieves one exact handoff without pulling unrelated queue entries.
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
+- **Live peers (experimental)** — `list_live_peers` and `send_live_message` route untrusted text to connected Claude Code and Codex adapters. This lane is best-effort and process-local: nothing is stored or queued, and absent peers require a handoff. Packaged adapters live in [`adapters/claude-channel`](adapters/claude-channel) and [`adapters/codex-app-server`](adapters/codex-app-server). See [`docs/live-messaging.md`](docs/live-messaging.md).
 
 Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context.
 
@@ -96,7 +97,7 @@ The gate is inactive when a knowledge query omits `client_slug`, so it is not a 
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth. Required for `http` transport — a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true` explicitly opts into an open dev server. |
 | `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped, identity-bound tokens for non-interactive `POST /api/handoff` and `GET /api/pending` callers. See [`docs/machine-callers.md`](docs/machine-callers.md). |
-| `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for interactive `/mcp` sessions. These enforce identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
+| `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for interactive `/mcp` and `/live` connections. These enforce identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Explicitly serve HTTP without authentication (dev only — never expose beyond localhost) |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` header values for HTTP transport (rmcp DNS-rebind mitigation). Public deploys behind a reverse proxy must set their hostname. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
@@ -110,13 +111,13 @@ writes and search queries in semantic or hybrid mode. Use a local endpoint or
 disable embeddings when that content must not leave the deployment's trust
 boundary.
 
-Recommended agent names mirror the CC fleet convention: `CC-Stealth`, `Codex-Stealth`, `Gemini-Stealth`, `Codex-HSR`, etc. Names are still free-form slugs for compatibility; ops-brain stores exactly what the caller sends.
+Recommended agent names mirror the CC fleet convention: `CC-Stealth`, `Codex-Stealth`, `Codex-HSR`, etc. Names are still free-form slugs for compatibility; ops-brain stores exactly what the caller sends.
 
 ## Fleet stewardship
 
-Claude Code, Codex CLI, Gemini CLI, and future agents can each have their own onboarding and ergonomics, but ops-brain features should stay fleet-neutral. Use agent-family stewardship to remove real friction for that client family; do not add `cc_*`, `codex_*`, or `gemini_*` server behavior unless the underlying primitive is useful to every fleet.
+Claude Code and Codex each have their own adapter ergonomics, but ops-brain primitives stay fleet-neutral. Family-specific channel/App Server behavior belongs in the local adapter, not in server-side `cc_*` or `codex_*` branches.
 
-## REST endpoints
+## HTTP endpoints
 
 ```
 POST /api/handoff   machine token with `create` scope
@@ -124,12 +125,13 @@ GET  /api/pending   machine token with `read` scope
 POST /api/briefing  main bearer; `{ "type": "daily" | "weekly" }`
 GET  /health        unauthenticated liveness probe
 GET  /ready         unauthenticated database-readiness probe
+GET  /live          agent token; ephemeral WebSocket adapter transport
 ```
 
-Bearer auth protects `/mcp` and the three `/api` endpoints, with machine tokens restricted to their documented endpoints and scopes. `/health` and `/ready` intentionally require no bearer so container healthchecks and reverse proxies can distinguish a running process from a database-ready service. Read the complete machine-caller contract in [`docs/machine-callers.md`](docs/machine-callers.md).
+Bearer auth protects `/mcp`, `/live`, and the three `/api` endpoints. Agent tokens can reach `/mcp` and `/live`; machine tokens remain restricted to their documented REST endpoints. `/health` and `/ready` intentionally require no bearer so container healthchecks and reverse proxies can distinguish a running process from a database-ready service.
 
 Production compose does not publish port 3000 on the host; the service is reached through the Docker networks and the reverse proxy. For local production-host checks, run health probes inside the container or use the public reverse-proxy URL.
 
 ## Status
 
-ops-brain is designed for solo operators and small trusted teams coordinating agents across hosts and vendors. v5.0.0 is the current shape: a 13-tool MCP focused on handoffs, bounded shared knowledge, and check-in, plus narrow machine-ingestion, wake-polling, and briefing REST endpoints. See `CLAUDE.md` for architecture constraints and `GOTCHAS.md` for the load-bearing footguns.
+ops-brain is designed for solo operators and small trusted teams coordinating Claude Code and Codex across hosts. The working core remains durable handoffs, bounded shared knowledge, check-in, and narrow REST endpoints; the 15-tool development surface also contains an experimental online-only live lane with packaged host adapters.

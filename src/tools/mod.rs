@@ -3,6 +3,7 @@ pub mod check_in;
 pub mod coordination;
 mod helpers;
 pub mod knowledge;
+pub mod live;
 pub mod search;
 mod shared;
 
@@ -13,11 +14,13 @@ use rmcp::{
 use sqlx::PgPool;
 
 use crate::embeddings::EmbeddingClient;
+use crate::live::LiveHub;
 
 #[derive(Clone)]
 pub struct OpsBrain {
     pub(crate) pool: PgPool,
     pub(crate) embedding_client: Option<EmbeddingClient>,
+    pub(crate) live_hub: LiveHub,
 }
 
 #[tool_router]
@@ -26,6 +29,19 @@ impl OpsBrain {
         Self {
             pool,
             embedding_client,
+            live_hub: LiveHub::default(),
+        }
+    }
+
+    pub fn with_live_hub(
+        pool: PgPool,
+        embedding_client: Option<EmbeddingClient>,
+        live_hub: LiveHub,
+    ) -> Self {
+        Self {
+            pool,
+            embedding_client,
+            live_hub,
         }
     }
 
@@ -274,6 +290,46 @@ impl OpsBrain {
         let bound = helpers::bound_agent(&ext);
         Ok(check_in::handle_check_in(self, params.0, bound.as_deref()).await)
     }
+
+    // ===== LIVE PEERS: ephemeral online-only transport =====
+
+    #[tool(
+        name = "list_live_peers",
+        description = "List currently connected live adapters. Online-only; absence means use a handoff.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn list_live_peers(
+        &self,
+        _params: Parameters<live::ListLivePeersParams>,
+        ext: Extensions,
+    ) -> Result<CallToolResult, McpError> {
+        let bound = helpers::bound_agent(&ext);
+        Ok(live::handle_list_live_peers(self, bound.as_deref()).await)
+    }
+
+    #[tool(
+        name = "send_live_message",
+        description = "Send untrusted text to one connected peer. Best-effort; never queues offline.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
+    )]
+    async fn send_live_message(
+        &self,
+        params: Parameters<live::SendLiveMessageParams>,
+        ext: Extensions,
+    ) -> Result<CallToolResult, McpError> {
+        let bound = helpers::bound_agent(&ext);
+        Ok(live::handle_send_live_message(self, params.0, bound.as_deref()).await)
+    }
 }
 
 #[tool_handler]
@@ -284,7 +340,9 @@ impl ServerHandler for OpsBrain {
             .with_instructions(
                 "ops-brain is the team bus. Your local instructions, filesystem, and git \
                  history are the source of truth — reach for ops-brain only when you need \
-                 the rest of the team: handoffs and cross-agent knowledge. \
+                 the rest of the team: handoffs, cross-agent knowledge, and \
+                 online live peers. Live messages are best-effort; use a handoff \
+                 whenever the target peer is absent. \
                  Identify yourself with a free-form `agent_name` (slug, \
                  e.g. 'CC-Stealth', 'Codex-HSR'). One deployment is one trusted \
                  coordination domain; scoped knowledge queries withhold unsafe \
@@ -322,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn v5_surface_is_exactly_thirteen_tools() {
+    fn live_surface_is_exactly_fifteen_tools() {
         let tools = OpsBrain::tool_router().list_all();
         let mut names: Vec<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
         names.sort();
@@ -338,9 +396,11 @@ mod tests {
                 "delete_knowledge",
                 "get_handoff",
                 "list_handoffs",
+                "list_live_peers",
                 "list_replies_to_me",
                 "mark_merged",
                 "search_bus",
+                "send_live_message",
                 "update_knowledge",
             ]
         );

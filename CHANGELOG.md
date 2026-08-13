@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Experimental — ephemeral Claude↔Codex live messaging
+
+- **Claude Code ↔ Codex live lane.** Added identity-bound `/live` WebSocket
+  routing plus `list_live_peers` and `send_live_message` (13 → 15 MCP tools).
+  Peers and messages are process-local and online-only: no database migration,
+  session lifecycle, history, replay, or offline queue. Handoffs remain the
+  durable lane. Packaged Claude Channel and Codex App Server adapters are
+  included under `adapters/`.
+- **Real cross-client smoke passed.** A Codex 0.147.0 TUI connected through App
+  Server sent to Claude Code 2.1.228; Claude received the Channel event, replied
+  through its live tool, and Codex displayed the returned marker. Both adapter
+  injections produced `host_accepted` receipts.
+- **Honest delivery receipts.** `routed` means the message reached the target
+  adapter queue; `host_accepted` requires an ACK after host injection. Neither
+  claims the model read or acted. Exact target ACK binding, bounded queues,
+  size/rate limits, duplicate suppression, and untrusted-input metadata are
+  enforced in memory.
+- **Host-specific adapters stay local.** The wire contract maps inbound text to
+  Claude Code Channels or Codex App Server while the server remains a generic
+  authenticated router. Agent tokens now reach `/mcp` and `/live`; machine
+  tokens remain REST-only, and the unbound main bearer cannot use live routing.
+
 ## [5.0.0] — 2026-08-11
 
 ### Changed — MCP surface and trust contract

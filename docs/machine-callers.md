@@ -13,7 +13,7 @@ Two endpoints, and only these two, are reachable with a machine token:
 | `POST /api/handoff` | `create` | File a handoff (idempotent via `dedupe_key`) |
 | `GET /api/pending` | `read` | Poll an agent's open action queue (wake shims) |
 
-Everything else — `/mcp`, `/api/briefing` — rejects machine tokens with 403.
+Everything else — `/mcp`, `/live`, `/api/briefing` — rejects machine tokens with 403.
 
 ## Scope boundaries (read first)
 

@@ -2,7 +2,7 @@ use clap::Parser;
 use ops_brain::{
     api, auth,
     config::{Command, Config},
-    db, embeddings,
+    db, embeddings, live,
     tools::OpsBrain,
 };
 use rmcp::service::ServiceExt;
@@ -67,11 +67,10 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let server = OpsBrain::new(pool.clone(), embedding_client.clone());
-
     match config.transport.as_str() {
         "stdio" => {
             tracing::info!("Starting ops-brain MCP server (stdio transport)");
+            let server = OpsBrain::new(pool.clone(), embedding_client.clone());
             let transport = rmcp::transport::io::stdio();
             let service = server.serve(transport).await?;
             service.waiting().await?;
@@ -86,8 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
             // rmcp's SessionConfig::DEFAULT_KEEP_ALIVE is 300s — sessions
             // get evicted server-side after 5 minutes of idle, and existing
-            // MCP clients (Claude Code's rmcp HTTP client, Gemini CLI's Node
-            // SDK) don't auto-reinitialize on the resulting 404. Bumping
+            // MCP clients don't auto-reinitialize on the resulting 404. Bumping
             // to 1h covers normal coding pauses while still reaping genuine
             // zombies in reasonable time.
             let mut session_manager = LocalSessionManager::default();
@@ -136,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_default();
             if !parsed_hosts.is_empty() {
                 tracing::info!("HTTP allowed_hosts: {:?}", parsed_hosts);
-                http_config = http_config.with_allowed_hosts(parsed_hosts);
+                http_config = http_config.with_allowed_hosts(parsed_hosts.clone());
             } else if config.allowed_hosts.is_some() {
                 tracing::warn!(
                     "OPS_BRAIN_ALLOWED_HOSTS set but empty/whitespace; using loopback default. \
@@ -148,9 +146,20 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
 
+            // One process-local hub is shared by every MCP service instance
+            // and the WebSocket endpoint. It is intentionally discarded on
+            // restart; handoffs remain the only durable/offline lane.
+            let live_hub = live::LiveHub::default();
+            let live_hub_mcp = live_hub.clone();
             let embedding_client_http = embedding_client.clone();
             let mcp_service = StreamableHttpService::new(
-                move || Ok(OpsBrain::new(pool.clone(), embedding_client_http.clone())),
+                move || {
+                    Ok(OpsBrain::with_live_hub(
+                        pool.clone(),
+                        embedding_client_http.clone(),
+                        live_hub_mcp.clone(),
+                    ))
+                },
                 session_manager,
                 http_config,
             );
@@ -178,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
             // Per-agent tokens: identity-bound credentials for interactive MCP
-            // sessions. Cross-checked against the main + machine secrets so a
+            // and live connections. Cross-checked against the main + machine secrets so a
             // shared secret can't blur the credential classes. Parse failures
             // abort startup — a dropped agent token would read as "identity
             // enforced" while that agent still files unbound.
@@ -231,15 +240,31 @@ async fn main() -> anyhow::Result<()> {
                 .route("/pending", axum::routing::get(api::list_pending))
                 .with_state(api_state.clone());
 
+            let live_allowed_hosts = if parsed_hosts.is_empty() {
+                vec![
+                    "localhost".to_string(),
+                    "127.0.0.1".to_string(),
+                    "[::1]".to_string(),
+                ]
+            } else {
+                parsed_hosts
+            };
+            let live_config = live::LiveEndpointConfig {
+                hub: live_hub,
+                allowed_hosts: Arc::new(live_allowed_hosts),
+            };
+
             // Outer .layer wraps everything below — auth runs BEFORE rmcp's
             // host check inside /mcp. Don't reorder: unauthenticated callers
             // shouldn't be able to enumerate which Host values are accepted.
             let app = axum::Router::new()
                 .route("/health", axum::routing::get(|| async { "OK" }))
                 .route("/ready", axum::routing::get(api::ready))
+                .route("/live", axum::routing::get(live::live_websocket))
                 .with_state(api_state)
                 .nest("/api", api_routes)
                 .nest_service("/mcp", mcp_service)
+                .layer(axum::Extension(live_config))
                 .layer(axum::middleware::from_fn_with_state(
                     auth_state,
                     auth::bearer_auth,

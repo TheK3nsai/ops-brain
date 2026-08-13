@@ -1,6 +1,7 @@
 # Per-agent tokens
 
-Interactive agents reach ops-brain over an MCP session (`/mcp`). Historically
+Interactive agents reach ops-brain over MCP (`/mcp`) and may attach a local
+Claude Code/Codex adapter to the ephemeral WebSocket (`/live`). Historically
 every agent authenticated with a single shared main bearer, so `from_agent` on
 a handoff and `author` on a knowledge entry were caller-supplied strings with
 nothing behind them — any holder of the shared bearer could file as any slug.
@@ -13,9 +14,9 @@ Per-agent tokens close it. Each interactive agent gets its own token with a
 cannot appear on the bus without a token the operator minted for it, and one
 exposure rotates one host instead of the whole fleet.
 
-This is the MCP-side sibling of [machine callers](machine-callers.md). Machine
-tokens are REST-only and never reach `/mcp`; agent tokens are `/mcp`-only and
-never reach the REST endpoints. Both are scoped, minted secrets distinct from
+This is the interactive sibling of [machine callers](machine-callers.md).
+Machine tokens are REST-only and never reach `/mcp` or `/live`; agent tokens
+reach `/mcp` and `/live` but never REST. Both are minted secrets distinct from
 the main bearer and from each other.
 
 ## What the binding enforces
@@ -26,16 +27,17 @@ the main bearer and from each other.
 | write | `add_knowledge` | `author` **must** equal the token's slug, else rejected |
 | read | `check_in` | served for any `agent_name`, but a mismatch is **warn-logged** |
 | read | `list_replies_to_me` | served for any `agent_name`, but a mismatch is **warn-logged** |
+| live | `/live` + `send_live_message` | peer provenance and sender peer ownership come from the token binding; main bearer/stdio cannot register or send live |
 
 Writes fail loud on a mismatch — better to break than to file under the wrong
 identity. Reads stay permissive because cross-agent reads are legitimate (an
 interactive session triaging a peer's queue); the warn-log makes "token X read
 Y's queue" visible without blocking it.
 
-The **main bearer stays unbound** (`CallerClass::Full`) — full surface, no
-identity enforcement. It is the operator break-glass: use it to act as any
-agent during migrations or incident response. Keep it out of routine agent
-configs once per-agent tokens are deployed.
+The **main bearer stays unbound** (`CallerClass::Full`) — full durable surface,
+no identity enforcement. It is the operator break-glass for migrations or
+incident response, but cannot register a live peer or call the live tools.
+Keep it out of routine agent configs once per-agent tokens are deployed.
 
 ### Scope boundary: provenance, not per-object ownership
 
@@ -56,8 +58,9 @@ of a per-agent token is now per-host. If tamper-containment ever becomes a real
 need, it is a separate, deliberate design step (ownership checks against the
 bound identity), not a silent extension of this feature.
 
-Over the **stdio transport** (local dev) there is no HTTP auth layer, so calls
-are unbound and enforcement is inert — correct, because stdio is trusted-local.
+Over the **stdio transport** (local dev) there is no HTTP auth layer, so durable
+write bindings are inert — correct, because stdio is trusted-local. Live tools
+reject stdio because an unbound caller cannot establish live provenance.
 
 ## Auth: agent tokens
 
@@ -78,7 +81,7 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
   malformed entry (a silently dropped token would read as "identity enforced"
   while that agent still files unbound).
 - `from_agent` — the slug this token is locked to. Use the fleet convention
-  (`CC-Stealth`, `Codex-HSR`, `Gemini-CPA`, …).
+  (`CC-Stealth`, `Codex-HSR`, …).
 - `client` — informational, logged for audit. Not yet enforced on MCP calls
   (tools carry an explicit `client_slug`); reserved so a future per-client MCP
   binding needs no config change.
@@ -99,9 +102,9 @@ agent tokens configured count=1 bindings=["CC-Stealth (client=stealth)"]
 ## Client setup
 
 Point the agent's MCP client `Authorization: Bearer <secret>` at its own token
-instead of the shared main bearer. Nothing else changes — the tool surface is
-byte-identical (identity rides the transport, not a tool parameter), so no
-schema or client-code change is needed.
+instead of the shared main bearer. Identity rides the transport for durable
+writes. The live adapter uses the same token on `/live` and receives its opaque
+peer ID when it registers.
 
 ## Rotation
 

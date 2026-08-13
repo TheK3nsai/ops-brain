@@ -1,0 +1,21 @@
+{
+  "name": "@ops-brain/codex-app-server-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ephemeral ops-brain live messaging adapter for Codex App Server",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "ops-brain-codex-live": "src/index.mjs"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test",
+    "check": "node --check src/index.mjs && node --check src/bridge.mjs && node --check src/live-client.mjs && node --check src/app-server-client.mjs && node --check src/control.mjs && node --check src/protocol.mjs"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  }
+}
