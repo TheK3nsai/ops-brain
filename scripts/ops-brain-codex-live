@@ -25,7 +25,8 @@ per App Server port.
 
 Environment:
   OPS_BRAIN_LIVE_URL                 required wss://host/live endpoint
-  OPS_BRAIN_AGENT_TOKEN_FILE        identity-bound token file (600 or 400)
+  OPS_BRAIN_AGENT_TOKEN_FILE        identity-bound token file (600 or 400;
+                                    default ~/.config/ops-brain/live-agent-token)
   OPS_BRAIN_CODEX_LABEL              optional non-sensitive peer label
   OPS_BRAIN_CODEX_APP_SERVER_PORT    loopback port (default 4500)
   OPS_BRAIN_LIVE_STATE_DIR           adapter log directory
@@ -58,7 +59,10 @@ fi
 
 [[ -n $LIVE_URL ]] || { echo 'OPS_BRAIN_LIVE_URL is required' >&2; exit 2; }
 [[ -f $ADAPTER ]] || { echo "adapter missing: $ADAPTER" >&2; exit 2; }
-[[ -f $TOKEN_FILE ]] || { echo "token file missing: $TOKEN_FILE" >&2; exit 2; }
+[[ -f $TOKEN_FILE ]] || {
+    echo "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path" >&2
+    exit 2
+}
 if [[ ! $APP_PORT =~ ^[0-9]+$ ]] || ((APP_PORT < 1024 || APP_PORT > 65535)); then
     echo 'OPS_BRAIN_CODEX_APP_SERVER_PORT must be 1024-65535' >&2
     exit 2

@@ -18,7 +18,8 @@ Launch Claude Code with the ops-brain development Channel enabled.
 
 Environment:
   OPS_BRAIN_LIVE_URL          required wss://host/live endpoint
-  OPS_BRAIN_AGENT_TOKEN_FILE identity-bound token file (mode 600 or 400)
+  OPS_BRAIN_AGENT_TOKEN_FILE identity-bound token file (mode 600 or 400;
+                             default ~/.config/ops-brain/live-agent-token)
   OPS_BRAIN_LIVE_LABEL        optional non-sensitive peer label
 
 The MCP config passes only the protected token-file path. The bearer itself is
@@ -53,7 +54,10 @@ fi
 
 [[ -n $LIVE_URL ]] || { echo 'OPS_BRAIN_LIVE_URL is required' >&2; exit 2; }
 [[ -f $ADAPTER ]] || { echo "adapter missing: $ADAPTER" >&2; exit 2; }
-[[ -f $TOKEN_FILE ]] || { echo "token file missing: $TOKEN_FILE" >&2; exit 2; }
+[[ -f $TOKEN_FILE ]] || {
+    echo "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path" >&2
+    exit 2
+}
 token_mode=$(stat -c '%a' "$TOKEN_FILE")
 [[ $token_mode == 600 || $token_mode == 400 ]] || {
     echo "$TOKEN_FILE has mode $token_mode; require 600 or 400" >&2

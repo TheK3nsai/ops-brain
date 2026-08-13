@@ -8,6 +8,10 @@ It complements handoffs; it does not replace them.
   resumed, replayed, or queued.
 - **Handoff:** durable/offline coordination with an explicit lifecycle.
 
+A sender may disconnect immediately after a successful send when it only needs
+one-way delivery. If it expects a live reply, its adapter must remain connected;
+once that peer disconnects, the reply route no longer exists.
+
 The distinction is a hard product boundary. `/live` exposes transport
 connections, not server-owned sessions, profiles, heartbeats, or presence
 history. One server process owns one in-memory hub; deployments with multiple
@@ -114,6 +118,9 @@ development-channel opt-in and may be disabled by organization policy.
 For a foreground operator launch with token-file validation, use
 `scripts/ops-brain-claude-live --status` followed by
 `scripts/ops-brain-claude-live -- [CLAUDE_ARGS...]`.
+Both launch wrappers default `OPS_BRAIN_AGENT_TOKEN_FILE` to
+`~/.config/ops-brain/live-agent-token`; set it explicitly when the protected
+per-agent bearer uses another filename.
 
 ## Codex adapter
 
