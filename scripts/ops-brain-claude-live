@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Launch Claude Code with the local ops-brain Channel adapter.
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+ADAPTER="$REPO_DIR/adapters/claude-channel/src/main.js"
+TOKEN_FILE="${OPS_BRAIN_AGENT_TOKEN_FILE:-$HOME/.config/ops-brain/live-agent-token}"
+LIVE_URL="${OPS_BRAIN_LIVE_URL:-}"
+LABEL="${OPS_BRAIN_LIVE_LABEL:-claude-code}"
+
+usage() {
+    cat <<'EOF'
+Usage: ops-brain-claude-live [--status|--dry-run] [-- CLAUDE_ARGS...]
+
+Launch Claude Code with the ops-brain development Channel enabled.
+
+Environment:
+  OPS_BRAIN_LIVE_URL          required wss://host/live endpoint
+  OPS_BRAIN_AGENT_TOKEN_FILE identity-bound token file (mode 600 or 400)
+  OPS_BRAIN_LIVE_LABEL        optional non-sensitive peer label
+
+The MCP config passes only the protected token-file path. The bearer itself is
+never placed in Claude's environment, the MCP config, or a command argument.
+Processes running as the same OS user can still read a mode-600 file.
+EOF
+}
+
+mode=run
+case "${1:-}" in
+    --status) mode=status; shift ;;
+    --dry-run) mode=dry; shift ;;
+    -h|--help) usage; exit 0 ;;
+esac
+[[ "${1:-}" == "--" ]] && shift
+
+token_status=missing
+if [[ -f $TOKEN_FILE ]]; then
+    token_mode=$(stat -c '%a' "$TOKEN_FILE")
+    token_status="present (mode $token_mode)"
+fi
+
+if [[ $mode == status ]]; then
+    printf 'adapter: %s\n' "$ADAPTER"
+    printf 'url:     %s\n' "${LIVE_URL:-<unset>}"
+    printf 'label:   %s\n' "$LABEL"
+    printf 'token:   %s — %s\n' "$TOKEN_FILE" "$token_status"
+    printf 'claude:  %s\n' "$(command -v claude || echo '<missing>')"
+    printf 'node:    %s\n' "$(command -v node || echo '<missing>')"
+    exit 0
+fi
+
+[[ -n $LIVE_URL ]] || { echo 'OPS_BRAIN_LIVE_URL is required' >&2; exit 2; }
+[[ -f $ADAPTER ]] || { echo "adapter missing: $ADAPTER" >&2; exit 2; }
+[[ -f $TOKEN_FILE ]] || { echo "token file missing: $TOKEN_FILE" >&2; exit 2; }
+token_mode=$(stat -c '%a' "$TOKEN_FILE")
+[[ $token_mode == 600 || $token_mode == 400 ]] || {
+    echo "$TOKEN_FILE has mode $token_mode; require 600 or 400" >&2
+    exit 2
+}
+command -v node >/dev/null || { echo 'node is required' >&2; exit 2; }
+command -v claude >/dev/null || { echo 'claude is required' >&2; exit 2; }
+
+token_check=$(<"$TOKEN_FILE")
+[[ -n $token_check && $token_check != *$'\n'* && $token_check != *$'\r'* ]] || {
+    echo 'token file must contain exactly one non-empty line' >&2
+    exit 2
+}
+unset token_check
+
+mcp_config=$(node -e '
+  const [adapter, url, label] = process.argv.slice(1);
+  process.stdout.write(JSON.stringify({mcpServers:{"ops-brain-live":{
+    command:"node", args:[adapter], env:{OPS_BRAIN_LIVE_URL:url, OPS_BRAIN_LIVE_LABEL:label,
+      OPS_BRAIN_AGENT_TOKEN_FILE:process.argv[4]}
+  }}}));
+' "$ADAPTER" "$LIVE_URL" "$LABEL" "$TOKEN_FILE")
+
+if [[ $mode == dry ]]; then
+    echo "would launch: claude --mcp-config <generated-redacted-config> --dangerously-load-development-channels server:ops-brain-live $*"
+    exit 0
+fi
+
+exec claude "$@" \
+    --mcp-config "$mcp_config" \
+    --dangerously-load-development-channels server:ops-brain-live

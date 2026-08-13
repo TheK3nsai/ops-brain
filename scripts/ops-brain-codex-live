@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# Launch a Codex TUI, local App Server, and ops-brain live adapter together.
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+ADAPTER_DIR="$REPO_DIR/adapters/codex-app-server"
+ADAPTER="$ADAPTER_DIR/src/index.mjs"
+TOKEN_FILE="${OPS_BRAIN_AGENT_TOKEN_FILE:-$HOME/.config/ops-brain/live-agent-token}"
+LIVE_URL="${OPS_BRAIN_LIVE_URL:-}"
+LABEL="${OPS_BRAIN_CODEX_LABEL:-codex-live}"
+APP_PORT="${OPS_BRAIN_CODEX_APP_SERVER_PORT:-4500}"
+APP_URL="ws://127.0.0.1:$APP_PORT"
+STATE_DIR="${OPS_BRAIN_LIVE_STATE_DIR:-$HOME/.local/state/ops-brain-live}"
+LOG_FILE=''
+
+usage() {
+    cat <<'EOF'
+Usage: ops-brain-codex-live [--status|--dry-run] [-- CODEX_ARGS...]
+
+Launch one Codex TUI connected to a loopback App Server and the ops-brain live
+adapter. The wrapper owns and cleans up both helper processes. Run one wrapper
+per App Server port.
+
+Environment:
+  OPS_BRAIN_LIVE_URL                 required wss://host/live endpoint
+  OPS_BRAIN_AGENT_TOKEN_FILE        identity-bound token file (600 or 400)
+  OPS_BRAIN_CODEX_LABEL              optional non-sensitive peer label
+  OPS_BRAIN_CODEX_APP_SERVER_PORT    loopback port (default 4500)
+  OPS_BRAIN_LIVE_STATE_DIR           adapter log directory
+
+The token is exported only to the adapter process. It never appears in command
+arguments or logs.
+EOF
+}
+
+mode=run
+case "${1:-}" in
+    --status) mode=status; shift ;;
+    --dry-run) mode=dry; shift ;;
+    -h|--help) usage; exit 0 ;;
+esac
+[[ "${1:-}" == "--" ]] && shift
+
+if [[ $mode == status ]]; then
+    printf 'adapter:    %s\n' "$ADAPTER"
+    printf 'live url:   %s\n' "${LIVE_URL:-<unset>}"
+    printf 'label:      %s\n' "$LABEL"
+    printf 'app server: %s\n' "$APP_URL"
+    printf 'token:      %s — ' "$TOKEN_FILE"
+    if [[ -f $TOKEN_FILE ]]; then printf 'present (mode %s)\n' "$(stat -c '%a' "$TOKEN_FILE")"; else echo missing; fi
+    printf 'ready:      '
+    if curl -sf --max-time 1 "http://127.0.0.1:$APP_PORT/readyz" >/dev/null 2>&1; then echo yes; else echo no; fi
+    printf 'logs:       %s/codex-adapter.*.log\n' "$STATE_DIR"
+    exit 0
+fi
+
+[[ -n $LIVE_URL ]] || { echo 'OPS_BRAIN_LIVE_URL is required' >&2; exit 2; }
+[[ -f $ADAPTER ]] || { echo "adapter missing: $ADAPTER" >&2; exit 2; }
+[[ -f $TOKEN_FILE ]] || { echo "token file missing: $TOKEN_FILE" >&2; exit 2; }
+if [[ ! $APP_PORT =~ ^[0-9]+$ ]] || ((APP_PORT < 1024 || APP_PORT > 65535)); then
+    echo 'OPS_BRAIN_CODEX_APP_SERVER_PORT must be 1024-65535' >&2
+    exit 2
+fi
+token_mode=$(stat -c '%a' "$TOKEN_FILE")
+[[ $token_mode == 600 || $token_mode == 400 ]] || {
+    echo "$TOKEN_FILE has mode $token_mode; require 600 or 400" >&2
+    exit 2
+}
+command -v node >/dev/null || { echo 'node is required' >&2; exit 2; }
+command -v codex >/dev/null || { echo 'codex is required' >&2; exit 2; }
+command -v curl >/dev/null || { echo 'curl is required' >&2; exit 2; }
+
+OPS_BRAIN_AGENT_TOKEN=$(<"$TOKEN_FILE")
+[[ -n $OPS_BRAIN_AGENT_TOKEN && $OPS_BRAIN_AGENT_TOKEN != *$'\n'* && $OPS_BRAIN_AGENT_TOKEN != *$'\r'* ]] || {
+    echo 'token file must contain exactly one non-empty line' >&2
+    exit 2
+}
+
+if [[ $mode == dry ]]; then
+    echo "would launch App Server at $APP_URL"
+    echo "would launch Codex live adapter for ${LIVE_URL} (token redacted)"
+    echo "would launch: codex --remote $APP_URL $*"
+    exit 0
+fi
+
+umask 077
+if [[ -L $STATE_DIR || (-e $STATE_DIR && ! -d $STATE_DIR) ]]; then
+    echo "state path must be a real directory, not a symlink: $STATE_DIR" >&2
+    exit 2
+fi
+mkdir -p -- "$STATE_DIR"
+if [[ -L $STATE_DIR || ! -d $STATE_DIR ]]; then
+    echo "state directory validation failed: $STATE_DIR" >&2
+    exit 2
+fi
+LOG_FILE=$(mktemp -- "$STATE_DIR/codex-adapter.XXXXXX.log")
+
+app_pid=''
+adapter_pid=''
+cleanup() {
+    trap - EXIT INT TERM
+    stop_child "$adapter_pid"
+    stop_child "$app_pid"
+}
+stop_child() {
+    local pid="$1"
+    [[ $pid =~ ^[0-9]+$ ]] || return 0
+    kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; return 0; }
+    kill "$pid" 2>/dev/null || true
+    for _ in {1..30}; do
+        kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; return 0; }
+        sleep 0.1
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+if curl -sf --max-time 1 "http://127.0.0.1:$APP_PORT/readyz" >/dev/null 2>&1; then
+    echo "port $APP_PORT already hosts an App Server; choose another OPS_BRAIN_CODEX_APP_SERVER_PORT" >&2
+    exit 2
+fi
+
+codex app-server --listen "$APP_URL" >>"$LOG_FILE" 2>&1 &
+app_pid=$!
+ready=false
+for _ in {1..50}; do
+    if curl -sf --max-time 1 "http://127.0.0.1:$APP_PORT/readyz" >/dev/null 2>&1; then ready=true; break; fi
+    kill -0 "$app_pid" 2>/dev/null || break
+    sleep 0.1
+done
+[[ $ready == true ]] || { echo "App Server failed to become ready; see $LOG_FILE" >&2; exit 1; }
+
+(
+    export OPS_BRAIN_LIVE_URL="$LIVE_URL"
+    export OPS_BRAIN_AGENT_TOKEN
+    export OPS_BRAIN_CODEX_APP_SERVER_URL="$APP_URL"
+    export OPS_BRAIN_CODEX_LABEL="$LABEL"
+    exec node "$ADAPTER" </dev/null >>"$LOG_FILE" 2>&1
+) &
+adapter_pid=$!
+unset OPS_BRAIN_AGENT_TOKEN
+
+codex --remote "$APP_URL" "$@"

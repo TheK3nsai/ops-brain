@@ -1,7 +1,9 @@
+import { readFileSync, statSync } from 'node:fs'
+
 const LABEL_RE = /^[A-Za-z0-9._-]+$/
 
 export function loadConfig(env = process.env) {
-  const token = required(env.OPS_BRAIN_AGENT_TOKEN, 'OPS_BRAIN_AGENT_TOKEN')
+  const token = loadToken(env)
   if (/\r|\n/.test(token)) {
     throw new Error('OPS_BRAIN_AGENT_TOKEN must be a single line')
   }
@@ -15,6 +17,28 @@ export function loadConfig(env = process.env) {
   }
 
   return Object.freeze({ url: url.toString(), token, label })
+}
+
+function loadToken(env) {
+  const inline = env.OPS_BRAIN_AGENT_TOKEN?.trim()
+  const file = env.OPS_BRAIN_AGENT_TOKEN_FILE?.trim()
+  if (inline && file) {
+    throw new Error('set only one of OPS_BRAIN_AGENT_TOKEN or OPS_BRAIN_AGENT_TOKEN_FILE')
+  }
+  if (!file) return required(inline, 'OPS_BRAIN_AGENT_TOKEN')
+
+  let stats
+  let value
+  try {
+    stats = statSync(file)
+    value = readFileSync(file, 'utf8').trim()
+  } catch {
+    throw new Error('OPS_BRAIN_AGENT_TOKEN_FILE must be a readable regular file')
+  }
+  if (!stats.isFile() || (stats.mode & 0o077) !== 0) {
+    throw new Error('OPS_BRAIN_AGENT_TOKEN_FILE must be a regular file inaccessible to group/other')
+  }
+  return required(value, 'OPS_BRAIN_AGENT_TOKEN_FILE')
 }
 
 function required(value, name) {

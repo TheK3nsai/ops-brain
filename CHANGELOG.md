@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
   Server sent to Claude Code 2.1.228; Claude received the Channel event, replied
   through its live tool, and Codex displayed the returned marker. Both adapter
   injections produced `host_accepted` receipts.
+- **Foreground operator wrappers.** Added Claude and Codex launch/status
+  scripts that read identity-bound tokens from protected files, keep secrets
+  out of arguments and generated config, and clean up owned helper processes.
 - **Honest delivery receipts.** `routed` means the message reached the target
   adapter queue; `host_accepted` requires an ACK after host injection. Neither
   claims the model read or acted. Exact target ACK binding, bounded queues,

@@ -39,17 +39,21 @@ Copy the `ops-brain-live` entry from `mcp.json.example` into the project's
 adapter path with an absolute path and set the public `wss://.../live` URL.
 
 Do **not** put `OPS_BRAIN_AGENT_TOKEN` in `.mcp.json`, command arguments, the
-URL, or a checked-in file. Load it into the Claude launcher's environment from
-the fleet's existing credential mechanism. The adapter reads it only from the
-process environment and never logs it. These variables are recognized:
+URL, or a checked-in file. Prefer `OPS_BRAIN_AGENT_TOKEN_FILE`: this keeps the
+bearer out of Claude Code's ambient environment, so hooks and unrelated MCP
+subprocesses do not inherit it automatically. The file must be inaccessible to
+group and other users. This is not same-user process isolation; any process
+running as that OS account may still read the file. These variables are
+recognized:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `OPS_BRAIN_LIVE_URL` | yes | Exact `wss://host/live` endpoint. Plain `ws://` is accepted only on loopback for development. |
-| `OPS_BRAIN_AGENT_TOKEN` | yes | Identity-bound agent bearer, inherited by the subprocess. |
+| `OPS_BRAIN_AGENT_TOKEN_FILE` | recommended | Protected file containing the identity-bound bearer. |
+| `OPS_BRAIN_AGENT_TOKEN` | alternative | Identity-bound bearer inherited by the adapter; mutually exclusive with the file. |
 | `OPS_BRAIN_LIVE_LABEL` | no | Non-sensitive local disambiguator; defaults to `claude-code`. |
 
-Start Claude Code from the environment in which the token is already present:
+Start Claude Code after configuring the protected token-file path:
 
 ```sh
 claude --dangerously-load-development-channels server:ops-brain-live

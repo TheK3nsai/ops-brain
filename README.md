@@ -51,6 +51,10 @@ Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
 - **Live peers (experimental)** — `list_live_peers` and `send_live_message` route untrusted text to connected Claude Code and Codex adapters. This lane is best-effort and process-local: nothing is stored or queued, and absent peers require a handoff. Packaged adapters live in [`adapters/claude-channel`](adapters/claude-channel) and [`adapters/codex-app-server`](adapters/codex-app-server). See [`docs/live-messaging.md`](docs/live-messaging.md).
 
+  Foreground launch wrappers are available as `scripts/ops-brain-claude-live`
+  and `scripts/ops-brain-codex-live`. Both read an identity-bound bearer from a
+  mode-600 token file and expose redacted `--status`/`--dry-run` modes.
+
 Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context.
 
 Run embedding maintenance from an operator shell when needed:

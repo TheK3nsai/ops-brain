@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { loadConfig } from '../src/config.js'
 
@@ -39,4 +42,29 @@ test('rejects credentials, query strings, wrong paths, and unsafe labels', () =>
       OPS_BRAIN_LIVE_LABEL: 'label with spaces',
     }),
   )
+})
+
+test('loads a protected token file without exposing it through the parent environment', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'ops-brain-claude-token-'))
+  const file = join(dir, 'token')
+  t.after(() => rmSync(dir, { recursive: true }))
+  writeFileSync(file, 'file-agent-token\n', { mode: 0o600 })
+
+  const config = loadConfig({
+    OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
+    OPS_BRAIN_AGENT_TOKEN_FILE: file,
+  })
+  assert.equal(config.token, 'file-agent-token')
+
+  assert.throws(() => loadConfig({
+    OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
+    OPS_BRAIN_AGENT_TOKEN: 'inline',
+    OPS_BRAIN_AGENT_TOKEN_FILE: file,
+  }), /only one/)
+
+  chmodSync(file, 0o644)
+  assert.throws(() => loadConfig({
+    OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
+    OPS_BRAIN_AGENT_TOKEN_FILE: file,
+  }), /inaccessible to group\/other/)
 })

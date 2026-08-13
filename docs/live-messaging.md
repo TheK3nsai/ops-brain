@@ -111,6 +111,9 @@ The implementation and setup guide are in
 [`adapters/claude-channel`](../adapters/claude-channel). It has been exercised
 against Claude Code 2.1.228; custom Channels still require Anthropic's explicit
 development-channel opt-in and may be disabled by organization policy.
+For a foreground operator launch with token-file validation, use
+`scripts/ops-brain-claude-live --status` followed by
+`scripts/ops-brain-claude-live -- [CLAUDE_ARGS...]`.
 
 ## Codex adapter
 
@@ -125,6 +128,8 @@ bidirectional JSON-RPC API over stdio or WebSocket; see the official
 The implementation and shared-App-Server setup guide are in
 [`adapters/codex-app-server`](../adapters/codex-app-server). It has been
 exercised against Codex CLI 0.147.0 using a TUI connected through `--remote`.
+`scripts/ops-brain-codex-live` owns the loopback App Server and adapter for one
+foreground TUI, cleans both up on exit, and provides `--status`/`--dry-run`.
 
 These remain local adapters because Claude Channels and Codex App Server own the
 host-specific injection semantics. ops-brain remains the generic authenticated
