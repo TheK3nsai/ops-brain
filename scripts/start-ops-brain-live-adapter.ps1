@@ -81,7 +81,8 @@ if ($Client -eq 'codex' -and $null -eq $AppServerUrl) {
 }
 if ($null -ne $AppServerUrl) { Assert-AppServerUrl $AppServerUrl }
 
-$nodeCommand = Get-Command node -CommandType Application -ErrorAction Stop
+$nodeCommand = @(Get-Command node -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+if ($null -eq $nodeCommand) { throw 'Required executable is missing: node' }
 $secret = Read-DpapiCredentialSecret $AgentCredentialFile
 try {
     $env:OPS_BRAIN_LIVE_URL = $LiveUrl.AbsoluteUri

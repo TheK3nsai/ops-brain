@@ -98,7 +98,7 @@ public static class FakeClaude {
     $env:OPS_BRAIN_TEST_CAPTURE = $captureFile
     $env:OPS_BRAIN_AGENT_TOKEN = 'fixture-must-not-reach-claude'
     try {
-        $pwsh = (Get-Command pwsh.exe -CommandType Application -ErrorAction Stop).Source
+        $pwsh = (@(Get-Command pwsh.exe -CommandType Application -ErrorAction Stop) | Select-Object -First 1).Source
         $startInfo = [Diagnostics.ProcessStartInfo]::new($pwsh)
         $startInfo.UseShellExecute = $false
         foreach ($argument in @(

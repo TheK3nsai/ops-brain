@@ -48,16 +48,19 @@ if OPS_BRAIN_LIVE_URL='wss://ops.example/mcp' "$BIN_DIR/ops-brain-codex-live" --
 fi
 assert_contains "$(<"$TEST_DIR/bad-path.out")" 'exact wss://host/live'
 
-claude_dry=$(OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth "$BIN_DIR/ops-brain-claude-live" --dry-run)
-assert_contains "$claude_dry" 'generated-redacted-config'
-codex_dry=$(OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state" "$BIN_DIR/ops-brain-codex-live" --dry-run)
-assert_contains "$codex_dry" 'token redacted'
-
 mkdir -p -- "$TEST_DIR/fake-bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$TEST_DIR/fake-bin/codex"
+chmod +x "$TEST_DIR/fake-bin/codex"
 # Fixture script must expand the variable at runtime.
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' '[[ -z ${OPS_BRAIN_AGENT_TOKEN:-} ]] || exit 42' 'exit 0' >"$TEST_DIR/fake-bin/claude"
 chmod +x "$TEST_DIR/fake-bin/claude"
+
+claude_dry=$(PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth "$BIN_DIR/ops-brain-claude-live" --dry-run)
+assert_contains "$claude_dry" 'generated-redacted-config'
+codex_dry=$(PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state" "$BIN_DIR/ops-brain-codex-live" --dry-run)
+assert_contains "$codex_dry" 'token redacted'
+
 PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_AGENT_TOKEN='fixture-must-not-reach-claude' \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
     OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \

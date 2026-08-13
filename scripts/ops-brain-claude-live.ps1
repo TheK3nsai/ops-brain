@@ -20,9 +20,16 @@ $ErrorActionPreference = 'Stop'
 
 function Get-ApplicationPath {
     param([Parameter(Mandatory)][string]$Name)
-    $command = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue
+    $command = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
     if ($null -eq $command) { return '<missing>' }
     $command.Source
+}
+
+function Get-RequiredApplication {
+    param([Parameter(Mandatory)][string]$Name)
+    $command = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($null -eq $command) { throw "Required executable is missing: $Name" }
+    $command
 }
 
 function Assert-LiveUrl {
@@ -63,9 +70,9 @@ if (-not $AgentCredentialFile) { throw 'AgentCredentialFile is required; select 
 if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $AgentCredentialFile" }
 if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
 if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
-$claudeCommand = Get-Command claude.exe -CommandType Application -ErrorAction Stop
-[void](Get-Command node.exe -CommandType Application -ErrorAction Stop)
-[void](Get-Command pwsh.exe -CommandType Application -ErrorAction Stop)
+$claudeCommand = Get-RequiredApplication 'claude.exe'
+[void](Get-RequiredApplication 'node.exe')
+[void](Get-RequiredApplication 'pwsh.exe')
 
 $mcpConfig = @{
     mcpServers = @{

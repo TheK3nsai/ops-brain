@@ -28,9 +28,16 @@ function Get-NormalizedPath {
 
 function Get-ApplicationPath {
     param([Parameter(Mandatory)][string]$Name)
-    $command = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue
+    $command = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
     if ($null -eq $command) { return '<missing>' }
     $command.Source
+}
+
+function Get-RequiredApplication {
+    param([Parameter(Mandatory)][string]$Name)
+    $command = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($null -eq $command) { throw "Required executable is missing: $Name" }
+    $command
 }
 
 function Assert-LiveUrl {
@@ -120,9 +127,9 @@ if (-not $AgentCredentialFile) { throw 'AgentCredentialFile is required; select 
 if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $AgentCredentialFile" }
 if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
 if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
-$codexCommand = Get-Command codex.exe -CommandType Application -ErrorAction Stop
-[void](Get-Command node.exe -CommandType Application -ErrorAction Stop)
-$pwshCommand = Get-Command pwsh.exe -CommandType Application -ErrorAction Stop
+$codexCommand = Get-RequiredApplication 'codex.exe'
+[void](Get-RequiredApplication 'node.exe')
+$pwshCommand = Get-RequiredApplication 'pwsh.exe'
 
 if ($Mode -eq 'DryRun') {
     "would launch App Server at $($AppServerUrl.AbsoluteUri)"

@@ -28,9 +28,16 @@ function Assert-RealBinDirectory {
 
 function Get-ApplicationPath {
     param([Parameter(Mandatory)][string]$Name)
-    $command = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue
+    $command = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
     if ($null -eq $command) { return '<missing>' }
     $command.Source
+}
+
+function Get-RequiredApplication {
+    param([Parameter(Mandatory)][string]$Name)
+    $command = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($null -eq $command) { throw "Required executable is missing: $Name" }
+    $command
 }
 
 if ($Mode -eq 'Status') {
@@ -47,8 +54,8 @@ if ($Mode -eq 'Status') {
     exit 0
 }
 
-$nodeCommand = Get-Command node.exe -CommandType Application -ErrorAction Stop
-$npmCommand = Get-Command npm.cmd -CommandType Application -ErrorAction Stop
+$nodeCommand = Get-RequiredApplication 'node.exe'
+$npmCommand = Get-RequiredApplication 'npm.cmd'
 $nodeMajor = [int](& $nodeCommand.Source -p 'Number(process.versions.node.split(".")[0])')
 if ($nodeMajor -lt 22) { throw 'Node.js 22 or newer is required' }
 
