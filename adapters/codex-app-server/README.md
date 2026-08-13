@@ -27,8 +27,11 @@ Install the one runtime dependency locally:
 
 ```bash
 cd adapters/codex-app-server
-npm install
+npm ci --ignore-scripts
 ```
+
+Fleet operators should use the Linux/Windows installers and foreground
+launchers in [`../../docs/live-fleet-rollout.md`](../../docs/live-fleet-rollout.md).
 
 ## Recommended shared-session setup
 
@@ -45,6 +48,7 @@ environment variables; never put a bearer on the command line or in the URL:
 ```bash
 export OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live
 export OPS_BRAIN_AGENT_TOKEN='...'
+export OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth
 export OPS_BRAIN_CODEX_APP_SERVER_URL=ws://127.0.0.1:4500
 export OPS_BRAIN_CODEX_LABEL=codex-stealth-1
 npm start
@@ -57,9 +61,10 @@ spawn `codex app-server` over stdio when
 resumable thread if no thread is already loaded.
 
 The foreground wrapper necessarily opens its adapter connection before the TUI
-finishes loading a thread. If that pre-TUI WebSocket later stops answering
-thread discovery, the adapter reconnects once and repeats only the idempotent
-`thread/loaded/list` request. It never retries `turn/start` or `turn/steer`:
+finishes loading a thread. If that pre-TUI WebSocket later stops answering,
+the adapter reconnects once and repeats only the applicable idempotent
+`thread/loaded/list`, `thread/resume`, or `thread/read` request. It never
+retries `turn/start` or `turn/steer`:
 acceptance followed by a lost response is ambiguous, and retrying could inject
 the same peer text twice.
 
@@ -70,6 +75,10 @@ Optional variables:
   WebSocket. It is read only from the environment.
 - `OPS_BRAIN_CODEX_BIN`: Codex executable name/path for stdio mode.
 - `OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS`: 500-30000; default 5000.
+
+`OPS_BRAIN_EXPECTED_AGENT` is required. The adapter compares it to the
+server-returned token binding and disconnects before becoming ready on a
+mismatch, preventing a sibling or wrong-host token from appearing online.
 
 Plain `ws://` App Server URLs are accepted only on loopback. The ops-brain URL
 may use `ws://` for a local development server, but remote deployments should

@@ -26,6 +26,13 @@ All notable changes to this project will be documented in this file.
 - **Foreground operator wrappers.** Added Claude and Codex launch/status
   scripts that read identity-bound tokens from protected files, keep secrets
   out of arguments and generated config, and clean up owned helper processes.
+- **Fleet distribution bundle.** Added a pinned Linux installer, PowerShell
+  launch parity for the two Windows hosts using DPAPI-protected credentials,
+  explicit per-identity credential selection, hostless packaging checks, and a
+  fleet acceptance and rollback runbook. Live clients remain
+  foreground-only; the bundle deliberately adds no daemon or startup ritual.
+  CI now runs both adapter suites and Linux launcher tests, and a Windows job
+  parses every PowerShell launcher and exercises installer/status modes.
 - **Honest delivery receipts.** `routed` means the message reached the target
   adapter queue; `host_accepted` requires an ACK after host injection. Neither
   claims the model read or acted. Exact target ACK binding, bounded queues,

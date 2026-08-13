@@ -3,17 +3,20 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 ADAPTER_DIR="$REPO_DIR/adapters/codex-app-server"
 ADAPTER="$ADAPTER_DIR/src/index.mjs"
-TOKEN_FILE="${OPS_BRAIN_AGENT_TOKEN_FILE:-$HOME/.config/ops-brain/live-agent-token}"
+TOKEN_FILE="${OPS_BRAIN_AGENT_TOKEN_FILE:-}"
+EXPECTED_AGENT="${OPS_BRAIN_EXPECTED_AGENT:-}"
 LIVE_URL="${OPS_BRAIN_LIVE_URL:-}"
 LABEL="${OPS_BRAIN_CODEX_LABEL:-codex-live}"
 APP_PORT="${OPS_BRAIN_CODEX_APP_SERVER_PORT:-4500}"
 APP_URL="ws://127.0.0.1:$APP_PORT"
 STATE_DIR="${OPS_BRAIN_LIVE_STATE_DIR:-$HOME/.local/state/ops-brain-live}"
 LOG_FILE=''
+unset OPS_BRAIN_AGENT_TOKEN
 
 usage() {
     cat <<'EOF'
@@ -25,8 +28,10 @@ per App Server port.
 
 Environment:
   OPS_BRAIN_LIVE_URL                 required wss://host/live endpoint
-  OPS_BRAIN_AGENT_TOKEN_FILE        identity-bound token file (600 or 400;
-                                    default ~/.config/ops-brain/live-agent-token)
+  OPS_BRAIN_AGENT_TOKEN_FILE        required identity-bound token file (600 or
+                                    400); always select the exact Codex identity
+  OPS_BRAIN_EXPECTED_AGENT          required exact bound identity, e.g.
+                                    Codex-Stealth
   OPS_BRAIN_CODEX_LABEL              optional non-sensitive peer label
   OPS_BRAIN_CODEX_APP_SERVER_PORT    loopback port (default 4500)
   OPS_BRAIN_LIVE_STATE_DIR           adapter log directory
@@ -34,6 +39,27 @@ Environment:
 The token is exported only to the adapter process. It never appears in command
 arguments or logs.
 EOF
+}
+
+validate_live_url() {
+    [[ -n $LIVE_URL ]] || return 1
+    node -e '
+      let raw = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", chunk => raw += chunk);
+      process.stdin.on("end", () => {
+        raw = raw.replace(/\n$/, "");
+        try {
+          const url = new URL(raw);
+          const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+          const valid = !/[\r\n]/.test(raw) && !raw.includes("?") && !raw.includes("#")
+            && !url.username && !url.password && !url.search && !url.hash
+            && url.pathname === "/live"
+            && (url.protocol === "wss:" || (url.protocol === "ws:" && loopback));
+          process.exit(valid ? 0 : 1);
+        } catch { process.exit(1); }
+      });
+    ' <<<"$LIVE_URL"
 }
 
 mode=run
@@ -44,20 +70,29 @@ case "${1:-}" in
 esac
 [[ "${1:-}" == "--" ]] && shift
 
+url_status='<unset>'
+if [[ -n $LIVE_URL ]]; then
+    validate_live_url || { echo 'OPS_BRAIN_LIVE_URL must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment' >&2; exit 2; }
+    url_status=$LIVE_URL
+fi
+
 if [[ $mode == status ]]; then
     printf 'adapter:    %s\n' "$ADAPTER"
-    printf 'live url:   %s\n' "${LIVE_URL:-<unset>}"
+    printf 'live url:   %s\n' "$url_status"
     printf 'label:      %s\n' "$LABEL"
+    printf 'agent:      %s\n' "${EXPECTED_AGENT:-<unset>}"
     printf 'app server: %s\n' "$APP_URL"
-    printf 'token:      %s — ' "$TOKEN_FILE"
-    if [[ -f $TOKEN_FILE ]]; then printf 'present (mode %s)\n' "$(stat -c '%a' "$TOKEN_FILE")"; else echo missing; fi
+    printf 'token:      %s — ' "${TOKEN_FILE:-<unset>}"
+    if [[ -n $TOKEN_FILE && -f $TOKEN_FILE ]]; then printf 'present (mode %s)\n' "$(stat -c '%a' "$TOKEN_FILE")"; else echo missing; fi
     printf 'ready:      '
     if curl -sf --max-time 1 "http://127.0.0.1:$APP_PORT/readyz" >/dev/null 2>&1; then echo yes; else echo no; fi
     printf 'logs:       %s/codex-adapter.*.log\n' "$STATE_DIR"
     exit 0
 fi
 
-[[ -n $LIVE_URL ]] || { echo 'OPS_BRAIN_LIVE_URL is required' >&2; exit 2; }
+validate_live_url || { echo 'OPS_BRAIN_LIVE_URL is required and must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment' >&2; exit 2; }
+[[ -n $TOKEN_FILE ]] || { echo 'OPS_BRAIN_AGENT_TOKEN_FILE is required' >&2; exit 2; }
+[[ $EXPECTED_AGENT =~ ^[A-Za-z0-9._-]{1,80}$ ]] || { echo 'OPS_BRAIN_EXPECTED_AGENT is required and must be a valid agent slug' >&2; exit 2; }
 [[ -f $ADAPTER ]] || { echo "adapter missing: $ADAPTER" >&2; exit 2; }
 [[ -f $TOKEN_FILE ]] || {
     echo "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path" >&2
@@ -140,6 +175,7 @@ done
 (
     export OPS_BRAIN_LIVE_URL="$LIVE_URL"
     export OPS_BRAIN_AGENT_TOKEN
+    export OPS_BRAIN_EXPECTED_AGENT="$EXPECTED_AGENT"
     export OPS_BRAIN_CODEX_APP_SERVER_URL="$APP_URL"
     export OPS_BRAIN_CODEX_LABEL="$LABEL"
     exec node "$ADAPTER" </dev/null >>"$LOG_FILE" 2>&1

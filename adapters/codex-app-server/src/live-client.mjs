@@ -104,7 +104,11 @@ export class LiveClient extends EventEmitter {
     if (frame.type === 'registered') {
       try {
         if (this.peer) throw new Error('ops-brain registered this connection more than once');
-        this.peer = validateRegisteredFrame(frame, this.config.label);
+        const candidate = validateRegisteredFrame(frame, this.config.label);
+        if (candidate.agent_name.toLowerCase() !== this.config.expectedAgent.toLowerCase()) {
+          throw new Error('ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT');
+        }
+        this.peer = candidate;
       } catch (error) {
         this.#protocolFailure(error);
         return;
@@ -225,6 +229,7 @@ export class LiveClient extends EventEmitter {
   }
 
   #protocolFailure(error) {
+    this.peer = null;
     this.emit('protocolError', error);
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.close(1002, 'invalid live protocol frame');

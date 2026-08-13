@@ -33,6 +33,10 @@ function websocketUrl(name, raw, { loopbackPlaintextOnly = true, exactPath = nul
 }
 
 export function loadConfig(env = process.env) {
+  const expectedAgent = required('OPS_BRAIN_EXPECTED_AGENT', env);
+  if (Buffer.byteLength(expectedAgent) > 80 || !LABEL_RE.test(expectedAgent)) {
+    throw new Error('OPS_BRAIN_EXPECTED_AGENT must be 1-80 ASCII letters, digits, dot, underscore, or dash');
+  }
   const label = (env.OPS_BRAIN_CODEX_LABEL || 'codex-live').trim();
   if (!label || Buffer.byteLength(label) > 80 || !LABEL_RE.test(label)) {
     throw new Error('OPS_BRAIN_CODEX_LABEL must be 1-80 ASCII letters, digits, dot, underscore, or dash');
@@ -59,6 +63,7 @@ export function loadConfig(env = process.env) {
   return Object.freeze({
     liveUrl,
     agentToken: singleLineToken('OPS_BRAIN_AGENT_TOKEN', env),
+    expectedAgent,
     label,
     threadId: env.OPS_BRAIN_CODEX_THREAD_ID?.trim() || null,
     appServerUrl,
@@ -93,6 +98,7 @@ export function redactedConfig(config) {
   return {
     liveUrl: config.liveUrl,
     label: config.label,
+    expectedAgent: config.expectedAgent,
     threadId: config.threadId,
     appServer: config.appServerUrl || 'spawned stdio',
     requestTimeoutMs: config.requestTimeoutMs,

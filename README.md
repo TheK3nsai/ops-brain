@@ -54,6 +54,9 @@ Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_
   Foreground launch wrappers are available as `scripts/ops-brain-claude-live`
   and `scripts/ops-brain-codex-live`. Both read an identity-bound bearer from a
   mode-600 token file and expose redacted `--status`/`--dry-run` modes.
+  PowerShell/DPAPI launchers cover Windows hosts. Fleet installation,
+  identity mapping, acceptance, and rollback are documented in
+  [`docs/live-fleet-rollout.md`](docs/live-fleet-rollout.md).
 
 Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context.
 

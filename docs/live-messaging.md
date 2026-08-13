@@ -118,9 +118,12 @@ development-channel opt-in and may be disabled by organization policy.
 For a foreground operator launch with token-file validation, use
 `scripts/ops-brain-claude-live --status` followed by
 `scripts/ops-brain-claude-live -- [CLAUDE_ARGS...]`.
-Both launch wrappers default `OPS_BRAIN_AGENT_TOKEN_FILE` to
-`~/.config/ops-brain/live-agent-token`; set it explicitly when the protected
-per-agent bearer uses another filename.
+The protected per-agent token path and expected server-bound identity are
+always explicit; registration fails closed on a mismatch. The wrappers have
+no generic fallback that could silently select a sibling identity. Windows
+PowerShell launchers use DPAPI-protected `PSCredential` files. The complete
+fleet installation and acceptance runbook is
+[`live-fleet-rollout.md`](live-fleet-rollout.md).
 
 ## Codex adapter
 

@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 
 const LABEL_RE = /^[A-Za-z0-9._-]+$/
+const AGENT_RE = /^[A-Za-z0-9._-]+$/
 
 export function loadConfig(env = process.env) {
   const token = loadToken(env)
@@ -9,6 +10,12 @@ export function loadConfig(env = process.env) {
   }
 
   const url = parseLiveUrl(required(env.OPS_BRAIN_LIVE_URL, 'OPS_BRAIN_LIVE_URL'))
+  const expectedAgent = required(env.OPS_BRAIN_EXPECTED_AGENT, 'OPS_BRAIN_EXPECTED_AGENT')
+  if (Buffer.byteLength(expectedAgent) > 80 || !AGENT_RE.test(expectedAgent)) {
+    throw new Error(
+      "OPS_BRAIN_EXPECTED_AGENT must be 1-80 bytes using only letters, digits, '.', '_' or '-'",
+    )
+  }
   const label = (env.OPS_BRAIN_LIVE_LABEL ?? 'claude-code').trim()
   if (!label || Buffer.byteLength(label) > 80 || !LABEL_RE.test(label)) {
     throw new Error(
@@ -16,7 +23,7 @@ export function loadConfig(env = process.env) {
     )
   }
 
-  return Object.freeze({ url: url.toString(), token, label })
+  return Object.freeze({ url: url.toString(), token, label, expectedAgent })
 }
 
 function loadToken(env) {

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Hostless safety and packaging checks for the fleet launchers.
+
+set -euo pipefail
+
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+TEST_DIR=$(mktemp -d --tmpdir ops-brain-live-launchers.XXXXXX)
+
+cleanup() {
+    [[ $TEST_DIR == /tmp/ops-brain-live-launchers.* && -d $TEST_DIR ]] || return 0
+    rm -rf -- "$TEST_DIR"
+}
+trap cleanup EXIT
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+assert_contains() {
+    local haystack=$1 needle=$2
+    [[ $haystack == *"$needle"* ]] || fail "expected output to contain: $needle"
+}
+
+BIN_DIR="$TEST_DIR/bin"
+TOKEN_FILE="$TEST_DIR/agent-token"
+printf '%s\n' 'fixture-token-not-a-secret' >"$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+
+"$SCRIPT_DIR/install-live-adapters" --skip-deps --bin-dir "$BIN_DIR"
+[[ -L $BIN_DIR/ops-brain-claude-live ]] || fail 'Claude launcher symlink missing'
+[[ -L $BIN_DIR/ops-brain-codex-live ]] || fail 'Codex launcher symlink missing'
+
+status=$("$BIN_DIR/ops-brain-claude-live" --status)
+assert_contains "$status" "$REPO_DIR/adapters/claude-channel/src/main.js"
+assert_contains "$status" 'token:   <unset> — unset'
+
+if OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live "$BIN_DIR/ops-brain-claude-live" --dry-run >"$TEST_DIR/no-token.out" 2>&1; then
+    fail 'Claude dry-run accepted an implicit token path'
+fi
+assert_contains "$(<"$TEST_DIR/no-token.out")" 'OPS_BRAIN_AGENT_TOKEN_FILE is required'
+
+if OPS_BRAIN_LIVE_URL='wss://user:do-not-print@ops.example/live' "$BIN_DIR/ops-brain-claude-live" --status >"$TEST_DIR/bad-url.out" 2>&1; then
+    fail 'Claude status accepted URL credentials'
+fi
+assert_contains "$(<"$TEST_DIR/bad-url.out")" 'without credentials, query, or fragment'
+[[ $(<"$TEST_DIR/bad-url.out") != *'do-not-print'* ]] || fail 'invalid URL credentials reached diagnostic output'
+if OPS_BRAIN_LIVE_URL='wss://ops.example/mcp' "$BIN_DIR/ops-brain-codex-live" --status >"$TEST_DIR/bad-path.out" 2>&1; then
+    fail 'Codex status accepted a non-live path'
+fi
+assert_contains "$(<"$TEST_DIR/bad-path.out")" 'exact wss://host/live'
+
+claude_dry=$(OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth "$BIN_DIR/ops-brain-claude-live" --dry-run)
+assert_contains "$claude_dry" 'generated-redacted-config'
+codex_dry=$(OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state" "$BIN_DIR/ops-brain-codex-live" --dry-run)
+assert_contains "$codex_dry" 'token redacted'
+
+mkdir -p -- "$TEST_DIR/fake-bin"
+# Fixture script must expand the variable at runtime.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' '[[ -z ${OPS_BRAIN_AGENT_TOKEN:-} ]] || exit 42' 'exit 0' >"$TEST_DIR/fake-bin/claude"
+chmod +x "$TEST_DIR/fake-bin/claude"
+PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_AGENT_TOKEN='fixture-must-not-reach-claude' \
+    OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    "$BIN_DIR/ops-brain-claude-live"
+
+printf '%s\n' occupied >"$TEST_DIR/occupied"
+if "$SCRIPT_DIR/install-live-adapters" --skip-deps --bin-dir "$TEST_DIR/occupied" >"$TEST_DIR/unsafe.out" 2>&1; then
+    fail 'installer accepted a non-directory bin path'
+fi
+
+mkdir -p -- "$TEST_DIR/unsafe-bin"
+ln -s -- /bin/true "$TEST_DIR/unsafe-bin/ops-brain-claude-live"
+if "$SCRIPT_DIR/install-live-adapters" --skip-deps --bin-dir "$TEST_DIR/unsafe-bin" >"$TEST_DIR/unsafe-link.out" 2>&1; then
+    fail 'installer replaced a non-owned launcher symlink'
+fi
+assert_contains "$(<"$TEST_DIR/unsafe-link.out")" 'non-owned launcher symlink'
+[[ ! -e $TEST_DIR/unsafe-bin/ops-brain-codex-live ]] || fail 'installer partially created the second launcher before preflight failed'
+
+for file in \
+    "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" \
+    "$SCRIPT_DIR/ops-brain-claude-live.ps1" \
+    "$SCRIPT_DIR/ops-brain-codex-live.ps1" \
+    "$SCRIPT_DIR/Install-OpsBrainLive.ps1"; do
+    [[ -s $file ]] || fail "missing PowerShell fleet file: $file"
+    rg -q '^#requires -Version 7\.2$' "$file" || fail "PowerShell version gate missing: $file"
+done
+rg -q 'Import-Clixml -LiteralPath' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'DPAPI credential import missing'
+rg -q 'OPS_BRAIN_AGENT_TOKEN = \$secret' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'adapter-only bearer export missing'
+if rg -q 'AgentCredentialFile.*OPS_BRAIN_AGENT_TOKEN' "$SCRIPT_DIR/ops-brain-claude-live.ps1"; then
+    fail 'Claude parent launcher appears to export the bearer'
+fi
+
+echo 'live launcher tests passed'

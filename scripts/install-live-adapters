@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Install the private ops-brain live launchers for one Linux user.
+
+set -euo pipefail
+
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+BIN_DIR="${HOME}/.local/bin"
+MODE=install
+INSTALL_DEPS=true
+
+usage() {
+    cat <<'EOF'
+Usage: install-live-adapters [--status] [--skip-deps] [--bin-dir DIR]
+
+Installs pinned Node dependencies and links the Claude/Codex foreground
+launchers into ~/.local/bin. It never creates, reads, or copies credentials.
+
+After installation, each launch must explicitly set:
+  OPS_BRAIN_LIVE_URL
+  OPS_BRAIN_AGENT_TOKEN_FILE
+  OPS_BRAIN_EXPECTED_AGENT
+EOF
+}
+
+while (($#)); do
+    case "$1" in
+        --status) MODE=status; shift ;;
+        --skip-deps) INSTALL_DEPS=false; shift ;;
+        --bin-dir)
+            (($# >= 2)) || { echo '--bin-dir requires a value' >&2; exit 2; }
+            BIN_DIR=$2
+            shift 2
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+CLAUDE_WRAPPER="$REPO_DIR/scripts/ops-brain-claude-live"
+CODEX_WRAPPER="$REPO_DIR/scripts/ops-brain-codex-live"
+
+node_status=$(command -v node || true)
+npm_status=$(command -v npm || true)
+node_major=0
+if [[ -n $node_status ]]; then
+    node_major=$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)
+fi
+
+if [[ $MODE == status ]]; then
+    printf 'repo:    %s\n' "$REPO_DIR"
+    printf 'node:    %s\n' "${node_status:-<missing>}"
+    printf 'npm:     %s\n' "${npm_status:-<missing>}"
+    printf 'claude:  %s\n' "$(command -v claude || echo '<missing>')"
+    printf 'codex:   %s\n' "$(command -v codex || echo '<missing>')"
+    for name in ops-brain-claude-live ops-brain-codex-live; do
+        target="$BIN_DIR/$name"
+        if [[ -L $target ]]; then
+            printf '%-8s %s -> %s\n' "$name:" "$target" "$(readlink -- "$target")"
+        elif [[ -e $target ]]; then
+            printf '%-8s %s (not a symlink)\n' "$name:" "$target"
+        else
+            printf '%-8s %s (missing)\n' "$name:" "$target"
+        fi
+    done
+    exit 0
+fi
+
+[[ -f $CLAUDE_WRAPPER && -f $CODEX_WRAPPER ]] || {
+    echo "launcher files are missing under $REPO_DIR/scripts" >&2
+    exit 2
+}
+[[ -n $node_status && $node_major -ge 22 ]] || {
+    echo 'Node.js 22 or newer is required' >&2
+    exit 2
+}
+[[ -n $npm_status ]] || { echo 'npm is required' >&2; exit 2; }
+
+if [[ -L $BIN_DIR || (-e $BIN_DIR && ! -d $BIN_DIR) ]]; then
+    echo "bin path must be a real directory, not a symlink: $BIN_DIR" >&2
+    exit 2
+fi
+mkdir -p -- "$BIN_DIR"
+if [[ -L $BIN_DIR || ! -d $BIN_DIR ]]; then
+    echo "bin directory validation failed: $BIN_DIR" >&2
+    exit 2
+fi
+
+declare -a missing_launchers=()
+for name in ops-brain-claude-live ops-brain-codex-live; do
+    target="$BIN_DIR/$name"
+    source="$REPO_DIR/scripts/$name"
+    if [[ -L $target ]]; then
+        [[ $(readlink -- "$target") == "$source" ]] || {
+            echo "refusing to replace non-owned launcher symlink: $target" >&2
+            exit 2
+        }
+    elif [[ -e $target ]]; then
+        echo "refusing to replace non-symlink launcher: $target" >&2
+        exit 2
+    else
+        missing_launchers+=("$name")
+    fi
+done
+
+if [[ $INSTALL_DEPS == true ]]; then
+    for adapter in claude-channel codex-app-server; do
+        npm --prefix "$REPO_DIR/adapters/$adapter" ci --ignore-scripts
+    done
+fi
+
+for name in "${missing_launchers[@]}"; do
+    target="$BIN_DIR/$name"
+    source="$REPO_DIR/scripts/$name"
+    ln -s -- "$source" "$target"
+done
+
+printf 'installed live launchers in %s\n' "$BIN_DIR"
+printf '%s\n' 'set OPS_BRAIN_LIVE_URL and the exact per-agent OPS_BRAIN_AGENT_TOKEN_FILE before launch'
+printf '%s\n' 'set OPS_BRAIN_EXPECTED_AGENT to the exact server-bound fleet identity'

@@ -28,6 +28,10 @@ npm ci --ignore-scripts
 npm test
 ```
 
+Fleet operators should use the Linux/Windows installers and foreground
+launchers in [`../../docs/live-fleet-rollout.md`](../../docs/live-fleet-rollout.md)
+rather than hand-authoring MCP configuration on every host.
+
 The package is intentionally self-contained. Its executable is
 `src/main.js`; it writes MCP JSON-RPC only to stdout and operational messages
 only to stderr.
@@ -49,6 +53,7 @@ recognized:
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `OPS_BRAIN_LIVE_URL` | yes | Exact `wss://host/live` endpoint. Plain `ws://` is accepted only on loopback for development. |
+| `OPS_BRAIN_EXPECTED_AGENT` | yes | Exact server-bound identity expected after registration, such as `CC-Stealth`; a mismatch disconnects fail-closed. |
 | `OPS_BRAIN_AGENT_TOKEN_FILE` | recommended | Protected file containing the identity-bound bearer. |
 | `OPS_BRAIN_AGENT_TOKEN` | alternative | Identity-bound bearer inherited by the adapter; mutually exclusive with the file. |
 | `OPS_BRAIN_LIVE_LABEL` | no | Non-sensitive local disambiguator; defaults to `claude-code`. |

@@ -166,6 +166,11 @@ export class LiveClient extends EventEmitter {
         this.#socket?.close(1008, 'invalid registration')
         return
       }
+      if (frame.peer.agent_name.toLowerCase() !== this.#config.expectedAgent.toLowerCase()) {
+        this.#logger('ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT')
+        this.#socket?.close(1008, 'unexpected bound identity')
+        return
+      }
       clearTimeout(this.#registerTimer)
       this.#registerTimer = null
       this.#peer = Object.freeze({ ...frame.peer })

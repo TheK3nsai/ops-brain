@@ -3,12 +3,15 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 ADAPTER="$REPO_DIR/adapters/claude-channel/src/main.js"
-TOKEN_FILE="${OPS_BRAIN_AGENT_TOKEN_FILE:-$HOME/.config/ops-brain/live-agent-token}"
+TOKEN_FILE="${OPS_BRAIN_AGENT_TOKEN_FILE:-}"
+EXPECTED_AGENT="${OPS_BRAIN_EXPECTED_AGENT:-}"
 LIVE_URL="${OPS_BRAIN_LIVE_URL:-}"
 LABEL="${OPS_BRAIN_LIVE_LABEL:-claude-code}"
+unset OPS_BRAIN_AGENT_TOKEN
 
 usage() {
     cat <<'EOF'
@@ -18,14 +21,36 @@ Launch Claude Code with the ops-brain development Channel enabled.
 
 Environment:
   OPS_BRAIN_LIVE_URL          required wss://host/live endpoint
-  OPS_BRAIN_AGENT_TOKEN_FILE identity-bound token file (mode 600 or 400;
-                             default ~/.config/ops-brain/live-agent-token)
+  OPS_BRAIN_AGENT_TOKEN_FILE required identity-bound token file (mode 600 or
+                             400); always select the exact Claude identity
+  OPS_BRAIN_EXPECTED_AGENT   required exact bound identity, e.g. CC-Stealth
   OPS_BRAIN_LIVE_LABEL        optional non-sensitive peer label
 
 The MCP config passes only the protected token-file path. The bearer itself is
 never placed in Claude's environment, the MCP config, or a command argument.
 Processes running as the same OS user can still read a mode-600 file.
 EOF
+}
+
+validate_live_url() {
+    [[ -n $LIVE_URL ]] || return 1
+    node -e '
+      let raw = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", chunk => raw += chunk);
+      process.stdin.on("end", () => {
+        raw = raw.replace(/\n$/, "");
+        try {
+          const url = new URL(raw);
+          const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+          const valid = !/[\r\n]/.test(raw) && !raw.includes("?") && !raw.includes("#")
+            && !url.username && !url.password && !url.search && !url.hash
+            && url.pathname === "/live"
+            && (url.protocol === "wss:" || (url.protocol === "ws:" && loopback));
+          process.exit(valid ? 0 : 1);
+        } catch { process.exit(1); }
+      });
+    ' <<<"$LIVE_URL"
 }
 
 mode=run
@@ -36,23 +61,31 @@ case "${1:-}" in
 esac
 [[ "${1:-}" == "--" ]] && shift
 
-token_status=missing
-if [[ -f $TOKEN_FILE ]]; then
+token_status='unset'
+if [[ -n $TOKEN_FILE && -f $TOKEN_FILE ]]; then
     token_mode=$(stat -c '%a' "$TOKEN_FILE")
     token_status="present (mode $token_mode)"
+fi
+url_status='<unset>'
+if [[ -n $LIVE_URL ]]; then
+    validate_live_url || { echo 'OPS_BRAIN_LIVE_URL must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment' >&2; exit 2; }
+    url_status=$LIVE_URL
 fi
 
 if [[ $mode == status ]]; then
     printf 'adapter: %s\n' "$ADAPTER"
-    printf 'url:     %s\n' "${LIVE_URL:-<unset>}"
+    printf 'url:     %s\n' "$url_status"
     printf 'label:   %s\n' "$LABEL"
-    printf 'token:   %s — %s\n' "$TOKEN_FILE" "$token_status"
+    printf 'agent:   %s\n' "${EXPECTED_AGENT:-<unset>}"
+    printf 'token:   %s — %s\n' "${TOKEN_FILE:-<unset>}" "$token_status"
     printf 'claude:  %s\n' "$(command -v claude || echo '<missing>')"
     printf 'node:    %s\n' "$(command -v node || echo '<missing>')"
     exit 0
 fi
 
-[[ -n $LIVE_URL ]] || { echo 'OPS_BRAIN_LIVE_URL is required' >&2; exit 2; }
+validate_live_url || { echo 'OPS_BRAIN_LIVE_URL is required and must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment' >&2; exit 2; }
+[[ -n $TOKEN_FILE ]] || { echo 'OPS_BRAIN_AGENT_TOKEN_FILE is required' >&2; exit 2; }
+[[ $EXPECTED_AGENT =~ ^[A-Za-z0-9._-]{1,80}$ ]] || { echo 'OPS_BRAIN_EXPECTED_AGENT is required and must be a valid agent slug' >&2; exit 2; }
 [[ -f $ADAPTER ]] || { echo "adapter missing: $ADAPTER" >&2; exit 2; }
 [[ -f $TOKEN_FILE ]] || {
     echo "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path" >&2
@@ -74,12 +107,12 @@ token_check=$(<"$TOKEN_FILE")
 unset token_check
 
 mcp_config=$(node -e '
-  const [adapter, url, label] = process.argv.slice(1);
+  const [adapter, url, label, expectedAgent] = process.argv.slice(1);
   process.stdout.write(JSON.stringify({mcpServers:{"ops-brain-live":{
     command:"node", args:[adapter], env:{OPS_BRAIN_LIVE_URL:url, OPS_BRAIN_LIVE_LABEL:label,
-      OPS_BRAIN_AGENT_TOKEN_FILE:process.argv[4]}
+      OPS_BRAIN_EXPECTED_AGENT:expectedAgent, OPS_BRAIN_AGENT_TOKEN_FILE:process.argv[5]}
   }}}));
-' "$ADAPTER" "$LIVE_URL" "$LABEL" "$TOKEN_FILE")
+' "$ADAPTER" "$LIVE_URL" "$LABEL" "$EXPECTED_AGENT" "$TOKEN_FILE")
 
 if [[ $mode == dry ]]; then
     echo "would launch: claude --mcp-config <generated-redacted-config> --dangerously-load-development-channels server:ops-brain-live $*"

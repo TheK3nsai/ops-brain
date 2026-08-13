@@ -8,7 +8,8 @@
       "env": {
         "OPS_BRAIN_LIVE_URL": "wss://YOUR-OPS-BRAIN-HOST/live",
         "OPS_BRAIN_LIVE_LABEL": "claude-code",
-        "OPS_BRAIN_AGENT_TOKEN_FILE": "/home/YOU/.config/ops-brain/live-agent-token"
+        "OPS_BRAIN_EXPECTED_AGENT": "CC-HOST",
+        "OPS_BRAIN_AGENT_TOKEN_FILE": "/home/YOU/.config/ops-brain/agent-token-cc-HOST"
       }
     }
   }

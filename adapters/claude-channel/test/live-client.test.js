@@ -14,6 +14,7 @@ test('authenticates, registers, lists, sends, receives, and acknowledges', async
       url: 'ws://127.0.0.1:3000/live',
       token: 'test-agent-token',
       label: 'claude-test',
+      expectedAgent: 'CC-Stealth',
     },
     { WebSocketImpl: FakeWebSocket, logger: () => {} },
   )
@@ -54,7 +55,7 @@ test('authenticates, registers, lists, sends, receives, and acknowledges', async
 
 test('does not queue requests while disconnected', async () => {
   const client = new LiveClient(
-    { url: 'ws://127.0.0.1:9/live', token: 'x', label: 'offline' },
+    { url: 'ws://127.0.0.1:9/live', token: 'x', label: 'offline', expectedAgent: 'CC-Stealth' },
     { WebSocketImpl: NeverOpenedWebSocket, logger: () => {} },
   )
   await assert.rejects(client.listPeers(), /offline/)
@@ -62,6 +63,26 @@ test('does not queue requests while disconnected', async () => {
     client.sendMessage({ toPeerId: CODEX_PEER, body: 'not queued' }),
     /offline/,
   )
+})
+
+test('fails closed when the token is bound to an unexpected identity', async t => {
+  FakeWebSocket.instances.length = 0
+  const diagnostics = []
+  const client = new LiveClient(
+    {
+      url: 'ws://127.0.0.1:3000/live',
+      token: 'wrong-sibling-token',
+      label: 'claude-test',
+      expectedAgent: 'CC-Cloud',
+    },
+    { WebSocketImpl: FakeWebSocket, logger: message => diagnostics.push(message) },
+  )
+  t.after(() => client.stop())
+  const disconnected = once(client, 'disconnected')
+  client.start()
+  await disconnected
+  assert.equal(client.ready, false)
+  assert.deepEqual(diagnostics, ['ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT'])
 })
 
 class FakeWebSocket extends EventEmitter {

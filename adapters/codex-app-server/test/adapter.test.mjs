@@ -6,6 +6,7 @@ import test from 'node:test';
 import { WebSocketServer } from 'ws';
 
 import { CodexLiveBridge, wrapUntrustedMessage } from '../src/bridge.mjs';
+import { LiveClient } from '../src/live-client.mjs';
 import { AppServerClient, RpcError, StdioRpcClient } from '../src/app-server-client.mjs';
 import { loadConfig, redactedConfig } from '../src/config.mjs';
 import { handleControlCommand } from '../src/control.mjs';
@@ -190,6 +191,7 @@ async function makeFixture(appOptions = {}, liveOptions = {}, configOptions = {}
   const config = loadConfig({
     OPS_BRAIN_LIVE_URL: `ws://127.0.0.1:${liveAddress.port}/live`,
     OPS_BRAIN_AGENT_TOKEN: 'super-secret-agent-token',
+    OPS_BRAIN_EXPECTED_AGENT: 'Codex-Stealth',
     OPS_BRAIN_CODEX_LABEL: 'codex-test',
     OPS_BRAIN_CODEX_APP_SERVER_URL: `ws://127.0.0.1:${appAddress.port}`,
     OPS_BRAIN_CODEX_APP_SERVER_TOKEN: 'local-app-server-token',
@@ -418,6 +420,7 @@ test('wrapper rejects a missing server trust marker', () => {
 test('configuration rejects unsafe URLs and malformed agent tokens', () => {
   const base = {
     OPS_BRAIN_AGENT_TOKEN: 'secret',
+    OPS_BRAIN_EXPECTED_AGENT: 'Codex-Stealth',
     OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live',
   };
   assert.throws(() => loadConfig({
@@ -633,6 +636,7 @@ test('stdio shutdown closes streams and escalates a stubborn owned child', async
 test('configuration accepts bracketed IPv6 loopback and validates optional bearer', () => {
   const config = loadConfig({
     OPS_BRAIN_AGENT_TOKEN: 'agent-secret',
+    OPS_BRAIN_EXPECTED_AGENT: 'Codex-Stealth',
     OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live',
     OPS_BRAIN_CODEX_APP_SERVER_URL: 'ws://[::1]:4500',
     OPS_BRAIN_CODEX_APP_SERVER_TOKEN: 'app-secret',
@@ -641,7 +645,37 @@ test('configuration accepts bracketed IPv6 loopback and validates optional beare
   assert.equal(config.appServerToken, 'app-secret');
   assert.throws(() => loadConfig({
     OPS_BRAIN_AGENT_TOKEN: 'agent-secret',
+    OPS_BRAIN_EXPECTED_AGENT: 'Codex-Stealth',
     OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live',
     OPS_BRAIN_CODEX_APP_SERVER_TOKEN: 'first\nsecond',
   }), /single line/);
+});
+
+test('live registration fails closed on an unexpected server-bound identity', async () => {
+  const live = fakeLiveServer();
+  await listen(live.server);
+  const address = live.server.address();
+  const config = loadConfig({
+    OPS_BRAIN_AGENT_TOKEN: 'wrong-sibling-token',
+    OPS_BRAIN_EXPECTED_AGENT: 'Codex-Cloud',
+    OPS_BRAIN_LIVE_URL: `ws://127.0.0.1:${address.port}/live`,
+    OPS_BRAIN_CODEX_LABEL: 'codex-test',
+    OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS: '500',
+  });
+  const client = new LiveClient(config);
+  let delivered = false;
+  client.on('message', () => { delivered = true; });
+  try {
+    const connection = assert.rejects(client.connect(), /closed before registration/);
+    await waitForFrame(live.frames, (frame) => frame.type === 'register');
+    live.deliver();
+    assert.equal(client.peer, null);
+    assert.equal(delivered, false);
+    await connection;
+    assert.equal(client.peer, null);
+    assert.equal(delivered, false);
+  } finally {
+    await client.close();
+    await closeServer(live.server);
+  }
 });
