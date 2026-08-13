@@ -62,6 +62,13 @@ function activeTurnId(thread) {
   return null;
 }
 
+function markDeliveryStage(error, stage) {
+  if (error && typeof error === 'object' && !error.deliveryStage) {
+    error.deliveryStage = stage;
+  }
+  return error;
+}
+
 export class CodexLiveBridge extends EventEmitter {
   constructor(config, { appServer = null, liveFactory = null } = {}) {
     super();
@@ -112,8 +119,10 @@ export class CodexLiveBridge extends EventEmitter {
     const accepted = this.queue.push(async () => {
       let injected = false;
       try {
-        validateIncomingMessage(message);
-        this.#assertLiveGeneration(live, generation, peerId);
+        try { validateIncomingMessage(message); }
+        catch (error) { throw markDeliveryStage(error, 'message_validation'); }
+        try { this.#assertLiveGeneration(live, generation, peerId); }
+        catch (error) { throw markDeliveryStage(error, 'connection_preflight'); }
         await this.#inject(message, peerId, () => this.#assertLiveGeneration(live, generation, peerId));
         injected = true;
       } catch (error) {
@@ -140,10 +149,30 @@ export class CodexLiveBridge extends EventEmitter {
     }
   }
 
+  async #safeAppRequest(method, params, stage) {
+    try {
+      return await this.appServer.request(method, params);
+    } catch (firstError) {
+      if (typeof this.appServer.reconnect !== 'function') {
+        throw markDeliveryStage(firstError, stage);
+      }
+      try {
+        await this.appServer.reconnect();
+        return await this.appServer.request(method, params);
+      } catch (retryError) {
+        throw markDeliveryStage(retryError, `${stage}_reconnect`);
+      }
+    }
+  }
+
   async #resolveThread(required = true) {
     if (this.targetThreadId) {
       try {
-        await this.appServer.request('thread/resume', { threadId: this.targetThreadId });
+        await this.#safeAppRequest(
+          'thread/resume',
+          { threadId: this.targetThreadId },
+          'thread_resume',
+        );
       } catch (error) {
         if (required) throw error;
         this.emit('warning', new Error('configured Codex thread is not currently resumable'));
@@ -151,54 +180,91 @@ export class CodexLiveBridge extends EventEmitter {
       return this.targetThreadId;
     }
 
-    const loaded = await this.appServer.request('thread/loaded/list', {});
+    const loaded = await this.#safeAppRequest(
+      'thread/loaded/list',
+      {},
+      'thread_loaded_list',
+    );
     const ids = Array.isArray(loaded?.data) ? loaded.data : [];
     if (ids.length !== 1) {
       if (!required) {
         this.emit('warning', new Error(`waiting for exactly one loaded Codex thread; found ${ids.length}`));
         return null;
       }
-      throw new Error(`cannot choose a Codex target: expected exactly one loaded thread, found ${ids.length}`);
+      throw markDeliveryStage(
+        new Error(`cannot choose a Codex target: expected exactly one loaded thread, found ${ids.length}`),
+        'thread_selection',
+      );
     }
     this.targetThreadId = ids[0];
-    await this.appServer.request('thread/resume', { threadId: this.targetThreadId });
+    await this.#safeAppRequest(
+      'thread/resume',
+      { threadId: this.targetThreadId },
+      'thread_resume',
+    );
     return this.targetThreadId;
   }
 
   async #readTarget() {
     const threadId = await this.#resolveThread(true);
-    const result = await this.appServer.request('thread/read', {
-      threadId,
-      includeTurns: true,
-    });
+    let result;
+    try {
+      result = await this.#safeAppRequest(
+        'thread/read',
+        { threadId, includeTurns: true },
+        'thread_read',
+      );
+    } catch (error) {
+      throw error;
+    }
     if (!result?.thread || result.thread.id !== threadId) {
-      throw new Error('App Server returned the wrong target thread');
+      throw markDeliveryStage(
+        new Error('App Server returned the wrong target thread'),
+        'thread_read_validation',
+      );
     }
     return result.thread;
   }
 
   async #inject(message, localPeerId, assertCurrent) {
-    const thread = await this.#readTarget();
-    const input = [{ type: 'text', text: wrapUntrustedMessage(message, localPeerId) }];
+    let thread;
+    try { thread = await this.#readTarget(); }
+    catch (error) { throw markDeliveryStage(error, 'thread_resolution'); }
+    let input;
+    try { input = [{ type: 'text', text: wrapUntrustedMessage(message, localPeerId) }]; }
+    catch (error) { throw markDeliveryStage(error, 'message_wrapping'); }
     const status = thread.status?.type;
     if (status === 'active') {
       const turnId = activeTurnId(thread);
       if (!turnId) {
-        throw new Error('target thread is active but App Server did not expose its active turn id');
+        throw markDeliveryStage(
+          new Error('target thread is active but App Server did not expose its active turn id'),
+          'thread_state',
+        );
       }
-      assertCurrent();
-      await this.appServer.request('turn/steer', {
-        threadId: thread.id,
-        input,
-        expectedTurnId: turnId,
-      });
+      try { assertCurrent(); }
+      catch (error) { throw markDeliveryStage(error, 'connection_before_write'); }
+      try {
+        await this.appServer.request('turn/steer', {
+          threadId: thread.id,
+          input,
+          expectedTurnId: turnId,
+        });
+      } catch (error) {
+        throw markDeliveryStage(error, 'app_server_write');
+      }
       return;
     }
     if (status !== 'idle') {
-      throw new Error(`target thread is not injectable (${status || 'unknown status'})`);
+      throw markDeliveryStage(
+        new Error(`target thread is not injectable (${status || 'unknown status'})`),
+        'thread_state',
+      );
     }
-    assertCurrent();
-    await this.appServer.request('turn/start', { threadId: thread.id, input });
+    try { assertCurrent(); }
+    catch (error) { throw markDeliveryStage(error, 'connection_before_write'); }
+    try { await this.appServer.request('turn/start', { threadId: thread.id, input }); }
+    catch (error) { throw markDeliveryStage(error, 'app_server_write'); }
   }
 
   #onAppNotification(event) {

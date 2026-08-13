@@ -6,7 +6,7 @@ import test from 'node:test';
 import { WebSocketServer } from 'ws';
 
 import { CodexLiveBridge, wrapUntrustedMessage } from '../src/bridge.mjs';
-import { StdioRpcClient } from '../src/app-server-client.mjs';
+import { AppServerClient, RpcError, StdioRpcClient } from '../src/app-server-client.mjs';
 import { loadConfig, redactedConfig } from '../src/config.mjs';
 import { handleControlCommand } from '../src/control.mjs';
 import { validateRegisteredFrame } from '../src/protocol.mjs';
@@ -26,21 +26,41 @@ function fakeAppServer({
   activeTurnId = null,
   rejectInjection = false,
   injectionDelayMs = 0,
+  staleMethod = null,
+  staleAfterCount = 0,
+  initialLoadedEmpty = false,
 } = {}) {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   const requests = [];
   let authorization;
+  let connectionCount = 0;
   const threadId = 'thr_test';
 
   server.on('connection', (socket, request) => {
+    connectionCount += 1;
+    const connectionNumber = connectionCount;
+    const methodCounts = new Map();
     authorization = request.headers.authorization;
     socket.on('message', (raw) => {
       const message = JSON.parse(raw.toString());
       requests.push(message);
       if (!Object.hasOwn(message, 'id')) return;
+      const methodCount = (methodCounts.get(message.method) || 0) + 1;
+      methodCounts.set(message.method, methodCount);
+      if (
+        connectionNumber === 1
+        && message.method === staleMethod
+        && methodCount > staleAfterCount
+      ) return;
       let result;
       if (message.method === 'initialize') result = { userAgent: 'fake' };
-      else if (message.method === 'thread/loaded/list') result = { data: [threadId], nextCursor: null };
+      else if (message.method === 'thread/loaded/list') {
+        if (initialLoadedEmpty && connectionNumber === 1 && methodCount === 1) {
+          result = { data: [], nextCursor: null };
+        } else {
+          result = { data: [threadId], nextCursor: null };
+        }
+      }
       else if (message.method === 'thread/resume') result = { thread: { id: threadId } };
       else if (message.method === 'thread/read') {
         result = {
@@ -84,6 +104,7 @@ function fakeAppServer({
     requests,
     threadId,
     get authorization() { return authorization; },
+    get connectionCount() { return connectionCount; },
   };
 }
 
@@ -160,7 +181,7 @@ function fakeLiveServer({ ignoreListRequests = false, malformedSendResult = fals
   };
 }
 
-async function makeFixture(appOptions = {}, liveOptions = {}) {
+async function makeFixture(appOptions = {}, liveOptions = {}, configOptions = {}) {
   const app = fakeAppServer(appOptions);
   const live = fakeLiveServer(liveOptions);
   await Promise.all([listen(app.server), listen(live.server)]);
@@ -173,6 +194,7 @@ async function makeFixture(appOptions = {}, liveOptions = {}) {
     OPS_BRAIN_CODEX_APP_SERVER_URL: `ws://127.0.0.1:${appAddress.port}`,
     OPS_BRAIN_CODEX_APP_SERVER_TOKEN: 'local-app-server-token',
     OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS: '1000',
+    ...(configOptions.threadId ? { OPS_BRAIN_CODEX_THREAD_ID: configOptions.threadId } : {}),
   });
   const bridge = new CodexLiveBridge(config);
   const connected = once(bridge, 'connected');
@@ -233,6 +255,100 @@ test('idle thread receives wrapped input through turn/start and ACKs after accep
   } finally {
     await fixture.close();
   }
+});
+
+test('stale pre-TUI App Server connection reconnects for idempotent thread discovery', async () => {
+  const fixture = await makeFixture({
+    status: 'idle',
+    staleMethod: 'thread/loaded/list',
+    staleAfterCount: 1,
+    initialLoadedEmpty: true,
+  });
+  try {
+    const delivered = fixture.live.deliver();
+    const ack = await waitForFrame(
+      fixture.live.frames,
+      (frame) => frame.type === 'acknowledge' && frame.message_id === delivered.message_id,
+      2500,
+    );
+    assert.equal(ack.accepted, true);
+    assert.equal(fixture.app.connectionCount, 2);
+    assert.equal(fixture.app.requests.filter((item) => item.method === 'turn/start').length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('cached target reconnects for idempotent resume without retrying injection', async () => {
+  const fixture = await makeFixture({
+    status: 'idle',
+    staleMethod: 'thread/resume',
+    staleAfterCount: 1,
+  });
+  try {
+    const delivered = fixture.live.deliver();
+    const ack = await waitForFrame(
+      fixture.live.frames,
+      (frame) => frame.type === 'acknowledge' && frame.message_id === delivered.message_id,
+      2500,
+    );
+    assert.equal(ack.accepted, true);
+    assert.equal(fixture.app.connectionCount, 2);
+    assert.equal(fixture.app.requests.filter((item) => item.method === 'turn/start').length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('configured target reconnects for idempotent read without retrying injection', async () => {
+  const fixture = await makeFixture({
+    status: 'idle',
+    staleMethod: 'thread/read',
+  }, {}, { threadId: 'thr_test' });
+  try {
+    const delivered = fixture.live.deliver();
+    const ack = await waitForFrame(
+      fixture.live.frames,
+      (frame) => frame.type === 'acknowledge' && frame.message_id === delivered.message_id,
+      2500,
+    );
+    assert.equal(ack.accepted, true);
+    assert.equal(fixture.app.connectionCount, 2);
+    assert.equal(fixture.app.requests.filter((item) => item.method === 'turn/start').length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('App Server reconnect suppresses old close events and cannot outlive shutdown', async () => {
+  const app = fakeAppServer();
+  await listen(app.server);
+  const client = new AppServerClient({
+    appServerUrl: `ws://127.0.0.1:${app.server.address().port}`,
+    appServerToken: null,
+    requestTimeoutMs: 1000,
+    codexBin: 'codex',
+  });
+  let closeEvents = 0;
+  client.on('close', () => { closeEvents += 1; });
+  try {
+    await client.connect();
+    await client.reconnect();
+    assert.equal(closeEvents, 0);
+    const reconnect = client.reconnect();
+    await client.close();
+    await assert.rejects(reconnect, /stopped|superseded/);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(app.server.clients.size, 0);
+  } finally {
+    await client.close();
+    await closeServer(app.server);
+  }
+});
+
+test('diagnostic error codes accept only safe integers', () => {
+  assert.equal(new RpcError('thread/read', { code: -32600, message: 'bad request' }).code, -32600);
+  assert.equal(new RpcError('thread/read', { code: 'peer-controlled-text', message: 'body' }).code, undefined);
 });
 
 test('active thread receives wrapped input through turn/steer with exact active turn id', async () => {

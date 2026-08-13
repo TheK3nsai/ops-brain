@@ -26,6 +26,8 @@ async function main() {
   bridge.on('deliveryError', ({ messageId, error }) => log('warn', 'live message was not injected', {
     message_id: messageId,
     error_type: error.name,
+    delivery_stage: error.deliveryStage || 'unknown',
+    error_code: Number.isSafeInteger(error.code) ? error.code : undefined,
   }));
 
   const controls = readline.createInterface({ input: process.stdin });

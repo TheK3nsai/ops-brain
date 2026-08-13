@@ -137,6 +137,10 @@ The implementation and shared-App-Server setup guide are in
 exercised against Codex CLI 0.147.0 using a TUI connected through `--remote`.
 `scripts/ops-brain-codex-live` owns the loopback App Server and adapter for one
 foreground TUI, cleans both up on exit, and provides `--status`/`--dry-run`.
+If the wrapper's pre-TUI App Server connection becomes stale, the adapter may
+reconnect once for idempotent thread discovery. It never retries
+`turn/start`/`turn/steer`, preserving the no-duplicate-injection boundary when
+an App Server response is lost.
 
 These remain local adapters because Claude Channels and Codex App Server own the
 host-specific injection semantics. ops-brain remains the generic authenticated

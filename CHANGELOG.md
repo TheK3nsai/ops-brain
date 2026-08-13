@@ -16,6 +16,13 @@ All notable changes to this project will be documented in this file.
   Server sent to Claude Code 2.1.228; Claude received the Channel event, replied
   through its live tool, and Codex displayed the returned marker. Both adapter
   injections produced `host_accepted` receipts.
+- **Production cross-host smoke passed.** After more than three minutes idle
+  through Cloudflare/cloudflared, Codex-Stealth delivered into CC-Cloud's real
+  Claude session and the correlated return marker rendered in the originating
+  Codex thread with the untrusted boundary and server-bound provenance intact.
+  The run exposed and fixed a stale pre-TUI App Server WebSocket: Codex now
+  reconnects once for idempotent thread discovery, while injection writes are
+  still never retried because a lost response could otherwise duplicate text.
 - **Foreground operator wrappers.** Added Claude and Codex launch/status
   scripts that read identity-bound tokens from protected files, keep secrets
   out of arguments and generated config, and clean up owned helper processes.

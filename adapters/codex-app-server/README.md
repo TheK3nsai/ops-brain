@@ -56,6 +56,13 @@ spawn `codex app-server` over stdio when
 `OPS_BRAIN_CODEX_APP_SERVER_URL` is unset, but then a thread ID must identify a
 resumable thread if no thread is already loaded.
 
+The foreground wrapper necessarily opens its adapter connection before the TUI
+finishes loading a thread. If that pre-TUI WebSocket later stops answering
+thread discovery, the adapter reconnects once and repeats only the idempotent
+`thread/loaded/list` request. It never retries `turn/start` or `turn/steer`:
+acceptance followed by a lost response is ambiguous, and retrying could inject
+the same peer text twice.
+
 Optional variables:
 
 - `OPS_BRAIN_CODEX_THREAD_ID`: exact thread to resume and inject into.

@@ -7,7 +7,7 @@ class RpcError extends Error {
   constructor(method, error) {
     super(`${method} failed: ${error?.message || 'unknown App Server error'}`);
     this.name = 'RpcError';
-    this.code = error?.code;
+    this.code = Number.isSafeInteger(error?.code) ? error.code : undefined;
   }
 }
 
@@ -93,6 +93,7 @@ class WebSocketRpcClient extends RpcClient {
       maxPayload: 1024 * 1024,
       perMessageDeflate: false,
     });
+    this.socket = socket;
     await new Promise((resolve, reject) => {
       const onOpen = () => { cleanup(); resolve(); };
       const onError = (error) => { cleanup(); reject(error); };
@@ -103,7 +104,6 @@ class WebSocketRpcClient extends RpcClient {
       socket.once('open', onOpen);
       socket.once('error', onError);
     });
-    this.socket = socket;
     socket.on('message', (data, isBinary) => {
       if (isBinary) return;
       try { this.receive(JSON.parse(data.toString())); }
@@ -126,6 +126,10 @@ class WebSocketRpcClient extends RpcClient {
 
   async close() {
     if (!this.socket || this.socket.readyState === WebSocket.CLOSED) return;
+    if (this.socket.readyState === WebSocket.CONNECTING) {
+      this.socket.terminate();
+      return;
+    }
     await new Promise((resolve) => {
       this.socket.once('close', resolve);
       this.socket.close(1000, 'adapter stopping');
@@ -209,40 +213,108 @@ export class AppServerClient extends EventEmitter {
   constructor(config) {
     super();
     this.config = config;
-    this.rpc = config.appServerUrl
+    this.stopped = false;
+    this.rpcGeneration = 1;
+    this.reconnectPromise = null;
+    this.rpc = this.#newRpc();
+    this.#bindRpc(this.rpc, this.rpcGeneration);
+  }
+
+  #newRpc() {
+    return this.config.appServerUrl
       ? new WebSocketRpcClient({
-          url: config.appServerUrl,
-          token: config.appServerToken,
-          requestTimeoutMs: config.requestTimeoutMs,
+          url: this.config.appServerUrl,
+          token: this.config.appServerToken,
+          requestTimeoutMs: this.config.requestTimeoutMs,
         })
       : new StdioRpcClient({
-          codexBin: config.codexBin,
-          requestTimeoutMs: config.requestTimeoutMs,
+          codexBin: this.config.codexBin,
+          requestTimeoutMs: this.config.requestTimeoutMs,
         });
-    this.rpc.on('notification', (event) => this.emit('notification', event));
-    this.rpc.on('close', () => this.emit('close'));
-    this.rpc.on('transportError', (error) => this.emit('transportError', error));
-    this.rpc.on('protocolError', (error) => this.emit('protocolError', error));
+  }
+
+  #bindRpc(rpc, generation) {
+    const current = () => (
+      !this.stopped && this.rpc === rpc && this.rpcGeneration === generation
+    );
+    rpc.on('notification', (event) => { if (current()) this.emit('notification', event); });
+    rpc.on('close', () => { if (current()) this.emit('close'); });
+    rpc.on('transportError', (error) => { if (current()) this.emit('transportError', error); });
+    rpc.on('protocolError', (error) => { if (current()) this.emit('protocolError', error); });
   }
 
   async connect() {
-    await this.rpc.connect();
-    await this.rpc.request('initialize', {
+    if (this.stopped) throw new Error('App Server client is stopped');
+    return this.#connectRpc(this.rpc, this.rpcGeneration);
+  }
+
+  async #connectRpc(rpc, generation) {
+    const assertCurrent = async () => {
+      if (!this.stopped && this.rpc === rpc && this.rpcGeneration === generation) return;
+      await rpc.close().catch(() => {});
+      throw new Error('App Server connection was stopped or superseded');
+    };
+    await rpc.connect();
+    await assertCurrent();
+    await rpc.request('initialize', {
       clientInfo: {
         name: 'ops_brain_live',
         title: 'ops-brain live adapter',
         version: '0.1.0',
       },
     });
-    this.rpc.notify('initialized', {});
+    await assertCurrent();
+    rpc.notify('initialized', {});
   }
 
   request(method, params) {
+    if (this.stopped || !this.rpc) return Promise.reject(new Error('App Server client is stopped'));
     return this.rpc.request(method, params);
   }
 
-  close() {
-    return this.rpc.close();
+  async reconnect() {
+    if (!this.config.appServerUrl) {
+      throw new Error('cannot reconnect an owned stdio App Server');
+    }
+    if (this.stopped) throw new Error('App Server client is stopped');
+    if (this.reconnectPromise) return this.reconnectPromise;
+    const reconnect = this.#replaceRpc();
+    this.reconnectPromise = reconnect;
+    try {
+      await reconnect;
+    } finally {
+      if (this.reconnectPromise === reconnect) this.reconnectPromise = null;
+    }
+  }
+
+  async #replaceRpc() {
+    const previous = this.rpc;
+    const replacement = this.#newRpc();
+    const generation = ++this.rpcGeneration;
+    this.rpc = replacement;
+    this.#bindRpc(replacement, generation);
+    await previous?.close().catch(() => {});
+    if (this.stopped || this.rpc !== replacement || this.rpcGeneration !== generation) {
+      await replacement.close().catch(() => {});
+      throw new Error('App Server reconnect was stopped or superseded');
+    }
+    try {
+      await this.#connectRpc(replacement, generation);
+    } catch (error) {
+      await replacement.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  async close() {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.rpcGeneration += 1;
+    const rpc = this.rpc;
+    const reconnect = this.reconnectPromise;
+    this.rpc = null;
+    await rpc?.close().catch(() => {});
+    await reconnect?.catch(() => {});
   }
 }
 
