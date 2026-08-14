@@ -12,6 +12,14 @@ services:
     security_opt:
       - no-new-privileges:true
     deploy:
+      # DO NOT add `replicas:` here — the /live messaging lane keeps its peer
+      # registry in process memory (src/live.rs LiveHub), so peers are visible
+      # only to the replica that holds their WebSocket. A second replica would
+      # split the registry: list_live_peers would intermittently omit peers and
+      # send_live_message would fail `not_found` for a peer that is genuinely
+      # connected — load-balanced, so it would look like a flaky network rather
+      # than a topology error. Live must stay single-replica until the registry
+      # is externalised. Verified 2026-08-14 during the fleet acceptance gate.
       resources:
         limits:
           memory: 128m
