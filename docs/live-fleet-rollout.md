@@ -9,6 +9,16 @@ Live messaging is an attended, online-only lane. Do not install either adapter
 as a service, scheduled task, login daemon, or wake-session dependency. A peer
 is present only while its foreground Claude or Codex session is running.
 
+**"Attended" is a mechanism, not a preference.** Both clients fail closed
+without a real terminal, and they fail late. `codex --remote` exits with
+`Error: stdin is not a terminal`, after which the Codex adapter blocks on
+`waiting for exactly one loaded Codex thread; found 0` — registration is gated
+on a genuinely loaded Codex thread, not on the adapter process being up. The
+confusing part is that everything upstream succeeds first: the App Server
+starts and `readyz` passes, so a headless attempt looks like it is working
+right up to the moment it is not, and the failure reads as a broken adapter
+rather than a missing TTY. Do not script, cron, or service-wrap this lane.
+
 ## Fleet matrix
 
 | Host class | Platform | Claude identity | Codex identity | Launcher family |
@@ -25,6 +35,27 @@ The server-side binding is the source of peer identity.
 1. Pull an ops-brain revision containing the live adapters and launchers.
 2. Install Node.js 22 or newer, current Claude Code with Channels support, and
    current Codex CLI with App Server/`--remote` support.
+   **Do not verify Channels support with `claude --help`.** The
+   `--dangerously-load-development-channels` flag is hidden: it is absent from
+   `--help` output while present in the bundle and fully functional. Claude Code
+   **2.1.231** is known good, confirmed independently on two Linux hosts.
+   Checking `--help` will make you conclude the client lacks support and chase
+   an upgrade that changes nothing. To check positively, grep the installed
+   bundle instead of the help text:
+
+   ```bash
+   grep -rasoh dangerously-load-development-channels \
+     "$(dirname "$(readlink -f "$(command -v claude)")")" | wc -l
+   ```
+
+   A non-zero count means the client supports Channels. On 2.1.231 this returns
+   39 on both Linux hosts measured. The check is the principle, not the
+   one-liner: recursively search the installed Claude Code bundle directory for
+   the literal flag string. On Windows, run the equivalent recursive search
+   (`Get-ChildItem -Recurse | Select-String`) against the install directory
+   resolved from `Get-Command claude`; the flag being hidden from `--help` is a
+   property of the client, not of the platform, but the exact count above was
+   not measured on Windows.
    On Windows, the Codex launcher requires a native `codex.exe`; an npm-style
    `codex.cmd` shim cannot host its owned, log-redirected App Server process.
 3. Confirm the host already has the two identity-bound agent tokens. Token
@@ -137,6 +168,34 @@ username matches `-AgentName`, and the adapter independently verifies the
 server-returned binding. Claude, Codex, command arguments, generated MCP
 configuration, and logs receive only the credential-file path.
 
+## Capturing launcher output
+
+Never pipe a launcher's stdout. `ops-brain-claude-live | tee rollout.log` makes
+Claude Code see a non-TTY stdout and silently switch to `--print` mode, which
+then dies with `Input must be provided either through stdin or as a prompt
+argument when using --print`. This is the trap in recording a rollout receipt:
+piping to `tee` is the obvious way to capture one and is exactly what breaks
+the launch.
+
+Use a recorder that keeps a real terminal in front of the client:
+
+```bash
+OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+OPS_BRAIN_AGENT_TOKEN_FILE="$HOME/.config/ops-brain/agent-token-cc-example" \
+OPS_BRAIN_EXPECTED_AGENT=CC-Example \
+OPS_BRAIN_LIVE_LABEL=claude-example \
+script -q -c ops-brain-claude-live rollout.log
+```
+
+`tmux pipe-pane` records the same way, but do not assume tmux is available for
+this: on at least one fleet host the tmux *server* itself dies (`server exited
+unexpectedly`) while hosting the Claude TUI. Prefer `script`; treat tmux as the
+fallback.
+
+The same rule applies to the PowerShell launchers — record with
+`Start-Transcript` rather than piping to `Tee-Object`. That mechanism is
+inferred from the Linux measurement, not yet measured on Windows.
+
 ## Per-host acceptance gate
 
 Do not call a host live until all applicable checks pass:
@@ -148,14 +207,21 @@ Do not call a host live until all applicable checks pass:
 3. Start only Claude. `list_live_peers` from its bound MCP token shows one
    `claude_code` peer with the exact Claude fleet identity.
 4. Stop Claude and confirm the peer disappears. Repeat for Codex.
-5. Start both. Send one unique marker Claude -> Codex and a correlated reply
+5. Start both, then confirm `list_live_peers` reports **exactly one** peer per
+   identity before sending anything. `send_live_message` requires exactly one
+   connected local adapter per bound agent to attribute source provenance; a
+   stale adapter left by an earlier attempt leaves two peers under one identity
+   and makes every send ambiguous. Nothing else surfaces this, and a failed
+   earlier attempt is precisely when a stale peer exists — so check here rather
+   than diagnosing a later send failure as a server problem.
+6. Send one unique marker Claude -> Codex and a correlated reply
    Codex -> Claude. A `host_accepted` receipt means host injection accepted the
    text, not that the model read or followed it.
-6. Negative control: neither sibling token may claim or render as the other
+7. Negative control: neither sibling token may claim or render as the other
    identity. Never send an actual credential as test content.
-7. Leave both sessions idle for at least three minutes through the production
+8. Leave both sessions idle for at least three minutes through the production
    proxy, then repeat one marker exchange.
-8. Exit both clients and confirm their peers disappear promptly and no owned
+9. Exit both clients and confirm their peers disappear promptly and no owned
    App Server, adapter, or launcher process remains.
 
 Record only commit, versions, peer identities, receipt outcomes, timestamps,
