@@ -78,6 +78,7 @@ export class CodexLiveBridge extends EventEmitter {
     this.live = null;
     this.liveGeneration = 0;
     this.stopped = false;
+    this.stopController = new AbortController();
     this.targetThreadId = config.threadId;
     this.queue = new BoundedSerialQueue(config.deliveryQueueCapacity);
     this.appServer.on('notification', (event) => this.#onAppNotification(event));
@@ -85,13 +86,35 @@ export class CodexLiveBridge extends EventEmitter {
 
   async start() {
     await this.appServer.connect();
-    await this.#resolveThread(false);
     return this.#runLiveLoop();
+  }
+
+  async #waitForThread() {
+    let backoff = this.config.reconnectMinMs;
+    while (!this.stopped) {
+      try {
+        const threadId = await this.#resolveThread(false);
+        if (threadId) return threadId;
+      } catch (error) {
+        this.emit('warning', error);
+      }
+
+      try {
+        await delay(backoff, undefined, { signal: this.stopController.signal });
+      } catch (error) {
+        if (error?.name !== 'AbortError') throw error;
+      }
+      backoff = Math.min(backoff * 2, this.config.reconnectMaxMs);
+    }
+    return null;
   }
 
   async #runLiveLoop() {
     let backoff = this.config.reconnectMinMs;
     while (!this.stopped) {
+      const threadId = await this.#waitForThread();
+      if (!threadId || this.stopped) break;
+
       const live = this.liveFactory();
       const generation = ++this.liveGeneration;
       this.live = live;
@@ -176,6 +199,7 @@ export class CodexLiveBridge extends EventEmitter {
       } catch (error) {
         if (required) throw error;
         this.emit('warning', new Error('configured Codex thread is not currently resumable'));
+        return null;
       }
       return this.targetThreadId;
     }
@@ -268,8 +292,9 @@ export class CodexLiveBridge extends EventEmitter {
   }
 
   #onAppNotification(event) {
-    if (event.method === 'thread/closed' && event.params?.threadId === this.targetThreadId && !this.config.threadId) {
-      this.targetThreadId = null;
+    if (event.method === 'thread/closed' && event.params?.threadId === this.targetThreadId) {
+      if (!this.config.threadId) this.targetThreadId = null;
+      void this.live?.close().catch(() => {});
     }
   }
 
@@ -285,6 +310,7 @@ export class CodexLiveBridge extends EventEmitter {
 
   async stop() {
     this.stopped = true;
+    this.stopController.abort();
     await this.live?.close().catch(() => {});
     await this.appServer.close().catch(() => {});
   }

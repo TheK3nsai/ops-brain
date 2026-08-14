@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Experimental — ephemeral Claude↔Codex live messaging
 
+- **Codex peer registration now requires a resumable thread.** The App Server
+  adapter waits until exactly one loaded thread (or the configured thread) can
+  be resumed before registering or reconnecting with `/live`, and disconnects
+  when that target closes. This removes a false-green state where
+  `list_live_peers` showed a Codex peer before the TUI had loaded a target. The
+  live client also rejects every non-registration frame until the server-bound
+  identity has been validated, closing a message-delivery race on failed
+  registration.
 - **Claude Code ↔ Codex live lane.** Added identity-bound `/live` WebSocket
   routing plus `list_live_peers` and `send_live_message` (13 → 15 MCP tools).
   Peers and messages are process-local and online-only: no database migration,

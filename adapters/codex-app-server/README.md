@@ -62,6 +62,13 @@ spawn `codex app-server` over stdio when
 `OPS_BRAIN_CODEX_APP_SERVER_URL` is unset, but then a thread ID must identify a
 resumable thread if no thread is already loaded.
 
+The adapter does not register its `/live` peer until that target thread is
+resolvable and resumable. It repeats the same check before reconnecting and
+disconnects the peer when its target thread closes. While zero or multiple
+threads are loaded and no thread ID is configured, it remains offline and
+retries discovery with bounded backoff, so `list_live_peers` cannot advertise a
+Codex adapter without a resumable target.
+
 The foreground wrapper necessarily opens its adapter connection before the TUI
 finishes loading a thread. If that pre-TUI WebSocket later stops answering,
 the adapter reconnects once and repeats only the applicable idempotent

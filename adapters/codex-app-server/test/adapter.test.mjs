@@ -29,15 +29,22 @@ function fakeAppServer({
   injectionDelayMs = 0,
   staleMethod = null,
   staleAfterCount = 0,
-  initialLoadedEmpty = false,
+  loadedEmptyResponses = 0,
 } = {}) {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   const requests = [];
   let authorization;
   let connectionCount = 0;
+  let loadedListResponses = 0;
   const threadId = 'thr_test';
+  let loadedThreadIds = [threadId];
+  let currentSocket;
 
   server.on('connection', (socket, request) => {
+    currentSocket = socket;
+    socket.once('close', () => {
+      if (currentSocket === socket) currentSocket = undefined;
+    });
     connectionCount += 1;
     const connectionNumber = connectionCount;
     const methodCounts = new Map();
@@ -56,10 +63,11 @@ function fakeAppServer({
       let result;
       if (message.method === 'initialize') result = { userAgent: 'fake' };
       else if (message.method === 'thread/loaded/list') {
-        if (initialLoadedEmpty && connectionNumber === 1 && methodCount === 1) {
+        loadedListResponses += 1;
+        if (loadedListResponses <= loadedEmptyResponses) {
           result = { data: [], nextCursor: null };
         } else {
-          result = { data: [threadId], nextCursor: null };
+          result = { data: loadedThreadIds, nextCursor: null };
         }
       }
       else if (message.method === 'thread/resume') result = { thread: { id: threadId } };
@@ -106,10 +114,18 @@ function fakeAppServer({
     threadId,
     get authorization() { return authorization; },
     get connectionCount() { return connectionCount; },
+    setLoadedThreads(ids) { loadedThreadIds = [...ids]; },
+    notify(method, params) {
+      currentSocket.send(JSON.stringify({ method, params }));
+    },
   };
 }
 
-function fakeLiveServer({ ignoreListRequests = false, malformedSendResult = false } = {}) {
+function fakeLiveServer({
+  ignoreListRequests = false,
+  malformedSendResult = false,
+  messageBeforeRegistration = false,
+} = {}) {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   const frames = [];
   const peers = [{
@@ -130,6 +146,17 @@ function fakeLiveServer({ ignoreListRequests = false, malformedSendResult = fals
   let authorization;
   let origin;
 
+  const inboundMessage = (overrides = {}) => ({
+    message_id: randomUUID(),
+    reply_peer_id: peers[0].peer_id,
+    from_agent: 'CC-Stealth',
+    body: 'Please inspect the failing test.',
+    in_reply_to: null,
+    trust: 'untrusted_peer_input',
+    source_binding: 'connection_bound',
+    ...overrides,
+  });
+
   server.on('connection', (connected, request) => {
     socket = connected;
     authorization = request.headers.authorization;
@@ -138,6 +165,9 @@ function fakeLiveServer({ ignoreListRequests = false, malformedSendResult = fals
       const frame = JSON.parse(raw.toString());
       frames.push(frame);
       if (frame.type === 'register') {
+        if (messageBeforeRegistration) {
+          connected.send(JSON.stringify({ type: 'message', message: inboundMessage() }));
+        }
         connected.send(JSON.stringify({ type: 'registered', protocol_version: 1, peer: localPeer }));
       } else if (frame.type === 'list_peers') {
         if (ignoreListRequests) return;
@@ -166,23 +196,19 @@ function fakeLiveServer({ ignoreListRequests = false, malformedSendResult = fals
     disconnect() { socket.close(1001, 'test disconnect'); },
     sendRaw(data) { socket.send(data); },
     deliver(overrides = {}) {
-      const message = {
-        message_id: randomUUID(),
-        reply_peer_id: peers[0].peer_id,
-        from_agent: 'CC-Stealth',
-        body: 'Please inspect the failing test.',
-        in_reply_to: null,
-        trust: 'untrusted_peer_input',
-        source_binding: 'connection_bound',
-        ...overrides,
-      };
+      const message = inboundMessage(overrides);
       socket.send(JSON.stringify({ type: 'message', message }));
       return message;
     },
   };
 }
 
-async function makeFixture(appOptions = {}, liveOptions = {}, configOptions = {}) {
+async function makeFixture(
+  appOptions = {},
+  liveOptions = {},
+  configOptions = {},
+  { waitForConnected = true } = {},
+) {
   const app = fakeAppServer(appOptions);
   const live = fakeLiveServer(liveOptions);
   await Promise.all([listen(app.server), listen(live.server)]);
@@ -201,7 +227,7 @@ async function makeFixture(appOptions = {}, liveOptions = {}, configOptions = {}
   const bridge = new CodexLiveBridge(config);
   const connected = once(bridge, 'connected');
   const run = bridge.start();
-  await connected;
+  if (waitForConnected) await connected;
 
   return {
     app,
@@ -209,6 +235,7 @@ async function makeFixture(appOptions = {}, liveOptions = {}, configOptions = {}
     bridge,
     config,
     run,
+    connected,
     async close() {
       await bridge.stop();
       await run;
@@ -224,6 +251,18 @@ function waitForFrame(frames, predicate, timeoutMs = 1000) {
       const frame = frames.find(predicate);
       if (frame) resolve(frame);
       else if (Date.now() - started >= timeoutMs) reject(new Error('timed out waiting for frame'));
+      else setTimeout(poll, 5);
+    };
+    poll();
+  });
+}
+
+function waitForCondition(predicate, timeoutMs = 1000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const poll = () => {
+      if (predicate()) resolve();
+      else if (Date.now() - started >= timeoutMs) reject(new Error('timed out waiting for condition'));
       else setTimeout(poll, 5);
     };
     poll();
@@ -259,12 +298,105 @@ test('idle thread receives wrapped input through turn/start and ACKs after accep
   }
 });
 
+test('live peer registration waits until a Codex thread is loaded', async () => {
+  const fixture = await makeFixture(
+    { status: 'idle', loadedEmptyResponses: 1 },
+    {},
+    {},
+    { waitForConnected: false },
+  );
+  try {
+    await waitForFrame(
+      fixture.app.requests,
+      (request) => request.method === 'thread/loaded/list',
+    );
+    assert.equal(
+      fixture.live.frames.some((frame) => frame.type === 'register'),
+      false,
+      'adapter must not advertise a peer before it can resolve a target thread',
+    );
+
+    await fixture.connected;
+    assert.equal(fixture.live.frames[0].type, 'register');
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('thread discovery wait stops without registering a live peer', async () => {
+  const fixture = await makeFixture(
+    { loadedEmptyResponses: 1000 },
+    {},
+    {},
+    { waitForConnected: false },
+  );
+  try {
+    await waitForFrame(
+      fixture.app.requests,
+      (request) => request.method === 'thread/loaded/list',
+    );
+    await fixture.bridge.stop();
+    let timeout;
+    try {
+      await Promise.race([
+        fixture.run,
+        new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('thread discovery did not stop promptly')),
+            500,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    assert.equal(
+      fixture.live.frames.some((frame) => frame.type === 'register'),
+      false,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('closed target disconnects its peer and gates live reconnection', async () => {
+  const fixture = await makeFixture();
+  try {
+    const loadedListsBefore = fixture.app.requests.filter(
+      (request) => request.method === 'thread/loaded/list',
+    ).length;
+    const reconnected = once(fixture.bridge, 'connected');
+
+    fixture.app.setLoadedThreads([]);
+    fixture.app.notify('thread/closed', { threadId: fixture.app.threadId });
+    await waitForCondition(() => fixture.app.requests.filter(
+      (request) => request.method === 'thread/loaded/list',
+    ).length > loadedListsBefore);
+
+    assert.equal(fixture.live.server.clients.size, 0);
+    assert.equal(
+      fixture.live.frames.filter((frame) => frame.type === 'register').length,
+      1,
+      'closed target must not reconnect its peer without a replacement thread',
+    );
+
+    fixture.app.setLoadedThreads([fixture.app.threadId]);
+    await reconnected;
+    assert.equal(
+      fixture.live.frames.filter((frame) => frame.type === 'register').length,
+      2,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('stale pre-TUI App Server connection reconnects for idempotent thread discovery', async () => {
   const fixture = await makeFixture({
     status: 'idle',
     staleMethod: 'thread/loaded/list',
     staleAfterCount: 1,
-    initialLoadedEmpty: true,
+    loadedEmptyResponses: 1,
   });
   try {
     const delivered = fixture.live.deliver();
@@ -673,6 +805,33 @@ test('live registration fails closed on an unexpected server-bound identity', as
     assert.equal(delivered, false);
     await connection;
     assert.equal(client.peer, null);
+    assert.equal(delivered, false);
+  } finally {
+    await client.close();
+    await closeServer(live.server);
+  }
+});
+
+test('pre-registration protocol failure cannot be revived by registration', async () => {
+  const live = fakeLiveServer({ messageBeforeRegistration: true });
+  await listen(live.server);
+  const address = live.server.address();
+  const config = loadConfig({
+    OPS_BRAIN_AGENT_TOKEN: 'agent-token',
+    OPS_BRAIN_EXPECTED_AGENT: 'Codex-Stealth',
+    OPS_BRAIN_LIVE_URL: `ws://127.0.0.1:${address.port}/live`,
+    OPS_BRAIN_CODEX_LABEL: 'codex-test',
+    OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS: '500',
+  });
+  const client = new LiveClient(config);
+  let registered = false;
+  let delivered = false;
+  client.on('registered', () => { registered = true; });
+  client.on('message', () => { delivered = true; });
+  try {
+    await assert.rejects(client.connect(), /closed before registration/);
+    assert.equal(client.peer, null);
+    assert.equal(registered, false);
     assert.equal(delivered, false);
   } finally {
     await client.close();

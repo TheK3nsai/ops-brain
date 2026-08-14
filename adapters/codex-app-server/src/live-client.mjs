@@ -22,6 +22,7 @@ export class LiveClient extends EventEmitter {
     this.config = config;
     this.socket = null;
     this.peer = null;
+    this.protocolFailed = false;
     this.pending = new Map();
     this.registerTimer = null;
   }
@@ -85,6 +86,7 @@ export class LiveClient extends EventEmitter {
   }
 
   #receive(data, isBinary) {
+    if (this.protocolFailed) return;
     if (isBinary) {
       this.#protocolFailure(new Error('ops-brain returned a binary frame'));
       return;
@@ -114,6 +116,10 @@ export class LiveClient extends EventEmitter {
         return;
       }
       this.emit('registered', this.peer);
+      return;
+    }
+    if (!this.peer) {
+      this.#protocolFailure(new Error(`ops-brain returned ${frame.type} before successful registration`));
       return;
     }
     if (frame.type === 'message') {
@@ -229,6 +235,8 @@ export class LiveClient extends EventEmitter {
   }
 
   #protocolFailure(error) {
+    if (this.protocolFailed) return;
+    this.protocolFailed = true;
     this.peer = null;
     this.emit('protocolError', error);
     if (this.socket?.readyState === WebSocket.OPEN) {
