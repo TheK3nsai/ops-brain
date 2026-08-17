@@ -158,7 +158,16 @@ try {
         throw "Port $AppServerPort already hosts an App Server; select another port"
     }
 
-    $appProcess = Start-Process -FilePath $codexCommand.Source -ArgumentList @('app-server', '--listen', $AppServerEndpoint) -RedirectStandardOutput $appOut -RedirectStandardError $appErr -PassThru
+    # Hidden, NOT -NoNewWindow. Without either, Start-Process gives this child its own
+    # console; because stdout and stderr are redirected to files it renders as an empty
+    # terminal beside the TUI, looks like stray junk, and closing it kills the live lane
+    # with no log entry at all (observed during the 2026-08-17 acceptance gate).
+    #
+    # -NoNewWindow fixes the closable window but breaks the gate a different way: the
+    # child then shares the launcher's console and holds its input handle, so the Codex
+    # TUI stops accepting keystrokes. Hidden keeps the child on its own console, off
+    # screen and away from the TUI's stdin.
+    $appProcess = Start-Process -FilePath $codexCommand.Source -ArgumentList @('app-server', '--listen', $AppServerEndpoint) -RedirectStandardOutput $appOut -RedirectStandardError $appErr -WindowStyle Hidden -PassThru
     $ready = $false
     foreach ($attempt in 1..50) {
         if ($appProcess.HasExited) { break }
@@ -176,7 +185,10 @@ try {
         '-Label', $Label,
         '-AppServerUrl', $AppServerUrl.AbsoluteUri
     )
-    $adapterProcess = Start-Process -FilePath $pwshCommand.Source -ArgumentList @($adapterArguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -RedirectStandardOutput $adapterOut -RedirectStandardError $adapterErr -PassThru
+    # Hidden for the same reasons as the App Server above. This is the process whose
+    # death removes the live peer, so it must be neither closable nor able to contend
+    # for the TUI's console input.
+    $adapterProcess = Start-Process -FilePath $pwshCommand.Source -ArgumentList @($adapterArguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -RedirectStandardOutput $adapterOut -RedirectStandardError $adapterErr -WindowStyle Hidden -PassThru
 
     & $codexCommand.Source --remote $AppServerEndpoint @CodexArgs
     exit $LASTEXITCODE
