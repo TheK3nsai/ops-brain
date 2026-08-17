@@ -54,8 +54,9 @@ The server-side binding is the source of peer identity.
    the literal flag string. On Windows, run the equivalent recursive search
    (`Get-ChildItem -Recurse | Select-String`) against the install directory
    resolved from `Get-Command claude`; the flag being hidden from `--help` is a
-   property of the client, not of the platform, but the exact count above was
-   not measured on Windows.
+   property of the client, not of the platform. The first measured Windows 11
+   host returned 11 hits rather than the 39 seen on Linux; the exact count can
+   vary with the installed bundle, and only a non-zero result is significant.
    On Windows, the Codex launcher requires a native `codex.exe`; an npm-style
    `codex.cmd` shim cannot host its owned, log-redirected App Server process.
 3. Confirm the host already has the two identity-bound agent tokens. Token
@@ -217,8 +218,15 @@ Do not call a host live until all applicable checks pass:
 6. Send one unique marker Claude -> Codex and a correlated reply
    Codex -> Claude. A `host_accepted` receipt means host injection accepted the
    text, not that the model read or followed it.
-7. Negative control: neither sibling token may claim or render as the other
-   identity. Never send an actual credential as test content.
+7. Run both halves of the identity negative control. They exercise different
+   enforcement points, so passing one does not imply the other:
+   - **7a, rendered provenance:** send harmless text that claims the sibling's
+     `from_agent` and confirm the delivered envelope still renders the sender's
+     server-bound identity.
+   - **7b, credential claim:** give each credential launcher the sibling
+     identity/credential pairing and confirm it rejects the mismatch before
+     reading or transmitting the bearer. Use only identity metadata in the
+     receipt; never print a token or send an actual credential as test content.
 8. Leave both sessions idle for at least three minutes through the production
    proxy, then repeat one marker exchange.
 9. Exit both clients and confirm their peers disappear promptly and no owned
