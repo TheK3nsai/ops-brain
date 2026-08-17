@@ -41,6 +41,13 @@ All notable changes to this project will be documented in this file.
   foreground-only; the bundle deliberately adds no daemon or startup ritual.
   CI now runs both adapter suites and Linux launcher tests, and a Windows job
   parses every PowerShell launcher and exercises installer/status modes.
+- **Fleet-gate hardening.** Windows launchers now preserve trailing client
+  arguments, pass Codex App Server a bare `ws://IP:PORT`, and hide redirected
+  helpers without sharing TUI input under the required PowerShell 7.4/.NET 8
+  runtime. Codex disconnect/reconnect diagnostics now distinguish remote
+  teardown from transport failure, and shutdown aborts reconnect backoff
+  promptly. The rollout gate separately tests rendered provenance and crossed
+  identity/credential rejection, with timestamped observation of peer teardown.
 - **Honest delivery receipts.** `routed` means the message reached the target
   adapter queue; `host_accepted` requires an ACK after host injection. Neither
   claims the model read or acted. Exact target ACK binding, bounded queues,
