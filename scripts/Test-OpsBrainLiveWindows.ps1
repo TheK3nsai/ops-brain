@@ -38,7 +38,8 @@ try {
     & "$PSScriptRoot\Install-OpsBrainLive.ps1" -SkipDependencies -BinDirectory $binDirectory
     & "$PSScriptRoot\Install-OpsBrainLive.ps1" -Mode Status -BinDirectory $binDirectory
     & "$PSScriptRoot\ops-brain-claude-live.ps1" -Mode Status
-    & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode Status
+    $codexStatusOutput = & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode Status
+    Assert-True (@($codexStatusOutput) -contains 'App Server: ws://127.0.0.1:4500') 'Codex launcher status did not preserve the bare App Server endpoint'
 
     $unsafeBin = Join-Path $testDirectory 'unsafe-bin'
     [IO.Directory]::CreateDirectory($unsafeBin) | Out-Null
