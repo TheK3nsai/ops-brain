@@ -169,6 +169,12 @@ username matches `-AgentName`, and the adapter independently verifies the
 server-returned binding. Claude, Codex, command arguments, generated MCP
 configuration, and logs receive only the credential-file path.
 
+The PowerShell launchers keep their owned helper processes in separate hidden
+windows. Do not replace `-WindowStyle Hidden` with `-NoNewWindow` when changing
+this code: `-NoNewWindow` also shares the foreground client's console input
+handle, so the helpers contend with the TUI and the client stops accepting
+keystrokes even though every process still appears healthy.
+
 ## Capturing launcher output
 
 Never pipe a launcher's stdout. `ops-brain-claude-live | tee rollout.log` makes
@@ -230,7 +236,10 @@ Do not call a host live until all applicable checks pass:
 8. Leave both sessions idle for at least three minutes through the production
    proxy, then repeat one marker exchange.
 9. Exit both clients and confirm their peers disappear promptly and no owned
-   App Server, adapter, or launcher process remains.
+   App Server, adapter, or launcher process remains. Give a remote observer an
+   explicit start signal or record an independent host-side exit timestamp
+   before it begins timing. A poll taken before the client actually exits is a
+   valid measurement of the wrong interval and can falsely report a stale peer.
 
 Record only commit, versions, peer identities, receipt outcomes, timestamps,
 and sanitized marker IDs in the rollout handoff. Never record token values,
