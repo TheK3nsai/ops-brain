@@ -140,7 +140,11 @@ export class CodexLiveBridge extends EventEmitter {
       const jitter = Math.floor(Math.random() * Math.max(1, backoff / 4));
       const delayMs = backoff + jitter;
       this.emit('reconnecting', { delayMs });
-      await delay(delayMs);
+      try {
+        await delay(delayMs, undefined, { signal: this.stopController.signal });
+      } catch (error) {
+        if (error?.name !== 'AbortError') throw error;
+      }
       backoff = Math.min(backoff * 2, this.config.reconnectMaxMs);
     }
   }

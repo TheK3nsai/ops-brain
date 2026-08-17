@@ -695,8 +695,8 @@ test('live disconnects expose close diagnostics and the reconnect schedule', asy
   live.close = async () => {};
   const bridge = new CodexLiveBridge({
     deliveryQueueCapacity: 1,
-    reconnectMinMs: 10,
-    reconnectMaxMs: 20,
+    reconnectMinMs: 10000,
+    reconnectMaxMs: 20000,
     threadId: null,
   }, {
     appServer,
@@ -718,8 +718,13 @@ test('live disconnects expose close diagnostics and the reconnect schedule', asy
     assert.equal(details.willReconnect, true);
 
     const [{ delayMs }] = await reconnecting;
-    assert.ok(delayMs >= 10);
-    assert.ok(delayMs < 12.5);
+    assert.ok(delayMs >= 10000);
+    assert.ok(delayMs < 12500);
+
+    const stoppedAt = Date.now();
+    await bridge.stop();
+    await run;
+    assert.ok(Date.now() - stoppedAt < 250, 'shutdown did not abort reconnect backoff');
   } finally {
     await bridge.stop();
     await run;

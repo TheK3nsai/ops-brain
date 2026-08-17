@@ -169,12 +169,6 @@ username matches `-AgentName`, and the adapter independently verifies the
 server-returned binding. Claude, Codex, command arguments, generated MCP
 configuration, and logs receive only the credential-file path.
 
-The PowerShell launchers keep their owned helper processes in separate hidden
-windows. Do not replace `-WindowStyle Hidden` with `-NoNewWindow` when changing
-this code: `-NoNewWindow` also shares the foreground client's console input
-handle, so the helpers contend with the TUI and the client stops accepting
-keystrokes even though every process still appears healthy.
-
 ## Capturing launcher output
 
 Never pipe a launcher's stdout. `ops-brain-claude-live | tee rollout.log` makes
@@ -229,10 +223,13 @@ Do not call a host live until all applicable checks pass:
    - **7a, rendered provenance:** send harmless text that claims the sibling's
      `from_agent` and confirm the delivered envelope still renders the sender's
      server-bound identity.
-   - **7b, credential claim:** give each credential launcher the sibling
-     identity/credential pairing and confirm it rejects the mismatch before
-     reading or transmitting the bearer. Use only identity metadata in the
-     receipt; never print a token or send an actual credential as test content.
+   - **7b, credential claim:** cross exactly one field at a time: keep the
+     launcher's own credential file but pass the sibling `-AgentName`, then
+     repeat in the other direction. Confirm each mismatch is rejected before
+     reading or transmitting the bearer. Passing the sibling name *and* sibling
+     credential together is a valid matching pair and is not a negative
+     control. Use only identity metadata in the receipt; never print a token or
+     send an actual credential as test content.
 8. Leave both sessions idle for at least three minutes through the production
    proxy, then repeat one marker exchange.
 9. Exit both clients and confirm their peers disappear promptly and no owned
