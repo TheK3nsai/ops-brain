@@ -57,8 +57,29 @@ The server-side binding is the source of peer identity.
    property of the client, not of the platform. The first measured Windows 11
    host returned 11 hits rather than the 39 seen on Linux; the exact count can
    vary with the installed bundle, and only a non-zero result is significant.
-   On Windows, the Codex launcher requires a native `codex.exe`; an npm-style
-   `codex.cmd` shim cannot host its owned, log-redirected App Server process.
+   On Windows, resolve and invoke the vendored native `codex.exe` directly; do
+   not rely on the `codex` shim on PATH. **This is a path choice, not an install
+   step.** `codex` on PATH is typically the npm `codex.cmd` → `node bin/codex.js`
+   shim, but the same npm package already vendors the native binary:
+
+   ```
+   %APPDATA%\npm\node_modules\@openai\codex\node_modules\@openai\
+     codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe
+   ```
+
+   Measured there at 285 MB / 0.147.0 on one Windows host, 2026-08-14. Wording
+   that tells operators to *install* native codex sends them to a reinstall they
+   do not need.
+
+   Whether the shim can host the launcher's owned, log-redirected App Server
+   process is **unmeasured**. A static read of `bin/codex.js` shows it resolves
+   the vendored binary and spawns it with `stdio: "inherit"`, forwarding
+   SIGINT/SIGTERM/SIGHUP and mirroring the exit code — so real console handles
+   are inherited straight through to the native process. That rules out the
+   TTY-loss failure the shim's presence would otherwise suggest, but does not
+   settle whether the App Server keys on the launching process rather than the
+   console owner. Use the native path regardless: it costs nothing and avoids
+   the process-identity trap in gate step 9.
 3. Confirm the host already has the two identity-bound agent tokens. Token
    delivery, minting, and rotation are attended credential operations and are
    outside this runbook.
@@ -239,6 +260,16 @@ Do not call a host live until all applicable checks pass:
    explicit start signal or record an independent host-side exit timestamp
    before it begins timing. A poll taken before the client actually exits is a
    valid measurement of the wrong interval and can falsely report a stale peer.
+
+   On Windows that host-side timestamp must be the exit of the **native
+   `codex.exe` PID, obtained after launch** — not the PID the launcher returns.
+   Through the npm shim the process tree is `cmd.exe` → `node.exe` →
+   `codex.exe`, one level deeper again through a local wrapper `.cmd`, so a
+   watcher built the obvious way (poll the PID from `Start-Process codex`)
+   stamps **node's** exit: a distinct and later event than the client's. That is
+   the same class of clock-ordering artifact as the unsynchronized start signal
+   above, but sourced from process identity, so it will not look the same in the
+   log — the interval reads as clean while bounding the wrong process.
 
 Record only commit, versions, peer identities, receipt outcomes, timestamps,
 and sanitized marker IDs in the rollout handoff. Never record token values,
