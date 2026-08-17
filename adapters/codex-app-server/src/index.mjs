@@ -22,6 +22,16 @@ async function main() {
     agent_name: peer.agent_name,
     ...redactedConfig(config),
   }));
+  bridge.on('disconnected', ({ peer, code, reason, willReconnect }) => log(willReconnect ? 'warn' : 'info', 'live adapter disconnected', {
+    peer_id: peer.peer_id,
+    agent_name: peer.agent_name,
+    close_code: code,
+    close_reason: reason || undefined,
+    will_reconnect: willReconnect,
+  }));
+  bridge.on('reconnecting', ({ delayMs }) => log('info', 'live adapter reconnect scheduled', {
+    delay_ms: delayMs,
+  }));
   bridge.on('warning', (error) => log('warn', error.message));
   bridge.on('deliveryError', ({ messageId, error }) => log('warn', 'live message was not injected', {
     message_id: messageId,
