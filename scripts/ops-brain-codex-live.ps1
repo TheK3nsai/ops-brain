@@ -101,6 +101,11 @@ $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $Adapter = Join-Path $RepoDirectory 'adapters\codex-app-server\src\index.mjs'
 $CredentialLauncher = Join-Path $PSScriptRoot 'start-ops-brain-live-adapter.ps1'
 $AppServerUrl = [uri]"ws://127.0.0.1:$AppServerPort"
+# codex app-server --listen rejects any path component -- `--help` documents the
+# supported form as bare ws://IP:PORT. [uri].AbsoluteUri normalizes the empty path to
+# "/", producing ws://127.0.0.1:4500/, which the parser refuses outright. Keep the [uri]
+# above for validation and display; pass this bare string to codex.exe itself.
+$AppServerEndpoint = "ws://127.0.0.1:$AppServerPort"
 $StateDirectory = Get-NormalizedPath $StateDirectory
 if ($AgentCredentialFile) {
     $AgentCredentialFile = Get-NormalizedPath $AgentCredentialFile
@@ -113,7 +118,7 @@ if ($Mode -eq 'Status') {
     "live URL: $(if ($null -ne $LiveUrl) { $LiveUrl.AbsoluteUri } else { '<unset>' })"
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"
-    "App Server: $($AppServerUrl.AbsoluteUri)"
+    "App Server: $AppServerEndpoint"
     "credential: $(if ($AgentCredentialFile) { $AgentCredentialFile } else { '<unset>' }) - $credentialStatus"
     "state: $StateDirectory"
     "codex: $(Get-ApplicationPath 'codex.exe')"
@@ -132,7 +137,7 @@ $codexCommand = Get-RequiredApplication 'codex.exe'
 $pwshCommand = Get-RequiredApplication 'pwsh.exe'
 
 if ($Mode -eq 'DryRun') {
-    "would launch App Server at $($AppServerUrl.AbsoluteUri)"
+    "would launch App Server at $AppServerEndpoint"
     'would launch the Codex adapter with a DPAPI credential (bearer redacted)'
     'would launch one Codex TUI through that App Server'
     exit 0
@@ -153,7 +158,7 @@ try {
         throw "Port $AppServerPort already hosts an App Server; select another port"
     }
 
-    $appProcess = Start-Process -FilePath $codexCommand.Source -ArgumentList @('app-server', '--listen', $AppServerUrl.AbsoluteUri) -RedirectStandardOutput $appOut -RedirectStandardError $appErr -PassThru
+    $appProcess = Start-Process -FilePath $codexCommand.Source -ArgumentList @('app-server', '--listen', $AppServerEndpoint) -RedirectStandardOutput $appOut -RedirectStandardError $appErr -PassThru
     $ready = $false
     foreach ($attempt in 1..50) {
         if ($appProcess.HasExited) { break }
@@ -173,7 +178,7 @@ try {
     )
     $adapterProcess = Start-Process -FilePath $pwshCommand.Source -ArgumentList @($adapterArguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -RedirectStandardOutput $adapterOut -RedirectStandardError $adapterErr -PassThru
 
-    & $codexCommand.Source --remote $AppServerUrl.AbsoluteUri @CodexArgs
+    & $codexCommand.Source --remote $AppServerEndpoint @CodexArgs
     exit $LASTEXITCODE
 }
 finally {
