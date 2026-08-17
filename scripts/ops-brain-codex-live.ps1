@@ -1,7 +1,10 @@
 #requires -Version 7.2
 # Launch one Codex TUI, App Server, and ops-brain adapter on Windows.
 
-[CmdletBinding()]
+# PositionalBinding must stay off: with it on, the first trailing Codex argument
+# binds to $LiveUrl by position instead of falling through to $CodexArgs, so
+# `ops-brain-codex-live resume` dies in Assert-LiveUrl on a relative URI.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateSet('Run', 'Status', 'DryRun')]
     [string]$Mode = 'Run',

@@ -103,7 +103,11 @@ fs.writeFileSync(capture, `${config}\n---ARGS---\n${args.join('\n')}`);
             '-LiveUrl', 'wss://ops-brain.example/live',
             '-AgentCredentialFile', $credential,
             '-AgentName', 'CC-CI',
-            '-Label', 'claude-ci'
+            '-Label', 'claude-ci',
+            # Trailing client arguments. These must reach $ClaudeArgs; with
+            # PositionalBinding left on, 'resume' binds to $Mode instead and the
+            # launcher dies in ValidateSet before Claude is ever invoked.
+            'resume', '--model', 'fixture-model'
         )) { [void]$startInfo.ArgumentList.Add($argument) }
         $process = [Diagnostics.Process]::Start($startInfo)
         $process.WaitForExit()
@@ -129,6 +133,19 @@ fs.writeFileSync(capture, `${config}\n---ARGS---\n${args.join('\n')}`);
     Assert-True ($configIndex -ge 0 -and $configIndex + 1 -lt $arguments.Count) 'Claude did not receive one MCP config path argument'
     Assert-True (-not (Test-Path -LiteralPath $arguments[$configIndex + 1])) 'temporary Claude MCP config was not removed'
     Assert-True ($arguments -contains '--dangerously-load-development-channels') 'Claude Channel opt-in flag is missing'
+    $resumeIndex = [Array]::IndexOf($arguments, 'resume')
+    Assert-True ($resumeIndex -ge 0) 'trailing client arguments did not reach $ClaudeArgs'
+    Assert-True ($arguments -contains '--model' -and $arguments -contains 'fixture-model') 'trailing client flag and its value did not reach $ClaudeArgs'
+    Assert-True ($resumeIndex -lt $configIndex) 'client arguments were not passed ahead of the launcher-owned Claude flags'
+
+    # The Codex launcher has no credential-free end-to-end path (it refuses .cmd
+    # shims, so there is no fake codex.exe to capture arguments). Status mode still
+    # proves the binding: with PositionalBinding on, 'resume' lands in $LiveUrl and
+    # Assert-LiveUrl throws on the relative URI instead of reaching $CodexArgs.
+    $codexStatus = $null
+    try { $codexStatus = & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode Status -Label 'codex-ci' resume --model fixture-model }
+    catch { $codexStatus = @() }
+    Assert-True (@($codexStatus) -contains 'label: codex-ci') 'Codex launcher mis-bound a trailing client argument instead of collecting it into $CodexArgs'
 
     [IO.File]::WriteAllText((Join-Path $fakeBin 'codex.cmd'), "@echo off`r`nexit /b 0`r`n", [Text.UTF8Encoding]::new($false))
     $shimRejected = $false
