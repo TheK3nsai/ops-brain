@@ -125,14 +125,26 @@ export class CodexLiveBridge extends EventEmitter {
         const peer = await live.connect();
         backoff = this.config.reconnectMinMs;
         this.emit('connected', peer);
-        await new Promise((resolve) => live.once('close', resolve));
+        const close = await new Promise((resolve) => live.once('close', resolve));
+        this.emit('disconnected', {
+          peer,
+          code: close?.code,
+          reason: close?.reason || '',
+          willReconnect: !this.stopped,
+        });
       } catch (error) {
         this.emit('warning', error);
         await live.close().catch(() => {});
       }
       if (this.stopped) break;
       const jitter = Math.floor(Math.random() * Math.max(1, backoff / 4));
-      await delay(backoff + jitter);
+      const delayMs = backoff + jitter;
+      this.emit('reconnecting', { delayMs });
+      try {
+        await delay(delayMs, undefined, { signal: this.stopController.signal });
+      } catch (error) {
+        if (error?.name !== 'AbortError') throw error;
+      }
       backoff = Math.min(backoff * 2, this.config.reconnectMaxMs);
     }
   }

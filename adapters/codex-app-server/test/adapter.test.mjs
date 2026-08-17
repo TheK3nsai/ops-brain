@@ -675,6 +675,62 @@ test('queued messages are dropped when their originating live connection disconn
   }
 });
 
+test('live disconnects expose close diagnostics and the reconnect schedule', async () => {
+  const peer = {
+    peer_id: randomUUID(),
+    agent_name: 'Codex-Stealth',
+  };
+  const threadId = randomUUID();
+  const appServer = new EventEmitter();
+  appServer.connect = async () => {};
+  appServer.request = async (method, params) => {
+    if (method === 'thread/loaded/list') return { data: [threadId] };
+    assert.equal(method, 'thread/resume');
+    assert.equal(params.threadId, threadId);
+    return {};
+  };
+  appServer.close = async () => {};
+  const live = new EventEmitter();
+  live.connect = async () => peer;
+  live.close = async () => {};
+  const bridge = new CodexLiveBridge({
+    deliveryQueueCapacity: 1,
+    reconnectMinMs: 10000,
+    reconnectMaxMs: 20000,
+    threadId: null,
+  }, {
+    appServer,
+    liveFactory: () => live,
+  });
+  const connected = once(bridge, 'connected');
+  const run = bridge.start();
+  try {
+    await connected;
+    const disconnected = once(bridge, 'disconnected');
+    const reconnecting = once(bridge, 'reconnecting');
+    live.emit('close', { code: 1001, reason: 'test disconnect' });
+
+    const [details] = await disconnected;
+    assert.equal(details.peer.peer_id, peer.peer_id);
+    assert.equal(details.peer.agent_name, peer.agent_name);
+    assert.equal(details.code, 1001);
+    assert.equal(details.reason, 'test disconnect');
+    assert.equal(details.willReconnect, true);
+
+    const [{ delayMs }] = await reconnecting;
+    assert.ok(delayMs >= 10000);
+    assert.ok(delayMs < 12500);
+
+    const stoppedAt = Date.now();
+    await bridge.stop();
+    await run;
+    assert.ok(Date.now() - stoppedAt < 250, 'shutdown did not abort reconnect backoff');
+  } finally {
+    await bridge.stop();
+    await run;
+  }
+});
+
 test('strict result validation closes malformed responses and caps pending requests', async () => {
   const malformed = await makeFixture({}, { malformedSendResult: true });
   try {

@@ -37,7 +37,7 @@ export class LiveClient extends EventEmitter {
     this.socket = socket;
     socket.on('message', (data, isBinary) => this.#receive(data, isBinary));
     socket.on('error', (error) => this.emit('transportError', error));
-    socket.once('close', () => {
+    socket.once('close', (code, reason) => {
       clearTimeout(this.registerTimer);
       this.peer = null;
       for (const pending of this.pending.values()) {
@@ -45,7 +45,10 @@ export class LiveClient extends EventEmitter {
         pending.reject(new Error('ops-brain live connection closed'));
       }
       this.pending.clear();
-      this.emit('close');
+      this.emit('close', {
+        code,
+        reason: reason.toString('utf8'),
+      });
     });
 
     await new Promise((resolve, reject) => {
