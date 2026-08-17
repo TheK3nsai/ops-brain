@@ -1,4 +1,4 @@
-#requires -Version 7.2
+#requires -Version 7.4
 # Credential-free Windows runtime checks for the live installer and launchers.
 
 [CmdletBinding()]

@@ -1,4 +1,4 @@
-#requires -Version 7.2
+#requires -Version 7.4
 # Launch one Codex TUI, App Server, and ops-brain adapter on Windows.
 
 # PositionalBinding must stay off: with it on, the first trailing Codex argument
@@ -161,7 +161,9 @@ try {
         throw "Port $AppServerPort already hosts an App Server; select another port"
     }
 
-    # Hidden, NOT -NoNewWindow. Without either, Start-Process gives this child its own
+    # Hidden, NOT -NoNewWindow. Redirecting output sets UseShellExecute=false, so this
+    # requires PowerShell 7.4/.NET 8; earlier runtimes silently ignored WindowStyle in
+    # that mode. Without either, Start-Process gives this child its own
     # console; because stdout and stderr are redirected to files it renders as an empty
     # terminal beside the TUI, looks like stray junk, and closing it kills the live lane
     # with no log entry at all (observed during the 2026-08-17 acceptance gate).

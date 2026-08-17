@@ -1,4 +1,4 @@
-#requires -Version 7.2
+#requires -Version 7.4
 # Launch Claude Code with the local ops-brain Channel adapter on Windows.
 
 # PositionalBinding must stay off: with it on, the first trailing Claude argument

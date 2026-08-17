@@ -1,4 +1,4 @@
-#requires -Version 7.2
+#requires -Version 7.4
 # Install private ops-brain live launch shims for one Windows user.
 
 [CmdletBinding()]

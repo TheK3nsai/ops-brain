@@ -1,4 +1,4 @@
-#requires -Version 7.2
+#requires -Version 7.4
 # Credential-isolating child used by the Windows Claude and Codex launchers.
 
 [CmdletBinding()]
