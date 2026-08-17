@@ -85,7 +85,7 @@ for file in \
     "$SCRIPT_DIR/ops-brain-codex-live.ps1" \
     "$SCRIPT_DIR/Install-OpsBrainLive.ps1"; do
     [[ -s $file ]] || fail "missing PowerShell fleet file: $file"
-    grep -Eq '^#requires -Version 7\.2$' "$file" || fail "PowerShell version gate missing: $file"
+    grep -Eq '^#requires -Version 7\.4$' "$file" || fail "PowerShell 7.4 version gate missing: $file"
 done
 grep -Fq 'Import-Clixml -LiteralPath' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'DPAPI credential import missing'
 grep -Fq "OPS_BRAIN_AGENT_TOKEN = \$secret" "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'adapter-only bearer export missing'
