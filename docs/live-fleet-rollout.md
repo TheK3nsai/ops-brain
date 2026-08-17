@@ -130,7 +130,9 @@ not a security boundary against processes already running as the same user.
 
 ## Windows installation and launch
 
-From a PowerShell 7.2+ prompt in the ops-brain checkout:
+From a PowerShell 7.4+ prompt in the ops-brain checkout. The Windows bundle
+requires .NET 8 because the Codex launcher redirects helper output while hiding
+the child windows; older runtimes ignore the hidden window style in that mode.
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Install-OpsBrainLive.ps1

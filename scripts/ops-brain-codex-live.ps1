@@ -1,7 +1,10 @@
-#requires -Version 7.2
+#requires -Version 7.4
 # Launch one Codex TUI, App Server, and ops-brain adapter on Windows.
 
-[CmdletBinding()]
+# PositionalBinding must stay off: with it on, the first trailing Codex argument
+# binds to $LiveUrl by position instead of falling through to $CodexArgs, so
+# `ops-brain-codex-live resume` dies in Assert-LiveUrl on a relative URI.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateSet('Run', 'Status', 'DryRun')]
     [string]$Mode = 'Run',
@@ -101,6 +104,11 @@ $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $Adapter = Join-Path $RepoDirectory 'adapters\codex-app-server\src\index.mjs'
 $CredentialLauncher = Join-Path $PSScriptRoot 'start-ops-brain-live-adapter.ps1'
 $AppServerUrl = [uri]"ws://127.0.0.1:$AppServerPort"
+# codex app-server --listen rejects any path component -- `--help` documents the
+# supported form as bare ws://IP:PORT. [uri].AbsoluteUri normalizes the empty path to
+# "/", producing ws://127.0.0.1:4500/, which the parser refuses outright. Keep the [uri]
+# above for validation and display; pass this bare string to codex.exe itself.
+$AppServerEndpoint = "ws://127.0.0.1:$AppServerPort"
 $StateDirectory = Get-NormalizedPath $StateDirectory
 if ($AgentCredentialFile) {
     $AgentCredentialFile = Get-NormalizedPath $AgentCredentialFile
@@ -113,7 +121,7 @@ if ($Mode -eq 'Status') {
     "live URL: $(if ($null -ne $LiveUrl) { $LiveUrl.AbsoluteUri } else { '<unset>' })"
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"
-    "App Server: $($AppServerUrl.AbsoluteUri)"
+    "App Server: $AppServerEndpoint"
     "credential: $(if ($AgentCredentialFile) { $AgentCredentialFile } else { '<unset>' }) - $credentialStatus"
     "state: $StateDirectory"
     "codex: $(Get-ApplicationPath 'codex.exe')"
@@ -132,7 +140,7 @@ $codexCommand = Get-RequiredApplication 'codex.exe'
 $pwshCommand = Get-RequiredApplication 'pwsh.exe'
 
 if ($Mode -eq 'DryRun') {
-    "would launch App Server at $($AppServerUrl.AbsoluteUri)"
+    "would launch App Server at $AppServerEndpoint"
     'would launch the Codex adapter with a DPAPI credential (bearer redacted)'
     'would launch one Codex TUI through that App Server'
     exit 0
@@ -153,7 +161,18 @@ try {
         throw "Port $AppServerPort already hosts an App Server; select another port"
     }
 
-    $appProcess = Start-Process -FilePath $codexCommand.Source -ArgumentList @('app-server', '--listen', $AppServerUrl.AbsoluteUri) -RedirectStandardOutput $appOut -RedirectStandardError $appErr -PassThru
+    # Hidden, NOT -NoNewWindow. Redirecting output sets UseShellExecute=false, so this
+    # requires PowerShell 7.4/.NET 8; earlier runtimes silently ignored WindowStyle in
+    # that mode. Without either, Start-Process gives this child its own
+    # console; because stdout and stderr are redirected to files it renders as an empty
+    # terminal beside the TUI, looks like stray junk, and closing it kills the live lane
+    # with no log entry at all (observed during the 2026-08-17 acceptance gate).
+    #
+    # -NoNewWindow fixes the closable window but breaks the gate a different way: the
+    # child then shares the launcher's console and holds its input handle, so the Codex
+    # TUI stops accepting keystrokes. Hidden keeps the child on its own console, off
+    # screen and away from the TUI's stdin.
+    $appProcess = Start-Process -FilePath $codexCommand.Source -ArgumentList @('app-server', '--listen', $AppServerEndpoint) -RedirectStandardOutput $appOut -RedirectStandardError $appErr -WindowStyle Hidden -PassThru
     $ready = $false
     foreach ($attempt in 1..50) {
         if ($appProcess.HasExited) { break }
@@ -171,9 +190,12 @@ try {
         '-Label', $Label,
         '-AppServerUrl', $AppServerUrl.AbsoluteUri
     )
-    $adapterProcess = Start-Process -FilePath $pwshCommand.Source -ArgumentList @($adapterArguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -RedirectStandardOutput $adapterOut -RedirectStandardError $adapterErr -PassThru
+    # Hidden for the same reasons as the App Server above. This is the process whose
+    # death removes the live peer, so it must be neither closable nor able to contend
+    # for the TUI's console input.
+    $adapterProcess = Start-Process -FilePath $pwshCommand.Source -ArgumentList @($adapterArguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -RedirectStandardOutput $adapterOut -RedirectStandardError $adapterErr -WindowStyle Hidden -PassThru
 
-    & $codexCommand.Source --remote $AppServerUrl.AbsoluteUri @CodexArgs
+    & $codexCommand.Source --remote $AppServerEndpoint @CodexArgs
     exit $LASTEXITCODE
 }
 finally {
