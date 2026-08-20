@@ -112,8 +112,16 @@ downtime here:
 - **Make sure your HTTP client can actually see the body.** PowerShell's
   `Invoke-RestMethod` throws on non-2xx and does *not* put the response body
   in the exception message: it is in `$_.ErrorDetails.Message` (PS 7+) or
-  `$_.Exception.Response.GetResponseStream()` (5.1). A client that logs only
-  the exception reports a bodyless 400 no matter what the server sent.
+  `$_.Exception.Response.GetResponseStream()` (5.1). **A caller that logs
+  `$_.Exception.Message` will report this API as bodyless no matter how good
+  the error bodies get** — improving the wire cannot reach a client that
+  isn't reading the right property. This is not hypothetical: a fleet
+  producer ran five nights on a named, specific rejection that its log
+  rendered as "no information," because `catch { $_.Exception.Message }` is
+  the instinctive spelling and it discards every server explanation. Log the
+  body **raw, before parsing**, and render an absent body as an explicit
+  marker — otherwise "the server told us nothing" and "we failed to look"
+  are byte-identical in the log, which is what hides the bug.
 
 A 400 is non-retryable by design — the same payload will fail forever. If
 your producer gates a dead-man heartbeat on POST success, a rejected filing
