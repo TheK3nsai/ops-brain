@@ -156,6 +156,29 @@ mod tests {
         assert!(validate_bounded_text("valid", "title", 10).is_ok());
     }
 
+    /// The cap is bytes, not chars. A producer that truncates to
+    /// `MAX_TITLE_BYTES` *characters* ships an oversized title the moment the
+    /// title carries any multi-byte codepoint — which is what dark-filed HSR's
+    /// nightly sweep for 5 days (handoff `01a0206b`). The rejection must say
+    /// so in bytes, or the caller cannot tell why 200 "characters" failed.
+    #[test]
+    fn bounded_text_counts_bytes_not_chars_and_says_so() {
+        // Exactly at the cap in bytes.
+        let ascii_max = "A".repeat(MAX_TITLE_BYTES);
+        assert!(validate_bounded_text(&ascii_max, "title", MAX_TITLE_BYTES).is_ok());
+
+        // 200 chars, 202 bytes: one em dash (U+2014, 3 bytes) pushes it over.
+        let with_em_dash = format!("{}\u{2014}", "A".repeat(MAX_TITLE_BYTES - 1));
+        assert_eq!(with_em_dash.chars().count(), MAX_TITLE_BYTES);
+        assert_eq!(with_em_dash.len(), MAX_TITLE_BYTES + 2);
+
+        let err = validate_bounded_text(&with_em_dash, "title", MAX_TITLE_BYTES).unwrap_err();
+        assert!(err.contains("title"), "must name the field: {err}");
+        assert!(err.contains("bytes"), "must name the unit: {err}");
+        assert!(err.contains("202"), "must report the actual size: {err}");
+        assert!(err.contains("200"), "must report the limit: {err}");
+    }
+
     #[test]
     fn context_requires_a_bounded_object() {
         assert!(validate_context(&serde_json::json!(["not", "object"])).is_err());
