@@ -6,7 +6,19 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 ## Open
 
-Nothing open.
+### PR #84 — JSON error envelope for the REST surface — awaiting review + deploy
+
+Branch `fix/json-error-envelope`, commit `51e70a0`, all 6 CI checks green.
+Closes HSR handoff `01a0206b`. **Not live** — needs review, merge, and a
+rebuild on kensai.cloud (no migration, no config change). Until it deploys,
+production still returns `text/plain` rejections.
+
+Worth knowing when reviewing: the reported symptom (*bodyless 400 on an
+oversized title*) was **not reproducible** — production has always returned
+`title too large (N bytes, max 200)`, measured before any code changed. The
+real defects were the *content-type* (`text/plain` on a JSON API, so a
+JSON-parsing producer drops the body) and `bearer_auth`'s bare `StatusCode`,
+which was genuinely bodyless. Full reasoning in the PR body.
 
 ## Don't re-propose without new evidence
 
