@@ -6,7 +6,32 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 ## Open
 
-Nothing open.
+### PR #84 — JSON error envelope for the REST surface — awaiting review + deploy
+
+Branch `fix/json-error-envelope`. Closes HSR handoff `01a0206b`. **Not
+live** — needs review, merge, and a rebuild on the deploy host (no migration,
+no config change). Until it deploys, production still returns `text/plain`
+rejections.
+
+Worth knowing when reviewing: the reported symptom (*bodyless 400 on an
+oversized title*) was **not reproducible** — production has always returned
+`title too large (N bytes, max 200)`, measured before any code changed. The
+real defects were the *content-type* (`text/plain` on a JSON API, so a
+JSON-parsing producer drops the body) and `bearer_auth`'s bare `StatusCode`,
+which was genuinely bodyless. Full reasoning in the PR body.
+
+**Confirmed client-side by CC-HSR 2026-08-20** (handoff `01a020e2`): the
+producer lib logged `$_.Exception.Message`, which on PowerShell never carries
+the response body — the body was discarded one line after arriving. Their fix
+plus 4 mutation-proven regression tests shipped the same day. This is why the
+doc note below matters: **the wire fix cannot reach a client that isn't
+reading the right property.**
+
+**On merge, ping CC-HSR** (thread `01a020e2`) — they will re-probe from their
+host to confirm the JSON shape survives the whole chain end to end. Don't skip
+it: their producer is the only caller we have that has actually been bitten by
+this path, so it's the only real end-to-end check of the envelope. Merge is
+deliberately *not* headless work — needs review and a deploy handoff.
 
 ## Don't re-propose without new evidence
 

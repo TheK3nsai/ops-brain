@@ -2431,3 +2431,188 @@ mod exact_agent_match_tests {
             .unwrap();
     }
 }
+
+// ===== REST error envelope =====
+//
+// Regression cover for handoff `01a0206b`: HSR's nightly sweep went dark for 5
+// days because a rejected POST looked bodyless from the client. The rejection
+// always named its field — it just rendered as `text/plain` while success
+// rendered as JSON, so a JSON-parsing producer dropped it. These assert the
+// wire shape a producer actually sees, not just the message text.
+mod api_error_envelope_tests {
+    use axum::body::{to_bytes, Body};
+    use axum::http::{header, Request, StatusCode};
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::post;
+    use axum::{Extension, Router};
+    use ops_brain::api::{create_handoff, ApiState};
+    use ops_brain::auth::{bearer_auth, AuthState, CallerClass, MachineToken};
+    use ops_brain::validation::MAX_TITLE_BYTES;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    async fn json_body(resp: axum::response::Response) -> serde_json::Value {
+        let ct = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            ct.starts_with("application/json"),
+            "a producer parses this as JSON; got content-type {ct:?}"
+        );
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert!(!bytes.is_empty(), "rejection body must not be empty");
+        serde_json::from_slice(&bytes).expect("rejection body must parse as JSON")
+    }
+
+    async fn post_handoff(payload: serde_json::Value) -> axum::response::Response {
+        let pool = super::common::test_pool().await;
+        let app = Router::new()
+            .route("/api/handoff", post(create_handoff))
+            .layer(Extension(CallerClass::Full))
+            .with_state(Arc::new(ApiState { pool }));
+
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/handoff")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    /// HSR's exact payload shape: 200 characters, 202 bytes because of one em
+    /// dash. Rejected — and the rejection has to say which field and how big.
+    #[tokio::test]
+    async fn oversized_title_names_the_field_and_the_byte_count() {
+        let title = format!("{}\u{2014}", "A".repeat(MAX_TITLE_BYTES - 1));
+        assert_eq!(title.chars().count(), MAX_TITLE_BYTES);
+        assert_eq!(title.len(), MAX_TITLE_BYTES + 2);
+
+        let resp = post_handoff(serde_json::json!({
+            "from_agent": "CC-Test",
+            "to_agent": "CC-Test",
+            "title": title,
+            "body": "regression cover for 01a0206b",
+        }))
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(resp).await;
+        assert_eq!(body["field"], "title");
+        let msg = body["error"].as_str().unwrap();
+        assert!(msg.contains("202") && msg.contains("200"), "got {msg}");
+    }
+
+    /// A missing required field is rejected by the extractor before any handler
+    /// code runs. That path used to bypass the envelope entirely.
+    #[tokio::test]
+    async fn malformed_body_is_rejected_in_the_same_envelope() {
+        let resp = post_handoff(serde_json::json!({"from_agent": "CC-Test"})).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(resp).await;
+        assert!(
+            body["error"].as_str().unwrap().contains("title"),
+            "extractor rejection should still name the missing field: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_title_names_the_field() {
+        let resp = post_handoff(serde_json::json!({
+            "from_agent": "CC-Test",
+            "to_agent": "CC-Test",
+            "title": "   ",
+            "body": "x",
+        }))
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(resp).await["field"], "title");
+    }
+
+    #[tokio::test]
+    async fn bad_priority_names_the_field_and_lists_valid_values() {
+        let resp = post_handoff(serde_json::json!({
+            "from_agent": "CC-Test",
+            "to_agent": "CC-Test",
+            "title": "t",
+            "body": "b",
+            "priority": "extreme",
+        }))
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(resp).await;
+        assert_eq!(body["field"], "priority");
+        assert!(body["error"].as_str().unwrap().contains("critical"));
+    }
+
+    // --- auth rejections: these were the genuinely bodyless ones ---
+
+    const MAIN: &str = "main-secret-token-000000000000000000000000";
+    const MACH: &str = "machine-secret-token-1111111111111111111111";
+
+    fn guarded_app() -> Router {
+        let state = AuthState {
+            main_token: Some(MAIN.to_string()),
+            machine_tokens: vec![MachineToken {
+                token: MACH.to_string(),
+                from_agent: "Test-Producer".to_string(),
+                client: None,
+                agents: vec!["CC-Test".to_string()],
+                scopes: vec!["handoff:create".to_string()],
+            }]
+            .into(),
+            agent_tokens: vec![].into(),
+        };
+        Router::new()
+            .route("/api/briefing", post(|| async { "OK" }))
+            .layer(from_fn_with_state(state, bearer_auth))
+    }
+
+    async fn send(auth: Option<&str>) -> axum::response::Response {
+        let mut b = Request::builder().method("POST").uri("/api/briefing");
+        if let Some(t) = auth {
+            b = b.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        guarded_app()
+            .oneshot(b.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn missing_credential_401_explains_the_expected_header() {
+        let resp = send(None).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(json_body(resp).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("Authorization"));
+    }
+
+    /// A bare 401 proves nothing without a positive control. Saying *which*
+    /// 401 it is removes the need for one.
+    #[tokio::test]
+    async fn unrecognized_token_401_is_distinguishable_from_a_missing_one() {
+        let missing = json_body(send(None).await).await;
+        let wrong = json_body(send(Some("not-a-real-token")).await).await;
+        assert_ne!(
+            missing["error"], wrong["error"],
+            "'no credential' and 'bad credential' must not be the same 401"
+        );
+    }
+
+    #[tokio::test]
+    async fn out_of_scope_403_names_the_missing_scope() {
+        // POST /api/briefing is outside the machine scope table entirely.
+        let resp = send(Some(MACH)).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let msg = json_body(resp).await["error"].to_string();
+        assert!(msg.contains("machine tokens"), "got {msg}");
+    }
+}
