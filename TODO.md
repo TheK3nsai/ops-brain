@@ -29,6 +29,12 @@ plus 4 mutation-proven regression tests shipped the same day. This is why the
 doc note below matters: **the wire fix cannot reach a client that isn't
 reading the right property.**
 
+**On merge, ping CC-HSR** (thread `01a020e2`) — they will re-probe from their
+host to confirm the JSON shape survives the whole chain end to end. Don't skip
+it: their producer is the only caller we have that has actually been bitten by
+this path, so it's the only real end-to-end check of the envelope. Merge is
+deliberately *not* headless work — needs review and a deploy handoff.
+
 ## Don't re-propose without new evidence
 
 Deliberate decisions with their reasons. If real friction ever shows up, re-open the question from first principles — don't resurrect the design.
