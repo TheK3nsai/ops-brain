@@ -4,8 +4,9 @@
 //! MCP protocol negotiation. Protected by the same bearer auth middleware.
 
 use axum::{
-    extract::{Query, State},
+    extract::{rejection::JsonRejection, Query, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
     Extension, Json,
 };
 use serde::Deserialize;
@@ -87,8 +88,69 @@ pub struct CreateHandoffResponse {
     pub warnings: Vec<String>,
 }
 
-fn bad_request(msg: impl Into<String>) -> (StatusCode, String) {
-    (StatusCode::BAD_REQUEST, msg.into())
+/// JSON body of a REST error.
+///
+/// `field` is set whenever the rejection is attributable to one input field,
+/// so a producer can branch on it without parsing prose.
+#[derive(Debug, serde::Serialize)]
+pub struct ApiErrorBody {
+    pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+/// Error type for the REST surface, rendered as JSON.
+///
+/// Rejections used to render as bare `text/plain` while success rendered as
+/// JSON. A producer that parses every response as JSON drops that text body on
+/// the floor, so a 400 that *did* name its field and its limit arrived looking
+/// like a bodyless one — that is how a one-line client bug went 5 days as a
+/// dark backup dead-man on HSR (handoff `01a0206b`, measured against
+/// production 2026-08-20). Errors now match the content-type of success.
+#[derive(Debug)]
+pub struct ApiError {
+    status: StatusCode,
+    body: ApiErrorBody,
+}
+
+impl ApiError {
+    pub fn new(status: StatusCode, error: impl Into<String>) -> Self {
+        Self {
+            status,
+            body: ApiErrorBody {
+                error: error.into(),
+                field: None,
+            },
+        }
+    }
+
+    /// Attribute this rejection to a named input field.
+    pub fn field(mut self, field: impl Into<String>) -> Self {
+        self.body.field = Some(field.into());
+        self
+    }
+
+    pub fn bad_request(error: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, error)
+    }
+
+    pub fn forbidden(error: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, error)
+    }
+
+    pub fn internal(error: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, error)
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (self.status, Json(self.body)).into_response()
+    }
+}
+
+fn bad_request(msg: impl Into<String>) -> ApiError {
+    ApiError::bad_request(msg)
 }
 
 fn validate_dedupe_key(key: &str) -> Result<(), String> {
@@ -145,8 +207,13 @@ fn check_context(context: &serde_json::Value) -> Result<Vec<String>, String> {
 pub async fn create_handoff(
     State(state): State<Arc<ApiState>>,
     Extension(caller): Extension<CallerClass>,
-    Json(req): Json<CreateHandoffRequest>,
-) -> Result<(StatusCode, Json<CreateHandoffResponse>), (StatusCode, String)> {
+    payload: Result<Json<CreateHandoffRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<CreateHandoffResponse>), ApiError> {
+    // A malformed or incomplete body is rejected by the extractor before any
+    // handler code runs; surface it in the same envelope as everything else so
+    // a missing required field is as diagnosable as an oversized one.
+    let Json(req) = payload.map_err(|e| ApiError::bad_request(e.body_text()))?;
+
     // Resolve identity from the caller class.
     let from_agent = match &caller {
         CallerClass::Machine(token) => {
@@ -155,7 +222,8 @@ pub async fn create_handoff(
                     return Err(bad_request(format!(
                         "from_agent '{claimed}' does not match this token's binding — omit the \
                          field; the token IS the identity"
-                    )));
+                    ))
+                    .field("from_agent"));
                 }
             }
             token.from_agent.clone()
@@ -164,19 +232,17 @@ pub async fn create_handoff(
             let claimed = req
                 .from_agent
                 .as_deref()
-                .ok_or_else(|| bad_request("from_agent is required"))?;
+                .ok_or_else(|| bad_request("from_agent is required").field("from_agent"))?;
             validate_agent_name(claimed)
-                .map_err(bad_request)?
+                .map_err(|e| bad_request(e).field("from_agent"))?
                 .to_string()
         }
         // Agent tokens are 403'd at the middleware before reaching any /api
         // route; this arm is defense-in-depth if that ever regresses. Interactive
         // agents file through the MCP create_handoff tool, not REST ingestion.
         CallerClass::Agent(_) => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "per-agent tokens use the MCP create_handoff tool, not the REST ingestion path"
-                    .to_string(),
+            return Err(ApiError::forbidden(
+                "per-agent tokens use the MCP create_handoff tool, not the REST ingestion path",
             ));
         }
     };
@@ -186,51 +252,55 @@ pub async fn create_handoff(
         (CallerClass::Machine(_), None) => {
             return Err(bad_request(
                 "to_agent is required for machine-filed handoffs (no open filings)",
-            ));
+            )
+            .field("to_agent"));
         }
         (CallerClass::Machine(token), Some(to)) => {
-            let to = validate_agent_name(to).map_err(bad_request)?;
+            let to = validate_agent_name(to).map_err(|e| bad_request(e).field("to_agent"))?;
             if !token.allows_agent(to) {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    format!("this token may not file handoffs to '{to}'"),
-                ));
+                return Err(ApiError::forbidden(format!(
+                    "this token may not file handoffs to '{to}'"
+                ))
+                .field("to_agent"));
             }
             to.to_string()
         }
-        (CallerClass::Full, Some(to)) => validate_agent_name(to).map_err(bad_request)?.to_string(),
+        (CallerClass::Full, Some(to)) => validate_agent_name(to)
+            .map_err(|e| bad_request(e).field("to_agent"))?
+            .to_string(),
         (CallerClass::Full, None) => {
-            return Err(bad_request(
-                "to_agent is required on the REST ingestion path",
-            ));
+            return Err(
+                bad_request("to_agent is required on the REST ingestion path").field("to_agent"),
+            );
         }
         // An Agent caller already returned Err in the from_agent match above
         // (and is 403'd at the middleware before that), so this is unreachable
         // today — but return a graceful 403 rather than panic if a future
         // refactor ever lets an agent caller through.
         (CallerClass::Agent(_), _) => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "per-agent tokens use the MCP surface, not the REST ingestion path".to_string(),
+            return Err(ApiError::forbidden(
+                "per-agent tokens use the MCP surface, not the REST ingestion path",
             ));
         }
     };
 
     validate_option(req.priority.as_deref(), "priority", HANDOFF_PRIORITIES)
-        .map_err(bad_request)?;
+        .map_err(|e| bad_request(e).field("priority"))?;
     validate_option(req.category.as_deref(), "category", HANDOFF_CATEGORIES)
-        .map_err(bad_request)?;
+        .map_err(|e| bad_request(e).field("category"))?;
     let priority = req.priority.as_deref().unwrap_or("normal").to_lowercase();
     let category = req.category.as_deref().unwrap_or("action").to_lowercase();
 
-    validate_bounded_text(&req.title, "title", MAX_TITLE_BYTES).map_err(bad_request)?;
-    validate_bounded_text(&req.body, "body", MAX_BODY_BYTES).map_err(bad_request)?;
+    validate_bounded_text(&req.title, "title", MAX_TITLE_BYTES)
+        .map_err(|e| bad_request(e).field("title"))?;
+    validate_bounded_text(&req.body, "body", MAX_BODY_BYTES)
+        .map_err(|e| bad_request(e).field("body"))?;
     if let Some(key) = req.dedupe_key.as_deref() {
-        validate_dedupe_key(key).map_err(bad_request)?;
+        validate_dedupe_key(key).map_err(|e| bad_request(e).field("dedupe_key"))?;
     }
 
     let warnings = match req.context.as_ref() {
-        Some(ctx) => check_context(ctx).map_err(bad_request)?,
+        Some(ctx) => check_context(ctx).map_err(|e| bad_request(e).field("context"))?,
         None => Vec::new(),
     };
 
@@ -246,7 +316,7 @@ pub async fn create_handoff(
         req.dedupe_key.as_deref(),
     )
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
+    .map_err(|e| ApiError::internal(format!("DB error: {e}")))?;
 
     // The upsert returns the pre-existing row on dedupe suppression; a fresh
     // insert always carries repeat_count 0 and the id we just minted — so a
@@ -321,15 +391,15 @@ pub async fn list_pending(
     State(state): State<Arc<ApiState>>,
     Extension(caller): Extension<CallerClass>,
     Query(q): Query<PendingQuery>,
-) -> Result<Json<PendingResponse>, (StatusCode, String)> {
-    let agent = validate_agent_name(&q.agent).map_err(bad_request)?;
+) -> Result<Json<PendingResponse>, ApiError> {
+    let agent = validate_agent_name(&q.agent).map_err(|e| bad_request(e).field("agent"))?;
 
     if let CallerClass::Machine(token) = &caller {
         if !token.allows_agent(agent) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!("this token may not poll the queue of '{agent}'"),
-            ));
+            return Err(ApiError::forbidden(format!(
+                "this token may not poll the queue of '{agent}'"
+            ))
+            .field("agent"));
         }
     }
 
@@ -337,7 +407,9 @@ pub async fn list_pending(
         Some(raw) => Some(
             chrono::DateTime::parse_from_rfc3339(raw)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
-                .map_err(|e| bad_request(format!("invalid since timestamp '{raw}': {e}")))?,
+                .map_err(|e| {
+                    bad_request(format!("invalid since timestamp '{raw}': {e}")).field("since")
+                })?,
         ),
         None => None,
     };
@@ -346,7 +418,7 @@ pub async fn list_pending(
     let handoffs =
         crate::repo::handoff_repo::list_pending_for_agent(&state.pool, agent, since, limit)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
+            .map_err(|e| ApiError::internal(format!("DB error: {e}")))?;
 
     let items: Vec<PendingItem> = handoffs
         .into_iter()
@@ -383,21 +455,71 @@ pub struct GenerateBriefingRequest {
 /// fleet-wide (client scoping was removed).
 pub async fn generate_briefing(
     State(state): State<Arc<ApiState>>,
-    Json(req): Json<GenerateBriefingRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    payload: Result<Json<GenerateBriefingRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(req) = payload.map_err(|e| ApiError::bad_request(e.body_text()))?;
+
     let briefing_type = req.briefing_type.to_lowercase();
     if !["daily", "weekly"].contains(&briefing_type.as_str()) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!(
-                "Invalid type: '{}'. Use 'daily' or 'weekly'.",
-                req.briefing_type
-            ),
-        ));
+        return Err(bad_request(format!(
+            "Invalid type: '{}'. Use 'daily' or 'weekly'.",
+            req.briefing_type
+        ))
+        .field("type"));
     }
 
     match briefings::generate_briefing_inner(&state.pool, &briefing_type).await {
         Ok(data) => Ok(Json(data)),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+        Err(e) => Err(ApiError::internal(e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    async fn render(err: ApiError) -> (StatusCode, serde_json::Value) {
+        let resp = err.into_response();
+        let status = resp.status();
+        let ct = resp
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            ct.starts_with("application/json"),
+            "errors must match the content-type of success, got {ct:?}"
+        );
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn error_renders_as_json_naming_the_field() {
+        let (status, body) =
+            render(ApiError::bad_request("title too large (204 bytes, max 200)").field("title"))
+                .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "title too large (204 bytes, max 200)");
+        assert_eq!(body["field"], "title");
+    }
+
+    #[tokio::test]
+    async fn error_omits_field_when_unattributable() {
+        let (status, body) = render(ApiError::forbidden("nope")).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "nope");
+        assert!(
+            body.get("field").is_none(),
+            "field must be omitted, not null, when the rejection is not attributable"
+        );
+    }
+
+    #[tokio::test]
+    async fn error_preserves_status() {
+        let (status, _) = render(ApiError::internal("DB error: boom")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

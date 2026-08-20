@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **REST rejections are JSON, and auth rejections have a body at all.** Every
+  `/api` error now renders as `{"error": "...", "field": "..."}` with
+  `field` set whenever the rejection is attributable to one input field.
+  Rejections previously rendered as bare `text/plain` while success rendered as
+  JSON, so a producer parsing every response as JSON dropped the explanation on
+  the floor: a 400 that already named the field *and* the limit
+  (`title too large (204 bytes, max 200)`) reached HSR looking like a bodyless
+  400, and a nightly backup sweep stayed dark for 5 days behind it. Separately,
+  `bearer_auth` returned a bare `StatusCode` — those 401/403s were genuinely
+  bodyless — and now names why: missing vs unrecognized credential, and which
+  scope a machine token lacks. That removes the need to pair a 401 with a
+  positive control to learn anything from it. Extractor-level rejections
+  (malformed JSON, missing required field) go through the same envelope
+  instead of bypassing it.
+
 ### Experimental — ephemeral Claude↔Codex live messaging
 
 - **Codex peer registration now requires a resumable thread.** The App Server

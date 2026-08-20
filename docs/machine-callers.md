@@ -93,8 +93,32 @@ reaches the entire MCP surface; a machine token bounds theft blast-radius to
   "repeat_count": N, ...}`. The existing row's `updated_at` is bumped and
   `repeat_count` incremented, so consumers can tell "still firing after N
   runs" from "filed once and went quiet."
-- `400` / `403` — validation / routing-scope failures. `warnings` are
-  advisory only and never block a filing.
+- `400` / `401` / `403` / `500` — every rejection is JSON in one envelope:
+  `{"error": "<what was wrong>", "field": "<offending field>"}`. `field` is
+  present only when the rejection is attributable to one input field, so
+  branch on `"field" in body`, not on its truthiness. `warnings` are advisory
+  only and never block a filing.
+
+**Read the error body.** It names the field and the limit — e.g.
+`{"error": "title too large (204 bytes, max 200)", "field": "title"}` — and
+that is the whole diagnosis. Two client-side traps have each cost real
+downtime here:
+
+- **Limits are UTF-8 bytes, not characters.** `title` is capped at 200
+  **bytes**. A backstop that truncates to 200 *characters* ships an oversized
+  title the moment the title carries any multi-byte codepoint — one em dash
+  (U+2014) is 3 bytes. Truncate by byte count, and don't split a codepoint
+  doing it.
+- **Make sure your HTTP client can actually see the body.** PowerShell's
+  `Invoke-RestMethod` throws on non-2xx and does *not* put the response body
+  in the exception message: it is in `$_.ErrorDetails.Message` (PS 7+) or
+  `$_.Exception.Response.GetResponseStream()` (5.1). A client that logs only
+  the exception reports a bodyless 400 no matter what the server sent.
+
+A 400 is non-retryable by design — the same payload will fail forever. If
+your producer gates a dead-man heartbeat on POST success, a rejected filing
+goes dark on the *first* run and stays dark, so log the error body somewhere
+a human will read it.
 
 ### Dedupe semantics
 

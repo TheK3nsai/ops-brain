@@ -1,4 +1,6 @@
 use axum::{extract::State, http::StatusCode, middleware::Next, response::Response};
+
+use crate::api::ApiError;
 use std::sync::Arc;
 
 /// Constant-time token comparison to prevent timing attacks.
@@ -337,11 +339,18 @@ fn required_machine_scope(method: &axum::http::Method, path: &str) -> Option<&'s
 /// Main bearer → full access (CallerClass::Full). Machine token → only its
 /// granted machine endpoints (CallerClass::Machine). No token configured at
 /// all → dev mode, allow as Full.
+///
+/// Rejections carry a JSON body naming *why*. They used to be a bare
+/// `StatusCode` — a genuinely bodyless 401/403, which is undiagnosable from
+/// the caller's side and is why a bare 401 has to be paired with a positive
+/// control before it means anything. Nothing here reveals more than the
+/// presented credential already proves: the caller holds the token, so its
+/// class is not a secret from them.
 pub async fn bearer_auth(
     State(state): State<AuthState>,
     mut request: axum::extract::Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, ApiError> {
     // Probes are always public and reveal only OK vs unavailable.
     if matches!(request.uri().path(), "/health" | "/ready") {
         return Ok(next.run(request).await);
@@ -361,7 +370,10 @@ pub async fn bearer_auth(
         .and_then(|v| v.to_str().ok());
 
     let Some(presented) = auth_header.and_then(|h| h.strip_prefix("Bearer ")) else {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "missing or malformed Authorization header — expected 'Authorization: Bearer <token>'",
+        ));
     };
 
     if validate_token(presented, expected) {
@@ -385,7 +397,9 @@ pub async fn bearer_auth(
                 %path,
                 "machine token attempted a non-machine endpoint"
             );
-            return Err(StatusCode::FORBIDDEN);
+            return Err(ApiError::forbidden(
+                "machine tokens may only call the REST ingestion endpoints",
+            ));
         };
         if !token.has_scope(needed) {
             tracing::warn!(
@@ -394,7 +408,9 @@ pub async fn bearer_auth(
                 scope = needed,
                 "machine token lacks required scope"
             );
-            return Err(StatusCode::FORBIDDEN);
+            return Err(ApiError::forbidden(format!(
+                "this machine token lacks the '{needed}' scope required by this endpoint"
+            )));
         }
 
         request
@@ -424,10 +440,15 @@ pub async fn bearer_auth(
             %path,
             "agent token attempted a non-interactive endpoint"
         );
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::forbidden(
+            "per-agent tokens may only call the MCP and live endpoints",
+        ));
     }
 
-    Err(StatusCode::UNAUTHORIZED)
+    Err(ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        "unrecognized bearer token",
+    ))
 }
 
 #[cfg(test)]
