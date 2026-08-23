@@ -6,7 +6,7 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 ## Open
 
-Nothing open.
+- **Pre-scrub commit object may still be reachable on GitHub (2026-08-23, PR #85).** The fleet-private string guard caught a client hostname in a `GOTCHAS.md` entry *after* the branch was first pushed. The working tree, commit message, and PR body were scrubbed and force-pushed (guard now passes), but the original object stays reachable by exact SHA on a public repo until GitHub garbage-collects it. Low severity — one hostname, no credential — and the only real remedy is a GitHub Support GC request, so this is Eduardo's call whether to bother. Durable lesson worth more than the cleanup: **the guard runs in CI, i.e. after the push that publishes the string.** The pre-commit hook enforces the same denylist locally for ops-brain, but it only scans the working tree — it does not see the commit message or PR body, which is exactly where this one also landed. If this recurs, extend the local hook to the commit message rather than relying on the CI guard.
 
 ## Don't re-propose without new evidence
 
