@@ -147,6 +147,44 @@ guard catches collisions against *other* live tokens, but re-minting the exact
 value you are revoking is not a collision — it would abort nothing and silently
 un-revoke the credential.
 
+### What "revoked" does and does not mean
+
+Revocation is authoritative about the *server*, and says nothing about copies.
+The moment the process restarts, the old secret authenticates nowhere — that is
+the whole of the guarantee, and it is the part that matters, because a value
+that opens nothing is residue rather than exposure.
+
+It is not a statement about where the value still sits. Two stores routinely
+outlive a rotation and neither is reachable by the sweep you would naturally run:
+
+- **Compressed and content-addressed copies.** A plaintext `grep` cannot read
+  gzip, zip, git object stores, DB dumps, or restic/borg repos. A daily config
+  backup that captures a `.env` will hold every value it ever captured, and will
+  keep capturing each new one. Encrypted and content-addressed stores are
+  *unknown by construction*, not clean — name them in the verdict rather than
+  omitting them.
+- **Whole-disk images taken below the OS.** Provider backups, hypervisor
+  checkpoints, and VM-level backup products copy the entire block device, so they
+  contain every on-host secret store at once — container configs, journal,
+  archives — regardless of file mode, ACL, or any exclusion in *your* backup
+  patterns. No in-guest command can enumerate them; ask the hypervisor or cloud
+  API. Retention sets how long a rotated value persists there, and the next
+  scheduled run captures the replacement.
+
+So write the honest sentence. **"Dead server-side now; gone from images and
+archives in ≤N days"** — with N the longest retention that touches the host — is
+accurate. **"Rotated and swept clean"** is not, and has been wrong before: a
+`$HOME` sweep once returned an authoritative-looking clean result that stood for
+twelve days while the value sat in twenty daily archives.
+
+This changes the wording of a close-out, not usually the plan. A revoked value in
+an image is inert. It matters when the value is *not* yet revoked, when the
+window is longer than you assumed, or when the credential that can read those
+images is itself on the host — a read-write infrastructure API token can restore
+an image and read the disk, which makes it a read path to every secret the host
+held at image time, including ones already rotated. That one is worth scoping to
+read-only wherever something only needs to *check* backups rather than make them.
+
 ## Bus trust still applies
 
 Server-bound identity shrinks the "is this slug real" problem to a server
