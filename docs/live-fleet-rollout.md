@@ -100,8 +100,11 @@ scripts/install-live-adapters --status
 
 The installer runs `npm ci --ignore-scripts` for both adapters and links the
 two repo-owned foreground wrappers into `~/.local/bin`. It never reads or
-copies credentials. If `~/.local/bin` is not in `PATH`, invoke the wrappers by
-their repo paths or add the directory through the host's normal dotfiles.
+copies credentials. Its status output checks both pinned dependency trees as
+well as the launcher links, so `missing-or-invalid` is a failed prerequisite,
+not a reason to attempt a live launch. If `~/.local/bin` is not in `PATH`,
+invoke the wrappers by their repo paths or add the directory through the
+host's normal dotfiles.
 
 Launch Claude with the exact Claude token file:
 
