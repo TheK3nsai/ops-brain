@@ -8,36 +8,50 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 - **Pre-scrub commit object may still be reachable on GitHub (2026-08-23, PR #85).** The fleet-private string guard caught a client hostname in a `GOTCHAS.md` entry *after* the branch was first pushed. The working tree, commit message, and PR body were scrubbed and force-pushed (guard now passes), but the original object stays reachable by exact SHA on a public repo until GitHub garbage-collects it. Low severity — one hostname, no credential — and the only real remedy is a GitHub Support GC request, so this is Eduardo's call whether to bother. Durable lesson worth more than the cleanup: **the guard runs in CI, i.e. after the push that publishes the string.** The pre-commit hook enforces the same denylist locally for ops-brain, but it only scans the working tree — it does not see the commit message or PR body, which is exactly where this one also landed. If this recurs, extend the local hook to the commit message rather than relying on the CI guard.
 
-### PR #84 — JSON error envelope for the REST surface — merged, awaiting deploy
+### PR #84 — JSON error envelope for the REST surface — deployed, awaiting HSR re-probe
 
-Merged to `main` as `922b329` on 2026-08-24. Closes HSR handoff `01a0206b`.
-**Not live** — still needs a rebuild on the deploy host (no migration, no
-config change); deploy handoff `01a0344c` is open with CC-Cloud. Until it
-deploys, production still returns `text/plain` rejections.
+Merged to `main` as `922b329`, **deployed and live on ops.kensai.cloud
+2026-08-24** (CC-Cloud, handoff `01a03461`; rebuild only, `serverInfo.version`
+5.0.0, container healthy). Production now returns `application/json` on every
+`/api` rejection as `{"error": "...", "field": "..."}`, with `field` present
+only when the rejection is attributable to one input field.
 
-On deploy, CC-HSR wants a re-probe ping — their producer is the only caller
-bitten by this path, so their re-probe is the only true end-to-end check of
-the envelope. CC-Stealth owns that notification.
+CC-Cloud probed seven cases on the deployed surface — both 401 paths paired
+with a 200 positive control on the same URL, plus `400 field=agent`,
+`400 field=since`, `403 field=agent`, and a scope 403. Envelope behaves as
+specified throughout.
 
-Worth knowing when verifying the deploy: the reported symptom (*bodyless 400 on an
-oversized title*) was **not reproducible** — production has always returned
-`title too large (N bytes, max 200)`, measured before any code changed. The
-real defects were the *content-type* (`text/plain` on a JSON API, so a
-JSON-parsing producer drops the body) and `bearer_auth`'s bare `StatusCode`,
-which was genuinely bodyless. Full reasoning in the PR body.
+**The re-probe ping CC-Stealth owed CC-HSR was sent 2026-08-24** (`01a03463`,
+on thread `01a0206b`): full byte-boundary table re-run against production,
+200 OK positive control included, response bodies for the failing rows.
+Non-mutating — validation rejects ahead of any insert.
 
-**Confirmed client-side by CC-HSR 2026-08-20** (handoff `01a020e2`): the
-producer lib logged `$_.Exception.Message`, which on PowerShell never carries
-the response body — the body was discarded one line after arriving. Their fix
-plus 4 mutation-proven regression tests shipped the same day. This is why the
-doc note below matters: **the wire fix cannot reach a client that isn't
-reading the right property.**
+**Only open item: HSR's re-probe results.** Close this section when they land.
+A `text/plain`, bodyless, or wrong-`field` result is a real regression and goes
+back to CC-Cloud immediately.
 
-**On merge, ping CC-HSR** (thread `01a020e2`) — they will re-probe from their
-host to confirm the JSON shape survives the whole chain end to end. Don't skip
-it: their producer is the only caller we have that has actually been bitten by
-this path, so it's the only real end-to-end check of the envelope. Merge is
-deliberately *not* headless work — needs review and a deploy handoff.
+**The oversized-title path is the one case not live-probed from kensai-cloud,
+and that is the scope control working, not a coverage hole.** Scope is enforced
+in `required_machine_scope` middleware ahead of the handler, and the only
+machine token on that host is `read` scope — so `POST /api/handoff` 403s before
+it ever reaches `validate_bounded_text`. HSR-HVFS0 holds `create` scope and is
+the actual bitten caller, which is why their probe is the real end-to-end check.
+**Decided 2026-08-24: do not spend the break-glass bearer to close this from the
+cloud side** — every use of `CallerClass::Full` is an exposure event, reaching
+for a stronger credential to cross a scope boundary is the instinct to distrust,
+and a `Full`-class probe would be weaker evidence than HSR's real-caller probe
+anyway. Test coverage exists regardless
+(`oversized_title_names_the_field_and_the_byte_count`, CI green on `922b329`).
+
+Worth keeping: the reported symptom (*bodyless 400 on an oversized title*) was
+**not reproducible** — production has always returned `title too large (N bytes,
+max 200)`. The real defects were the *content-type* (`text/plain` on a JSON API,
+so a JSON-parsing producer drops the body) and `bearer_auth`'s bare
+`StatusCode`, which was genuinely bodyless. Client side, CC-HSR's producer lib
+logged `$_.Exception.Message`, which on PowerShell never carries the response
+body — fixed 2026-08-20 with 4 mutation-proven regression tests. The durable
+lesson: **the wire fix cannot reach a client that isn't reading the right
+property.**
 
 ## Don't re-propose without new evidence
 
