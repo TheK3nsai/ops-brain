@@ -11,6 +11,7 @@ TOKEN_FILE="${OPS_BRAIN_AGENT_TOKEN_FILE:-}"
 EXPECTED_AGENT="${OPS_BRAIN_EXPECTED_AGENT:-}"
 LIVE_URL="${OPS_BRAIN_LIVE_URL:-}"
 LABEL="${OPS_BRAIN_LIVE_LABEL:-claude-code}"
+CHANNEL_SERVER=ops-brain-live
 unset OPS_BRAIN_AGENT_TOKEN
 
 usage() {
@@ -72,6 +73,21 @@ if [[ -n $LIVE_URL ]]; then
     url_status=$LIVE_URL
 fi
 
+# Report whether Claude's Channel resolver can see the server name this
+# launcher references. The resolver only enumerates the enterprise, user,
+# project, and local config scopes; a server supplied with --mcp-config is
+# loaded and connectable but is NOT in any of them, so the channel silently
+# fails to bind. `claude mcp get` is a config-only lookup (no health checks),
+# so it is cheap enough for --status. See GOTCHAS.md.
+channel_status() {
+    command -v claude >/dev/null || { echo 'unknown (claude missing)'; return; }
+    if claude mcp get "$CHANNEL_SERVER" >/dev/null 2>&1; then
+        echo "resolvable ($CHANNEL_SERVER found in a config scope)"
+    else
+        echo "NOT resolvable — $CHANNEL_SERVER is absent from every config scope; --mcp-config alone cannot satisfy the Channel resolver"
+    fi
+}
+
 if [[ $mode == status ]]; then
     printf 'adapter: %s\n' "$ADAPTER"
     printf 'url:     %s\n' "$url_status"
@@ -80,6 +96,7 @@ if [[ $mode == status ]]; then
     printf 'token:   %s — %s\n' "${TOKEN_FILE:-<unset>}" "$token_status"
     printf 'claude:  %s\n' "$(command -v claude || echo '<missing>')"
     printf 'node:    %s\n' "$(command -v node || echo '<missing>')"
+    printf 'channel: %s\n' "$(channel_status)"
     exit 0
 fi
 
@@ -108,17 +125,17 @@ unset token_check
 
 mcp_config=$(node -e '
   const [adapter, url, label, expectedAgent] = process.argv.slice(1);
-  process.stdout.write(JSON.stringify({mcpServers:{"ops-brain-live":{
+  process.stdout.write(JSON.stringify({mcpServers:{[process.argv[6]]:{
     command:"node", args:[adapter], env:{OPS_BRAIN_LIVE_URL:url, OPS_BRAIN_LIVE_LABEL:label,
       OPS_BRAIN_EXPECTED_AGENT:expectedAgent, OPS_BRAIN_AGENT_TOKEN_FILE:process.argv[5]}
   }}}));
-' "$ADAPTER" "$LIVE_URL" "$LABEL" "$EXPECTED_AGENT" "$TOKEN_FILE")
+' "$ADAPTER" "$LIVE_URL" "$LABEL" "$EXPECTED_AGENT" "$TOKEN_FILE" "$CHANNEL_SERVER")
 
 if [[ $mode == dry ]]; then
-    echo "would launch: claude --mcp-config <generated-redacted-config> --dangerously-load-development-channels server:ops-brain-live $*"
+    echo "would launch: claude --mcp-config <generated-redacted-config> --dangerously-load-development-channels server:$CHANNEL_SERVER $*"
     exit 0
 fi
 
 exec claude "$@" \
     --mcp-config "$mcp_config" \
-    --dangerously-load-development-channels server:ops-brain-live
+    --dangerously-load-development-channels "server:$CHANNEL_SERVER"
