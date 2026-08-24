@@ -168,6 +168,7 @@ mkdir -p -- "$dependency_fixture/scripts" \
     "$dependency_fixture/adapters/claude-channel" \
     "$dependency_fixture/adapters/codex-app-server"
 cp -- "$SCRIPT_DIR/ops-brain-client" "$dependency_fixture/scripts/ops-brain-client"
+cp -- "$REPO_DIR/Cargo.toml" "$dependency_fixture/Cargo.toml"
 for adapter in claude-channel codex-app-server; do
     cp -- "$REPO_DIR/adapters/$adapter/package.json" \
         "$REPO_DIR/adapters/$adapter/package-lock.json" \
@@ -196,6 +197,10 @@ assert_contains "$bad_claude_status" 'channel: isolated per-launch user scope (r
 bad_codex_status=$("$BIN_DIR/ops-brain-codex" --status --profile "$TEST_DIR/bad-profile.json")
 assert_contains "$bad_codex_status" 'profile is not valid JSON'
 assert_contains "$bad_codex_status" 'ready:'
+missing_claude_status=$("$BIN_DIR/ops-brain-claude" --status --profile "$TEST_DIR/missing-profile.json")
+assert_contains "$missing_claude_status" 'not ready (missing)'
+missing_codex_status=$("$BIN_DIR/ops-brain-codex" --status --profile "$TEST_DIR/missing-profile.json")
+assert_contains "$missing_codex_status" 'not ready (missing)'
 if "$BIN_DIR/ops-brain-client" doctor --profile "$claude_profile" >"$TEST_DIR/ambiguous-profile.out" 2>&1; then
     fail 'doctor accepted one profile override for both clients'
 fi

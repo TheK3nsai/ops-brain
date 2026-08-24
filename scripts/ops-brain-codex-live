@@ -132,6 +132,8 @@ if [[ $mode == status ]]; then
     printf 'adapter:    %s\n' "$ADAPTER"
     if [[ -n $PROFILE_ERROR ]]; then
         printf 'profile:    %s — not ready (%s)\n' "${PROFILE_FILE:-<unset>}" "${PROFILE_ERROR#ops-brain-client: }"
+    elif [[ -n $PROFILE_FILE && ! -f $PROFILE_FILE ]]; then
+        printf 'profile:    %s — not ready (missing)\n' "$PROFILE_FILE"
     else
         printf 'profile:    %s\n' "${PROFILE_FILE:-<unset>}"
     fi

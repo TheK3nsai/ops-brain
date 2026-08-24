@@ -33,5 +33,10 @@ status=$("$BUNDLE/scripts/install-live-adapters" --status --bin-dir "$TEST_DIR/b
 [[ -L $TEST_DIR/bin/ops-brain-claude ]]
 [[ -L $TEST_DIR/bin/ops-brain-codex ]]
 printf '%s\n' 'tampered' >>"$BUNDLE/adapters/codex-app-server/node_modules/ws/index.js"
+[[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status claude) == ready ]]
+[[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status codex) == missing-or-invalid ]]
+rm -- "$BUNDLE/DEPENDENCIES.json"
+rm -- "$BUNDLE/VERSION"
+[[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status claude) == missing-or-invalid ]]
 [[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status codex) == missing-or-invalid ]]
 echo 'client bundle test passed'

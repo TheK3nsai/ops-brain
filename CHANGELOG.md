@@ -70,10 +70,11 @@ All notable changes to this project will be documented in this file.
   reports `missing-or-invalid`, the overlay helper skips a dangling symlink in
   the Claude config directory instead of throwing, and the bundle/test cleanup
   traps honour `$TMPDIR` instead of guarding on a hardcoded `/tmp` prefix.
-  `doctor CLIENT` now scopes dependency failures to that client, per-client
-  profile environment overrides no longer collide, malformed profiles render
-  a useful launcher status, and lifecycle cleanup preserves pre-existing MCP
-  initialization handlers.
+  `doctor CLIENT` now scopes lockfile and bundle-integrity failures to that
+  client, while shipped bundles fail closed when `DEPENDENCIES.json` is absent.
+  Per-client profile environment overrides no longer collide, malformed
+  profiles render a useful launcher status, and lifecycle cleanup preserves
+  pre-existing MCP initialization handlers.
 
 - **Codex peer registration now requires a resumable thread.** The App Server
   adapter waits until exactly one loaded thread (or the configured thread) can
