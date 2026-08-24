@@ -71,7 +71,10 @@ All notable changes to this project will be documented in this file.
   the Claude config directory instead of throwing, and the bundle/test cleanup
   traps honour `$TMPDIR` instead of guarding on a hardcoded `/tmp` prefix.
   `doctor CLIENT` now scopes lockfile and bundle-integrity failures to that
-  client, while shipped bundles fail closed when `DEPENDENCIES.json` is absent.
+  client, while shipped bundles fail closed when `DEPENDENCIES.json` is absent
+  — including when an empty `Cargo.toml` is planted to pass the bundle off as a
+  source checkout — and a manifest entry belonging to no adapter invalidates the
+  manifest instead of sitting in space no per-client check inspects.
   Per-client profile environment overrides no longer collide, malformed
   profiles render a useful launcher status, and lifecycle cleanup preserves
   pre-existing MCP initialization handlers.
