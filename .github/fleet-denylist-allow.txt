@@ -1,0 +1,18 @@
+# Paths exempt from the fleet-private string guard.
+#
+# One path per line, exact repo-relative match. Every entry needs a reason and
+# an exit condition. An allowlisted path that still carries a guarded string
+# emits a ::warning:: on every run — the waiver stays visible rather than
+# quietly becoming permanent.
+
+# Frozen: sqlx validates the checksum of every applied migration
+# (sqlx-core 0.8.6 `migrator.rs`: VersionMismatch on any content change) and
+# ops-brain runs `sqlx::migrate!` at startup, so editing this file stops the
+# deployed instance from booting until `_sqlx_migrations` is updated in
+# lockstep. That is a coordinated production DB mutation, not a code change.
+# 16 occurrences (3 upper-case in the header comment, 13 lower-case in the
+# CASE/WHERE clauses, where they are load-bearing data). Already published on
+# public `main` since 2026-04-26 and treated as disclosed.
+# Exit condition: remediate together with the checksum update, or when the
+# migration set is squashed to a baseline. Tracked in TODO.md.
+migrations/20260426000002_normalize_handoff_machine_names.sql

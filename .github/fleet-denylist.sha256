@@ -1,0 +1,21 @@
+# Fleet-private string denylist — one entry per guarded class.
+#
+# Format: <byte length of the value>:<salted SHA-256 hex digest>
+#
+# Plaintext deliberately absent: this repo is public and a guard that
+# enumerates its own targets is the best place to look for them.
+# Rationale, salt, and threat model: .github/scripts/fleet_string_guard.py
+#
+# Add an entry without writing the value down (argv-free — do not use
+# a `printf ... |` pipeline, that records the value in ps/history):
+#   .github/scripts/fleet_string_guard.py --emit-hash < value.txt
+#   .github/scripts/fleet_string_guard.py --emit-hash    (paste, Ctrl-D)
+# Then bump EXPECTED_CLASSES in the guard script to match.
+#
+# Three client-private classes. The deploy-host class was removed
+# 2026-08-24 (CC-HSR ruling 01a03571): it is publicly resolvable, serves
+# public HTTPS, and is enumerated in Certificate Transparency logs — it
+# was never confidential, and guarding it produced churn for no gain.
+6:0ca3dac0c444d352bdb4b822664846bba6a0454600c57a629bca6e893cbfaaab
+11:b21ee2064f968f6e8dabb31b0c37e9108b5356840720c2a36f0d5cd2a1b6ecf6
+7:64ec666d48244c0951366a6d5eda5c10f8ef0b24e1d21c1259223b76299e5cc8
