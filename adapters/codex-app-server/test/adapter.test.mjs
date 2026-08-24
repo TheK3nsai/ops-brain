@@ -956,6 +956,22 @@ test('a discovered thread that fails to resume is not latched and recovery re-li
   }
 });
 
+// Do not delete this as redundant with the discovered-target test above. It
+// passes against both the pre-fix and post-fix bridge by design, because it
+// pins the deliberate *asymmetry* between the two cases: a failed resume on a
+// discovered target clears the latch so the next poll re-lists, while a
+// configured target (OPS_BRAIN_CODEX_THREAD_ID) stays pinned and keeps failing.
+//
+// The asymmetry is a safety choice, not an oversight. Clearing a configured
+// target would degrade into silent misrouting on a shared host — Stealth runs
+// paired CC-Stealth / Codex-Stealth identities on one box, so falling back to
+// "the one loaded thread" can retarget another agent's session, and the damage
+// then lands in that agent's session looking like that agent's fault. A
+// configured target that keeps failing loudly stays attributable. Prefer the
+// failure that stays attributable over the one that keeps running.
+//
+// No other test fails if that choice is reversed, so this is the only thing
+// standing between the guard and a well-meaning "unify these two paths" patch.
 test('a configured thread survives resume failure instead of retargeting', async () => {
   const pinned = randomUUID();
   const harness = resolveOnlyBridge({
