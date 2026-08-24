@@ -48,7 +48,10 @@ The server-side binding is the source of peer identity.
      "$(dirname "$(readlink -f "$(command -v claude)")")" | wc -l
    ```
 
-   A non-zero count means the client supports Channels. On 2.1.231 this returns
+   A non-zero count means the client **ships the flag**. It does not mean a
+   channel will bind — see the launcher defect below, which reproduces on
+   2.1.231 and 2.1.241 alike with a non-zero count on both. Treat this as a
+   prerequisite check, never as evidence the lane works. On 2.1.231 this returns
    39 on both Linux hosts measured. The check is the principle, not the
    one-liner: recursively search the installed Claude Code bundle directory for
    the literal flag string. On Windows, run the equivalent recursive search
@@ -125,6 +128,37 @@ OPS_BRAIN_EXPECTED_AGENT=Codex-Example \
 OPS_BRAIN_CODEX_LABEL=codex-example \
 ops-brain-codex-live
 ```
+
+### KNOWN DEFECT: the Claude launcher's Channel does not bind (2026-08-24)
+
+`ops-brain-claude-live` is **not usable as written**. It passes the adapter with
+`--mcp-config` and references it as
+`--dangerously-load-development-channels server:ops-brain-live`. The Channel
+name resolver enumerates only the `enterprise`, `user`, `project`, and `local`
+config scopes and checks the name exists in one of them. A server supplied on
+the command line is in none of them, so launch prints:
+
+```
+server:ops-brain-live · no MCP server configured with that name
+```
+
+`/mcp` still shows the server **connected** — `--mcp-config` loads it fine. Only
+the resolver uses the narrower lookup. **This is not version drift:** the same
+function is byte-identical in 2.1.231 and 2.1.241. Whether passing
+`--mcp-config` a *file path* rather than a JSON string changes anything is
+**unmeasured**; the Windows launcher uses the file form, so its status is
+unmeasured too, not known-good.
+
+`ops-brain-claude-live --status` now reports this directly as a `channel:` line.
+Check it before launching.
+
+The gate workaround was registering the same definition in `local` scope and
+launching without `--mcp-config`. **Do not ship that as the fix.** Scope
+registration is ambient: every Claude session in that scope spawns an adapter
+and claims the identity, so two overlapping sessions produce two peers under one
+identity and make every send ambiguous — the exact condition step 5 exists to
+catch. Hosts running a wake shim would hit it routinely. The real fix needs
+resolution without ambient registration; tracked in `TODO.md`.
 
 Both wrappers also accept `--status` and `--dry-run`. The token path and exact
 expected server-bound identity are required deliberately. There is no generic
@@ -232,7 +266,21 @@ Do not call a host live until all applicable checks pass:
 2. Each launcher status names the intended credential path and a non-sensitive
    label. Dry-run output contains no bearer.
 3. Start only Claude. `list_live_peers` from its bound MCP token shows one
-   `claude_code` peer with the exact Claude fleet identity.
+   `claude_code` peer with the exact Claude fleet identity — **and then deliver
+   one marker to it and confirm the text actually appears in the session.**
+
+   **A registered peer is not a receiving peer, and the difference is invisible
+   from the bus.** The adapter connects and registers on startup, independent of
+   the client's MCP handshake and independent of whether the Channel ever bound.
+   A peer with the right identity, right label, and a `host_accepted` receipt can
+   sit in front of a session that cannot receive anything. Measured on stealth
+   2026-08-24: a healthy-looking `CC-Stealth` peer, attached to a session whose
+   Channel had failed to resolve.
+
+   This is how the Claude launcher defect below survived a documented
+   "confirmed on two Linux hosts" — the two Claude-side checks were a bundle
+   grep proving the flag exists, and a peer-presence assertion. Neither has ever
+   tested delivery. Peer presence is a prerequisite, not the check.
 4. Stop Claude and confirm the peer disappears. Repeat for Codex.
 5. Start both, then confirm `list_live_peers` reports **exactly one** peer per
    identity before sending anything. `send_live_message` requires exactly one
