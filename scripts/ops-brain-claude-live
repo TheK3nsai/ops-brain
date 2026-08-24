@@ -202,7 +202,7 @@ if [[ -L $RUNTIME_ROOT || ! -d $RUNTIME_ROOT ]]; then
 fi
 overlay_dir=$(mktemp -d -- "$RUNTIME_ROOT/ops-brain-claude.XXXXXX")
 # Invoked by the signal/exit trap below.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 cleanup_overlay() {
     trap - EXIT INT TERM
     [[ $overlay_dir == "$RUNTIME_ROOT"/ops-brain-claude.* && -d $overlay_dir && ! -L $overlay_dir ]] || return 0
