@@ -258,9 +258,9 @@ export class AppServerClient extends EventEmitter {
     await assertCurrent();
     await rpc.request('initialize', {
       clientInfo: {
-        name: 'ops_brain_live',
-        title: 'ops-brain live adapter',
-        version: '0.1.0',
+        name: 'ops_brain',
+        title: 'ops-brain online adapter',
+        version: '1.0.0',
       },
     });
     await assertCurrent();

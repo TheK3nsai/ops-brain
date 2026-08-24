@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+TEST_DIR=$(mktemp -d --tmpdir ops-brain-client-bundle-test.XXXXXX)
+
+cleanup() {
+    [[ $(basename -- "$TEST_DIR") == ops-brain-client-bundle-test.* && -d $TEST_DIR && ! -L $TEST_DIR ]] || return 0
+    rm -rf -- "$TEST_DIR"
+}
+trap cleanup EXIT
+
+"$SCRIPT_DIR/build-client-bundle" --version 9.9.9-test --output-dir "$TEST_DIR/dist"
+(cd -- "$TEST_DIR/dist" && sha256sum -c ops-brain-client-9.9.9-test.SHA256SUMS)
+tar -C "$TEST_DIR" -xzf "$TEST_DIR/dist/ops-brain-client-9.9.9-test.tar.gz"
+BUNDLE="$TEST_DIR/ops-brain-client-9.9.9-test"
+[[ $(<"$BUNDLE/VERSION") == 9.9.9-test ]]
+[[ -d $BUNDLE/adapters/claude-channel/node_modules ]]
+[[ -d $BUNDLE/adapters/codex-app-server/node_modules ]]
+[[ -f $BUNDLE/LICENSE-MIT && -f $BUNDLE/LICENSE-APACHE ]]
+mkdir -p -- "$TEST_DIR/fake-bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$TEST_DIR/fake-bin/npm"
+chmod +x "$TEST_DIR/fake-bin/npm"
+install_output=$(PATH="$TEST_DIR/fake-bin:$PATH" "$BUNDLE/scripts/install-ops-brain-client" --bin-dir "$TEST_DIR/bin")
+[[ $install_output == *'using ready lockfile-pinned adapter dependencies'* ]]
+status=$("$BUNDLE/scripts/install-live-adapters" --status --bin-dir "$TEST_DIR/bin")
+[[ $status == *'claude adapter deps: ready'* ]]
+[[ $status == *'codex adapter deps:  ready'* ]]
+[[ -L $TEST_DIR/bin/ops-brain-client ]]
+[[ -L $TEST_DIR/bin/ops-brain-claude ]]
+[[ -L $TEST_DIR/bin/ops-brain-codex ]]
+echo 'client bundle test passed'

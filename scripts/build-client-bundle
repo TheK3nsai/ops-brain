@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Build self-contained ops-brain client archives with pinned Node dependencies.
+
+set -euo pipefail
+
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+VERSION=''
+OUTPUT_DIR="$REPO_DIR/dist"
+
+usage() {
+    echo 'Usage: build-client-bundle --version VERSION [--output-dir DIR]'
+}
+
+while (($#)); do
+    case "$1" in
+        --version)
+            (($# >= 2)) || { echo '--version requires a value' >&2; exit 2; }
+            VERSION=$2
+            shift 2
+            ;;
+        --output-dir)
+            (($# >= 2)) || { echo '--output-dir requires a value' >&2; exit 2; }
+            OUTPUT_DIR=$2
+            shift 2
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+[[ $VERSION =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]] || {
+    echo '--version must be a semver-like release identifier' >&2
+    exit 2
+}
+VERSION=${VERSION#v}
+
+for adapter in claude-channel codex-app-server; do
+    npm --prefix "$REPO_DIR/adapters/$adapter" ls --omit=dev --depth=0 >/dev/null 2>&1 || {
+        echo "adapter dependencies are not ready: $adapter; run npm ci --ignore-scripts first" >&2
+        exit 2
+    }
+done
+
+mkdir -p -- "$OUTPUT_DIR"
+OUTPUT_DIR=$(cd -- "$OUTPUT_DIR" && pwd)
+STAGING_ROOT=$(mktemp -d --tmpdir ops-brain-client-bundle.XXXXXX)
+BUNDLE_NAME="ops-brain-client-$VERSION"
+BUNDLE_DIR="$STAGING_ROOT/$BUNDLE_NAME"
+
+cleanup() {
+    [[ $(basename -- "$STAGING_ROOT") == ops-brain-client-bundle.* && -d $STAGING_ROOT && ! -L $STAGING_ROOT ]] || return 0
+    rm -rf -- "$STAGING_ROOT"
+}
+trap cleanup EXIT
+
+mkdir -p -- "$BUNDLE_DIR/adapters" "$BUNDLE_DIR/scripts" "$BUNDLE_DIR/docs"
+for adapter in claude-channel codex-app-server; do
+    cp -a -- "$REPO_DIR/adapters/$adapter" "$BUNDLE_DIR/adapters/$adapter"
+done
+
+for script in \
+    Install-OpsBrainLive.ps1 \
+    Install-OpsBrain.ps1 \
+    Test-OpsBrainLiveWindows.ps1 \
+    create-claude-channel-overlay.mjs \
+    install-ops-brain-client \
+    install-live-adapters \
+    ops-brain-client \
+    ops-brain-claude-live \
+    ops-brain-claude-live.ps1 \
+    ops-brain-codex-live \
+    ops-brain-codex-live.ps1 \
+    start-ops-brain-live-adapter.ps1 \
+    test-live-launchers; do
+    cp -a -- "$REPO_DIR/scripts/$script" "$BUNDLE_DIR/scripts/$script"
+done
+cp -a -- "$REPO_DIR/docs/live-messaging.md" "$REPO_DIR/docs/live-fleet-rollout.md" "$BUNDLE_DIR/docs/"
+cp -a -- "$REPO_DIR/docs/client-bundle.md" "$BUNDLE_DIR/README.md"
+cp -a -- "$REPO_DIR/LICENSE-MIT" "$REPO_DIR/LICENSE-APACHE" "$BUNDLE_DIR/"
+printf '%s\n' "$VERSION" >"$BUNDLE_DIR/VERSION"
+
+tar -C "$STAGING_ROOT" -czf "$OUTPUT_DIR/$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME"
+if command -v zip >/dev/null 2>&1; then
+    (cd -- "$STAGING_ROOT" && zip -qr "$OUTPUT_DIR/$BUNDLE_NAME.zip" "$BUNDLE_NAME")
+elif command -v bsdtar >/dev/null 2>&1; then
+    bsdtar -C "$STAGING_ROOT" -a -cf "$OUTPUT_DIR/$BUNDLE_NAME.zip" "$BUNDLE_NAME"
+else
+    echo 'zip or bsdtar is required to build the Windows archive' >&2
+    exit 2
+fi
+
+(
+    cd -- "$OUTPUT_DIR"
+    sha256sum "$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME.zip" >"$BUNDLE_NAME.SHA256SUMS"
+)
+
+printf 'built %s\n' "$OUTPUT_DIR/$BUNDLE_NAME.tar.gz"
+printf 'built %s\n' "$OUTPUT_DIR/$BUNDLE_NAME.zip"
+printf 'built %s\n' "$OUTPUT_DIR/$BUNDLE_NAME.SHA256SUMS"

@@ -103,7 +103,7 @@ connection-bound local adapter. Both tools reject the main bearer and stdio.
 ## Claude Code adapter
 
 The packaged local adapter is a Claude Code Channel MCP server: a local stdio
-process that connects outbound to `/live`, advertises the experimental
+process that connects outbound to `/live`, advertises Claude's upstream
 `claude/channel` capability, and converts each live message into
 `notifications/claude/channel`. It ACKs only after the channel notification has
 been written to Claude Code. Its local reply/list tools proxy the corresponding
@@ -113,11 +113,12 @@ and [channel reference](https://code.claude.com/docs/en/channels-reference).
 
 The implementation and setup guide are in
 [`adapters/claude-channel`](../adapters/claude-channel). It has been exercised
-against Claude Code 2.1.228; custom Channels still require Anthropic's explicit
-development-channel opt-in and may be disabled by organization policy.
-For a foreground operator launch with token-file validation, use
-`scripts/ops-brain-claude-live --status` followed by
-`scripts/ops-brain-claude-live -- [CLAUDE_ARGS...]`.
+against Claude Code 2.1.241; custom Channels still require Anthropic's explicit
+development-channel opt-in and may be disabled by organization policy. The
+supported launcher uses a private per-launch Claude config overlay because
+Channel resolution ignores `--mcp-config` servers. The overlay is visible only
+to that foreground session and is deleted on exit. Use
+`ops-brain-claude --status` followed by `ops-brain-claude -- [CLAUDE_ARGS...]`.
 The protected per-agent token path and expected server-bound identity are
 always explicit; registration fails closed on a mismatch. The wrappers have
 no generic fallback that could silently select a sibling identity. Windows
@@ -137,8 +138,8 @@ bidirectional JSON-RPC API over stdio or WebSocket; see the official
 
 The implementation and shared-App-Server setup guide are in
 [`adapters/codex-app-server`](../adapters/codex-app-server). It has been
-exercised against Codex CLI 0.147.0 using a TUI connected through `--remote`.
-`scripts/ops-brain-codex-live` owns the loopback App Server and adapter for one
+exercised against Codex CLI 0.149.0 using a TUI connected through `--remote`.
+`ops-brain-codex` owns the loopback App Server and adapter for one
 foreground TUI, cleans both up on exit, and provides `--status`/`--dry-run`.
 If the wrapper's pre-TUI App Server connection becomes stale, the adapter may
 reconnect once for idempotent thread discovery. It never retries

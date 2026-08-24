@@ -15,7 +15,7 @@ const INSTRUCTIONS = [
 
 export function createChannelServer(live) {
   const mcp = new Server(
-    { name: 'ops-brain-live', version: '0.1.0' },
+    { name: 'ops-brain-channel', version: '1.0.0' },
     {
       capabilities: {
         experimental: { 'claude/channel': {} },

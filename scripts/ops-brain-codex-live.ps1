@@ -10,13 +10,14 @@ param(
     [string]$Mode = 'Run',
     [uri]$LiveUrl = $(if ($env:OPS_BRAIN_LIVE_URL) { $env:OPS_BRAIN_LIVE_URL } else { $null }),
     [string]$AgentCredentialFile = $env:OPS_BRAIN_AGENT_CREDENTIAL_FILE,
+    [string]$ProfileFile = $(if ($env:OPS_BRAIN_CLIENT_PROFILE) { $env:OPS_BRAIN_CLIENT_PROFILE } else { Join-Path $env:LOCALAPPDATA 'ops-brain\codex.json' }),
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
     [string]$AgentName,
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
-    [string]$Label = $(if ($env:OPS_BRAIN_CODEX_LABEL) { $env:OPS_BRAIN_CODEX_LABEL } else { 'codex-live' }),
+    [string]$Label = $env:OPS_BRAIN_CODEX_LABEL,
     [ValidateRange(1024, 65535)]
     [int]$AppServerPort = $(if ($env:OPS_BRAIN_CODEX_APP_SERVER_PORT) { [int]$env:OPS_BRAIN_CODEX_APP_SERVER_PORT } else { 4500 }),
-    [string]$StateDirectory = $(if ($env:OPS_BRAIN_LIVE_STATE_DIR) { $env:OPS_BRAIN_LIVE_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'ops-brain-live' }),
+    [string]$StateDirectory = $(if ($env:OPS_BRAIN_LIVE_STATE_DIR) { $env:OPS_BRAIN_LIVE_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'ops-brain' }),
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$CodexArgs
 )
@@ -100,6 +101,30 @@ function ConvertTo-ProcessArgument {
     $Value
 }
 
+function Import-ClientProfile {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Client)
+    $fullPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { return $null }
+    $item = Get-Item -LiteralPath $fullPath -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing profile reparse point: $fullPath" }
+    $profile = Get-Content -LiteralPath $fullPath -Raw | ConvertFrom-Json
+    if ($profile.schema -ne 1 -or $profile.client -ne $Client) { throw "Profile schema/client mismatch: $fullPath" }
+    $profile
+}
+
+$ProfileFile = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($ProfileFile))
+$profile = Import-ClientProfile $ProfileFile 'codex'
+if ($null -ne $profile) {
+    if ($null -eq $LiveUrl) { $LiveUrl = [uri]$profile.live_url }
+    if (-not $AgentName) { $AgentName = [string]$profile.agent_name }
+    if (-not $AgentCredentialFile) { $AgentCredentialFile = [string]$profile.credential_file }
+    if (-not $Label) { $Label = [string]$profile.label }
+    if (-not $PSBoundParameters.ContainsKey('AppServerPort') -and -not $env:OPS_BRAIN_CODEX_APP_SERVER_PORT) {
+        $AppServerPort = [int]$profile.app_server_port
+    }
+}
+if (-not $Label) { $Label = 'codex' }
+
 $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $Adapter = Join-Path $RepoDirectory 'adapters\codex-app-server\src\index.mjs'
 $CredentialLauncher = Join-Path $PSScriptRoot 'start-ops-brain-live-adapter.ps1'
@@ -118,6 +143,7 @@ if ($null -ne $LiveUrl) { Assert-LiveUrl $LiveUrl }
 
 if ($Mode -eq 'Status') {
     "adapter: $Adapter"
+    "profile: $ProfileFile $(if ($null -ne $profile) { '(loaded)' } else { '(missing)' })"
     "live URL: $(if ($null -ne $LiveUrl) { $LiveUrl.AbsoluteUri } else { '<unset>' })"
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"

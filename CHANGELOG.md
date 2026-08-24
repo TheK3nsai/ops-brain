@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [5.1.0] — 2026-08-24
+
 ### Fixed
 
 - **REST rejections are JSON, and auth rejections have a body at all.** Every
@@ -21,7 +23,53 @@ All notable changes to this project will be documented in this file.
   (malformed JSON, missing required field) go through the same envelope
   instead of bypassing it.
 
-### Experimental — ephemeral Claude↔Codex live messaging
+### Added — online Claude↔Codex delivery
+
+- **Online delivery is now a supported ops-brain lane.** The server protocol,
+  MCP tools, host adapters, identity binding, and best-effort semantics remain
+  unchanged: handoffs are still the durable/offline lane. The client adapters
+  graduate to 1.0.0 and the README no longer presents online routing as a
+  separate experimental product.
+- **Claude Channel resolution is session-isolated and truthful.** The launcher
+  now creates a private per-launch `CLAUDE_CONFIG_DIR` overlay, adds the Channel
+  to that overlay's user scope, preserves the user's ordinary config/state, and
+  destroys the overlay on exit. This satisfies Claude's scope-only Channel
+  resolver without mutating `~/.claude.json`, ambiently registering an adapter,
+  or exposing sibling/wake sessions to duplicate peers. The adapter does not
+  connect to `/live` until the MCP client sends `notifications/initialized`.
+  A real interactive 2.1.241 control showed the Channel bound with no resolver
+  error; a file-form `--mcp-config` control reproduced the failure.
+- **Supported client UX and distribution.** `ops-brain-client configure` writes
+  protected per-client profiles containing credential pointers only;
+  `ops-brain-client doctor` verifies profiles and pinned dependencies without
+  reading credential contents. `ops-brain-claude` and `ops-brain-codex` are the
+  user-facing commands, with the old `-live` names retained as aliases. Tagged
+  releases now attach self-contained `.tar.gz` and `.zip` client bundles plus
+  SHA-256 checksums, so hosts need neither a Git checkout nor `npm ci`.
+- **Process-level adapter regression.** CI starts the real Claude adapter over
+  MCP stdio and a loopback WebSocket, proves it stays offline before MCP
+  initialization, injects an untrusted Channel event, verifies the host ACK,
+  and exercises the peer-list tool. Linux and Windows launcher harnesses cover
+  private overlays and profile loading without operational credentials.
+- **The config overlay stays on tmpfs, and says what it carries.**
+  `CLAUDE_CONFIG_DIR` replaces rather than layers over the user config, so the
+  overlay necessarily copies `~/.claude.json` verbatim — including any
+  credential stored literally in an MCP `env` block or `Authorization` header.
+  The launcher now refuses to start when `XDG_RUNTIME_DIR` is unset instead of
+  falling back to a disk-backed `/tmp`, the behaviour is documented in the
+  runbook and `GOTCHAS.md` rather than implied, and the launcher's usage text no
+  longer overstates the boundary. Credential files must now be regular files:
+  a symlink is rejected as a symlink instead of incidentally via its 0777 mode.
+- **Channel adapter identity no longer collides with the HTTP server.** The
+  packaged adapter advertises `ops-brain-channel`; it exposes `list_live_peers`
+  and `send_live_message`, the same names the HTTP `ops-brain` server exposes,
+  and the overlay loads both in one session.
+- **Client tooling correctness.** `ops-brain-client get` exits non-zero on an
+  absent profile field instead of printing nothing successfully, dependency
+  comparison is key-order insensitive so a reordered `package.json` no longer
+  reports `missing-or-invalid`, the overlay helper skips a dangling symlink in
+  the Claude config directory instead of throwing, and the bundle/test cleanup
+  traps honour `$TMPDIR` instead of guarding on a hardcoded `/tmp` prefix.
 
 - **Codex peer registration now requires a resumable thread.** The App Server
   adapter waits until exactly one loaded thread (or the configured thread) can

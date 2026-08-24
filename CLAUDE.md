@@ -11,7 +11,7 @@ For roadmap philosophy + hard stops (what we will/won't build, and why), see `RO
 - **Knowledge** (4): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus` (knowledge by default; optional handoff search; empty/`*` browse)
 - **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `get_handoff` (exact full UUID), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
 - **Team bus** (1): `check_in` — open action handoffs (pending + accepted) + recent notify-class handoffs for `agent_name`
-- **Live peers** (2, experimental): `list_live_peers`, `send_live_message` — ephemeral online-only routing through the packaged Claude Channel and Codex App Server adapters; never queued or persisted.
+- **Online peers** (2): `list_live_peers`, `send_live_message` — ephemeral online-only routing through the packaged Claude Channel and Codex App Server adapters; never queued or persisted.
 
 REST-only (no MCP tools, zero agent token cost): `POST /api/handoff`, `GET /api/pending`, and `POST /api/briefing`. The first two serve machine-filed handoffs and wake polling through scoped machine tokens (`OPS_BRAIN_MACHINE_TOKENS`); briefings are stateless delivery output for the main bearer. `GET /health` is liveness; `GET /ready` checks PostgreSQL readiness. Producer contract in `docs/machine-callers.md`. Recurrence/dead-man stay on producers' own schedulers — ops-brain never owns execution timing.
 
