@@ -32,7 +32,10 @@ async function main() {
   bridge.on('reconnecting', ({ delayMs }) => log('info', 'live adapter reconnect scheduled', {
     delay_ms: delayMs,
   }));
-  bridge.on('warning', (error) => log('warn', error.message));
+  bridge.on('warning', (error) => log('warn', error.message, {
+    delivery_stage: error.deliveryStage || undefined,
+    cause: error.cause?.message || undefined,
+  }));
   bridge.on('deliveryError', ({ messageId, error }) => log('warn', 'live message was not injected', {
     message_id: messageId,
     error_type: error.name,

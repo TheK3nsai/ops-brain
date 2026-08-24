@@ -210,7 +210,16 @@ export class CodexLiveBridge extends EventEmitter {
         );
       } catch (error) {
         if (required) throw error;
-        this.emit('warning', new Error('configured Codex thread is not currently resumable'));
+        // A discovered target that stops resuming must not strand the adapter:
+        // drop it so the next poll re-lists. A configured target is explicit
+        // intent — keep retrying it rather than silently retargeting whatever
+        // thread happens to be loaded, which could be another agent's session.
+        const pinned = Boolean(this.config.threadId);
+        if (!pinned) this.targetThreadId = null;
+        this.emit('warning', markDeliveryStage(new Error(
+          `${pinned ? 'configured' : 'discovered'} Codex thread is not currently resumable: ${error?.message || error}`,
+          { cause: error },
+        ), error?.deliveryStage || 'thread_resume'));
         return null;
       }
       return this.targetThreadId;
@@ -232,13 +241,17 @@ export class CodexLiveBridge extends EventEmitter {
         'thread_selection',
       );
     }
-    this.targetThreadId = ids[0];
+    // Latch only after the resume succeeds. Assigning first strands the adapter
+    // on a thread that never becomes resumable — the clean-launch race where the
+    // TUI thread exists but has no persisted rollout yet.
+    const candidate = ids[0];
     await this.#safeAppRequest(
       'thread/resume',
-      { threadId: this.targetThreadId },
+      { threadId: candidate },
       'thread_resume',
     );
-    return this.targetThreadId;
+    this.targetThreadId = candidate;
+    return candidate;
   }
 
   async #readTarget() {

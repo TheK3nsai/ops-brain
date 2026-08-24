@@ -894,3 +894,103 @@ test('pre-registration protocol failure cannot be revived by registration', asyn
     await closeServer(live.server);
   }
 });
+
+function resolveOnlyBridge({ threadId = null, resume }) {
+  const discovered = randomUUID();
+  const requests = [];
+  const warnings = [];
+  const appServer = new EventEmitter();
+  appServer.connect = async () => {};
+  appServer.close = async () => {};
+  appServer.request = async (method, params) => {
+    requests.push({ method, params });
+    if (method === 'thread/loaded/list') return { data: [discovered] };
+    if (method === 'thread/resume') return resume(params.threadId, requests);
+    throw new Error(`unexpected method ${method}`);
+  };
+  const live = new EventEmitter();
+  live.connect = async () => ({ peer_id: randomUUID(), agent_name: 'Codex-Stealth' });
+  live.close = async () => {};
+  const bridge = new CodexLiveBridge({
+    deliveryQueueCapacity: 1,
+    reconnectMinMs: 10,
+    reconnectMaxMs: 20,
+    threadId,
+  }, { appServer, liveFactory: () => live });
+  bridge.on('warning', (error) => warnings.push(error));
+  const teardown = async (run) => {
+    await bridge.stop();
+    // The fake live client never emits 'close' on its own; the run loop parks on
+    // that event once connected, so release it explicitly.
+    live.emit('close', { code: 1000, reason: 'test teardown' });
+    await run.catch(() => {});
+  };
+  return { bridge, requests, warnings, discovered, live, teardown };
+}
+
+test('a discovered thread that fails to resume is not latched and recovery re-lists', async () => {
+  let resumeFailures = 0;
+  const harness = resolveOnlyBridge({
+    resume: (id) => {
+      if (resumeFailures < 2) {
+        resumeFailures += 1;
+        throw new Error(`no rollout found for thread id ${id}`);
+      }
+      return {};
+    },
+  });
+  const connected = once(harness.bridge, 'connected');
+  const run = harness.bridge.start();
+  try {
+    await connected;
+    // The failing resumes must not have pinned the id: each retry has to go back
+    // through discovery, so there is one list per resume attempt.
+    const lists = harness.requests.filter((item) => item.method === 'thread/loaded/list').length;
+    const resumes = harness.requests.filter((item) => item.method === 'thread/resume').length;
+    assert.equal(resumeFailures, 2);
+    assert.equal(resumes, 3);
+    assert.equal(lists, 3, 'a failed resume must not skip re-listing loaded threads');
+    assert.equal(harness.bridge.targetThreadId, harness.discovered);
+  } finally {
+    await harness.teardown(run);
+  }
+});
+
+test('a configured thread survives resume failure instead of retargeting', async () => {
+  const pinned = randomUUID();
+  const harness = resolveOnlyBridge({
+    threadId: pinned,
+    resume: () => { throw new Error('no rollout found for thread id'); },
+  });
+  const run = harness.bridge.start();
+  try {
+    await waitForCondition(() => harness.warnings.length >= 2, 2000);
+    assert.equal(harness.bridge.targetThreadId, pinned, 'an explicit target must not be dropped');
+    assert.equal(
+      harness.requests.some((item) => item.method === 'thread/loaded/list'),
+      false,
+      'a configured target must never fall back to another agent\'s loaded thread',
+    );
+    assert.match(harness.warnings[0].message, /^configured Codex thread/);
+  } finally {
+    await harness.teardown(run);
+  }
+});
+
+test('unresumable-thread warnings carry the underlying cause and delivery stage', async () => {
+  const harness = resolveOnlyBridge({
+    threadId: randomUUID(),
+    resume: () => { throw new Error('App Server client is stopped'); },
+  });
+  const run = harness.bridge.start();
+  try {
+    await waitForCondition(() => harness.warnings.length >= 1, 2000);
+    const [warning] = harness.warnings;
+    // Transport loss and a genuinely unresumable thread must not render identically.
+    assert.match(warning.message, /App Server client is stopped/);
+    assert.equal(warning.cause?.message, 'App Server client is stopped');
+    assert.equal(warning.deliveryStage, 'thread_resume');
+  } finally {
+    await harness.teardown(run);
+  }
+});
