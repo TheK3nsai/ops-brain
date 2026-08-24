@@ -8,14 +8,18 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 - **Pre-scrub commit object may still be reachable on GitHub (2026-08-23, PR #85).** The fleet-private string guard caught a client hostname in a `GOTCHAS.md` entry *after* the branch was first pushed. The working tree, commit message, and PR body were scrubbed and force-pushed (guard now passes), but the original object stays reachable by exact SHA on a public repo until GitHub garbage-collects it. Low severity — one hostname, no credential — and the only real remedy is a GitHub Support GC request, so this is Eduardo's call whether to bother. Durable lesson worth more than the cleanup: **the guard runs in CI, i.e. after the push that publishes the string.** The pre-commit hook enforces the same denylist locally for ops-brain, but it only scans the working tree — it does not see the commit message or PR body, which is exactly where this one also landed. If this recurs, extend the local hook to the commit message rather than relying on the CI guard.
 
-### PR #84 — JSON error envelope for the REST surface — awaiting review + deploy
+### PR #84 — JSON error envelope for the REST surface — merged, awaiting deploy
 
-Branch `fix/json-error-envelope`. Closes HSR handoff `01a0206b`. **Not
-live** — needs review, merge, and a rebuild on the deploy host (no migration,
-no config change). Until it deploys, production still returns `text/plain`
-rejections.
+Merged to `main` as `922b329` on 2026-08-24. Closes HSR handoff `01a0206b`.
+**Not live** — still needs a rebuild on the deploy host (no migration, no
+config change); deploy handoff `01a0344c` is open with CC-Cloud. Until it
+deploys, production still returns `text/plain` rejections.
 
-Worth knowing when reviewing: the reported symptom (*bodyless 400 on an
+On deploy, CC-HSR wants a re-probe ping — their producer is the only caller
+bitten by this path, so their re-probe is the only true end-to-end check of
+the envelope. CC-Stealth owns that notification.
+
+Worth knowing when verifying the deploy: the reported symptom (*bodyless 400 on an
 oversized title*) was **not reproducible** — production has always returned
 `title too large (N bytes, max 200)`, measured before any code changed. The
 real defects were the *content-type* (`text/plain` on a JSON API, so a
