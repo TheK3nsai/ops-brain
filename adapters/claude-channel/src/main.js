@@ -13,7 +13,7 @@ async function main() {
   const mcp = createChannelServer(live)
   const bridge = new InboundChannelBridge(mcp, live)
   live.on('message', message => bridge.accept(message))
-  const stopLive = bindLiveLifecycle(mcp, live)
+  const stopLive = bindLiveLifecycle(mcp, live, { warn: message => process.stderr.write(`${message}\n`) })
 
   await mcp.connect(new StdioServerTransport())
 

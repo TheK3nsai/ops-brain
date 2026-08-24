@@ -20,6 +20,7 @@ BUNDLE="$TEST_DIR/ops-brain-client-9.9.9-test"
 [[ -d $BUNDLE/adapters/claude-channel/node_modules ]]
 [[ -d $BUNDLE/adapters/codex-app-server/node_modules ]]
 [[ -f $BUNDLE/LICENSE-MIT && -f $BUNDLE/LICENSE-APACHE ]]
+[[ -f $BUNDLE/DEPENDENCIES.json ]]
 mkdir -p -- "$TEST_DIR/fake-bin"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$TEST_DIR/fake-bin/npm"
 chmod +x "$TEST_DIR/fake-bin/npm"
@@ -31,4 +32,6 @@ status=$("$BUNDLE/scripts/install-live-adapters" --status --bin-dir "$TEST_DIR/b
 [[ -L $TEST_DIR/bin/ops-brain-client ]]
 [[ -L $TEST_DIR/bin/ops-brain-claude ]]
 [[ -L $TEST_DIR/bin/ops-brain-codex ]]
+printf '%s\n' 'tampered' >>"$BUNDLE/adapters/codex-app-server/node_modules/ws/index.js"
+[[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status codex) == missing-or-invalid ]]
 echo 'client bundle test passed'

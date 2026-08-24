@@ -8,7 +8,8 @@
     "node": ">=22"
   },
   "bin": {
-    "ops-brain-codex-adapter": "src/index.mjs"
+    "ops-brain-codex-adapter": "src/index.mjs",
+    "ops-brain-codex-live": "src/index.mjs"
   },
   "scripts": {
     "start": "node src/index.mjs",

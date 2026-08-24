@@ -10,14 +10,14 @@ param(
     [string]$Mode = 'Run',
     [uri]$LiveUrl = $(if ($env:OPS_BRAIN_LIVE_URL) { $env:OPS_BRAIN_LIVE_URL } else { $null }),
     [string]$AgentCredentialFile = $env:OPS_BRAIN_AGENT_CREDENTIAL_FILE,
-    [string]$ProfileFile = $(if ($env:OPS_BRAIN_CLIENT_PROFILE) { $env:OPS_BRAIN_CLIENT_PROFILE } else { Join-Path $env:LOCALAPPDATA 'ops-brain\codex.json' }),
+    [string]$ProfileFile = $(if ($env:OPS_BRAIN_CODEX_PROFILE) { $env:OPS_BRAIN_CODEX_PROFILE } else { Join-Path $env:LOCALAPPDATA 'ops-brain\codex.json' }),
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
     [string]$AgentName,
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
     [string]$Label = $env:OPS_BRAIN_CODEX_LABEL,
     [ValidateRange(1024, 65535)]
     [int]$AppServerPort = $(if ($env:OPS_BRAIN_CODEX_APP_SERVER_PORT) { [int]$env:OPS_BRAIN_CODEX_APP_SERVER_PORT } else { 4500 }),
-    [string]$StateDirectory = $(if ($env:OPS_BRAIN_LIVE_STATE_DIR) { $env:OPS_BRAIN_LIVE_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'ops-brain' }),
+    [string]$StateDirectory = $(if ($env:OPS_BRAIN_LIVE_STATE_DIR) { $env:OPS_BRAIN_LIVE_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'ops-brain-live' }),
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$CodexArgs
 )
@@ -46,6 +46,9 @@ function Get-RequiredApplication {
 
 function Assert-LiveUrl {
     param([Parameter(Mandatory)][uri]$Url)
+    if (-not $Url.IsAbsoluteUri) {
+        throw 'LiveUrl must be an absolute wss://host/live URL'
+    }
     $escapedPath = $Url.GetComponents([System.UriComponents]::Path, [System.UriFormat]::UriEscaped)
     if ($escapedPath -cne 'live' -or $Url.UserInfo -or
         $Url.OriginalString.Contains('?') -or $Url.OriginalString.Contains('#')) {
@@ -113,7 +116,15 @@ function Import-ClientProfile {
 }
 
 $ProfileFile = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($ProfileFile))
-$profile = Import-ClientProfile $ProfileFile 'codex'
+$profile = $null
+$profileError = $null
+try {
+    $profile = Import-ClientProfile $ProfileFile 'codex'
+}
+catch {
+    if ($Mode -ne 'Status') { throw }
+    $profileError = $_.Exception.Message
+}
 if ($null -ne $profile) {
     if ($null -eq $LiveUrl) { $LiveUrl = [uri]$profile.live_url }
     if (-not $AgentName) { $AgentName = [string]$profile.agent_name }
@@ -123,7 +134,7 @@ if ($null -ne $profile) {
         $AppServerPort = [int]$profile.app_server_port
     }
 }
-if (-not $Label) { $Label = 'codex' }
+if (-not $Label) { $Label = 'codex-live' }
 
 $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $Adapter = Join-Path $RepoDirectory 'adapters\codex-app-server\src\index.mjs'
@@ -143,7 +154,7 @@ if ($null -ne $LiveUrl) { Assert-LiveUrl $LiveUrl }
 
 if ($Mode -eq 'Status') {
     "adapter: $Adapter"
-    "profile: $ProfileFile $(if ($null -ne $profile) { '(loaded)' } else { '(missing)' })"
+    "profile: $ProfileFile $(if ($profileError) { '(not ready - {0})' -f $profileError } elseif ($null -ne $profile) { '(loaded)' } else { '(missing)' })"
     "live URL: $(if ($null -ne $LiveUrl) { $LiveUrl.AbsoluteUri } else { '<unset>' })"
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"

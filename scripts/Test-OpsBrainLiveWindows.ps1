@@ -115,7 +115,16 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     $codexProfileStatus = & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode Status -ProfileFile $codexProfile
     Assert-True (@($codexProfileStatus) -contains 'App Server: ws://127.0.0.1:4600') 'Codex launcher did not load its profile App Server port'
     $originalPath = $env:PATH
+    $originalClaudeConfigDirectory = $env:CLAUDE_CONFIG_DIR
+    $claudeBase = Join-Path $testDirectory 'claude-base'
+    [IO.Directory]::CreateDirectory($claudeBase) | Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $claudeBase '.claude.json'),
+        '{"mcpServers":{"existing":{"command":"cmd.exe","env":{"API_KEY":"must-not-be-copied"}}}}',
+        [Text.UTF8Encoding]::new($false)
+    )
     $env:PATH = "$fakeBin;$originalPath"
+    $env:CLAUDE_CONFIG_DIR = $claudeBase
     $env:OPS_BRAIN_TEST_CAPTURE = $captureFile
     $env:OPS_BRAIN_AGENT_TOKEN = 'fixture-must-not-reach-claude'
     try {
@@ -139,6 +148,10 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     }
     finally {
         $env:PATH = $originalPath
+        if ($null -eq $originalClaudeConfigDirectory) {
+            Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
+        }
+        else { $env:CLAUDE_CONFIG_DIR = $originalClaudeConfigDirectory }
         Remove-Item Env:OPS_BRAIN_TEST_CAPTURE -ErrorAction SilentlyContinue
         Remove-Item Env:OPS_BRAIN_AGENT_TOKEN -ErrorAction SilentlyContinue
     }
@@ -154,10 +167,13 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     Assert-True ($server.args -contains '-AgentName') 'generated Claude MCP config omitted AgentName'
     Assert-True ($server.args -contains 'CC-CI') 'generated Claude MCP config omitted the expected identity'
     Assert-True ($capture -notlike '*credential fixture is not read*') 'credential contents leaked into Claude capture'
+    Assert-True ($capture -notlike '*must-not-be-copied*') 'existing MCP credential was copied into the Claude overlay'
     $configDirectory = ($parts[0] -split "`n", 2)[0]
     Assert-True (-not (Test-Path -LiteralPath $configDirectory)) 'temporary Claude config overlay was not removed'
     $arguments = @($parts[1] -split "`n")
-    Assert-True (-not ($arguments -contains '--mcp-config')) 'Claude still received the resolver-invisible --mcp-config path'
+    $configIndex = [Array]::IndexOf($arguments, '--mcp-config')
+    Assert-True ($configIndex -ge 0) 'Claude did not receive the existing user MCP config by path'
+    Assert-True ($arguments[$configIndex + 1] -eq (Join-Path $claudeBase '.claude.json')) 'Claude received the wrong existing MCP config path'
     Assert-True ($arguments -contains '--dangerously-load-development-channels') 'Claude Channel opt-in flag is missing'
     $resumeIndex = [Array]::IndexOf($arguments, 'resume')
     Assert-True ($resumeIndex -ge 0) 'trailing client arguments did not reach $ClaudeArgs'

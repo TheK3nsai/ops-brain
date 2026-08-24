@@ -72,6 +72,7 @@ for script in \
     ops-brain-claude-live.ps1 \
     ops-brain-codex-live \
     ops-brain-codex-live.ps1 \
+    read-ops-brain-agent-token.ps1 \
     start-ops-brain-live-adapter.ps1 \
     test-live-launchers; do
     cp -a -- "$REPO_DIR/scripts/$script" "$BUNDLE_DIR/scripts/$script"
@@ -80,6 +81,7 @@ cp -a -- "$REPO_DIR/docs/live-messaging.md" "$REPO_DIR/docs/live-fleet-rollout.m
 cp -a -- "$REPO_DIR/docs/client-bundle.md" "$BUNDLE_DIR/README.md"
 cp -a -- "$REPO_DIR/LICENSE-MIT" "$REPO_DIR/LICENSE-APACHE" "$BUNDLE_DIR/"
 printf '%s\n' "$VERSION" >"$BUNDLE_DIR/VERSION"
+node "$BUNDLE_DIR/scripts/ops-brain-client" write-deps-manifest >/dev/null
 
 tar -C "$STAGING_ROOT" -czf "$OUTPUT_DIR/$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME"
 if command -v zip >/dev/null 2>&1; then

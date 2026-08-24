@@ -13,7 +13,8 @@ TOKEN_FILE="${OPS_BRAIN_AGENT_TOKEN_FILE:-}"
 EXPECTED_AGENT="${OPS_BRAIN_EXPECTED_AGENT:-}"
 LIVE_URL="${OPS_BRAIN_LIVE_URL:-}"
 LABEL="${OPS_BRAIN_LIVE_LABEL:-}"
-PROFILE_FILE="${OPS_BRAIN_CLIENT_PROFILE:-}"
+PROFILE_FILE="${OPS_BRAIN_CLAUDE_PROFILE:-}"
+PROFILE_ERROR=''
 CHANNEL_SERVER=ops-brain-live
 unset OPS_BRAIN_AGENT_TOKEN
 
@@ -31,17 +32,14 @@ Environment:
                              400); always select the exact Claude identity
   OPS_BRAIN_EXPECTED_AGENT   required exact bound identity, e.g. CC-Stealth
   OPS_BRAIN_LIVE_LABEL        optional non-sensitive peer label
-  OPS_BRAIN_CLIENT_PROFILE    optional profile path; defaults to the Claude
+  OPS_BRAIN_CLAUDE_PROFILE    optional profile path; defaults to the Claude
                               profile reported by ops-brain-client
 
 This launcher's own bearer is never placed in Claude's environment, this
 adapter's MCP entry, or a command argument -- only the protected token-file path
-is passed. Note that the private overlay copies the rest of your ~/.claude.json
-verbatim, so any credential already stored literally there (MCP env blocks,
-Authorization headers) is duplicated into the overlay for the life of the
-session. The overlay is mode 600 inside a mode 700 directory on the tmpfs
-runtime dir, and is destroyed on exit. Processes running as the same OS user can
-still read a mode-600 file.
+is passed. The private overlay contains only the internal Channel definition;
+an existing user MCP document is loaded in place with --mcp-config and is never
+copied. The overlay is destroyed on exit.
 EOF
 }
 
@@ -88,10 +86,30 @@ if [[ -f $PROFILE_HELPER ]]; then
     fi
     if [[ -f $PROFILE_FILE ]]; then
         profile_get() { node "$PROFILE_HELPER" get claude "$1" --profile "$PROFILE_FILE"; }
-        [[ -n $LIVE_URL ]] || LIVE_URL=$(profile_get live_url)
-        [[ -n $TOKEN_FILE ]] || TOKEN_FILE=$(profile_get credential_file)
-        [[ -n $EXPECTED_AGENT ]] || EXPECTED_AGENT=$(profile_get agent_name)
-        [[ -n $LABEL ]] || LABEL=$(profile_get label)
+        read_profile_field() {
+            local field=$1 target=$2 value
+            if ! value=$(profile_get "$field" 2>&1); then
+                PROFILE_ERROR=$value
+                return 1
+            fi
+            printf -v "$target" '%s' "$value"
+        }
+        profile_live_url=''
+        profile_token_file=''
+        profile_agent=''
+        profile_label=''
+        if read_profile_field live_url profile_live_url \
+            && read_profile_field credential_file profile_token_file \
+            && read_profile_field agent_name profile_agent \
+            && read_profile_field label profile_label; then
+            [[ -n $LIVE_URL ]] || LIVE_URL=$profile_live_url
+            [[ -n $TOKEN_FILE ]] || TOKEN_FILE=$profile_token_file
+            [[ -n $EXPECTED_AGENT ]] || EXPECTED_AGENT=$profile_agent
+            [[ -n $LABEL ]] || LABEL=$profile_label
+        elif [[ $mode != status ]]; then
+            printf '%s\n' "$PROFILE_ERROR" >&2
+            exit 2
+        fi
     fi
 fi
 LABEL="${LABEL:-claude-code}"
@@ -114,7 +132,11 @@ channel_status() {
 
 if [[ $mode == status ]]; then
     printf 'adapter: %s\n' "$ADAPTER"
-    printf 'profile: %s\n' "${PROFILE_FILE:-<unset>}"
+    if [[ -n $PROFILE_ERROR ]]; then
+        printf 'profile: %s — not ready (%s)\n' "${PROFILE_FILE:-<unset>}" "${PROFILE_ERROR#ops-brain-client: }"
+    else
+        printf 'profile: %s\n' "${PROFILE_FILE:-<unset>}"
+    fi
     printf 'url:     %s\n' "$url_status"
     printf 'label:   %s\n' "$LABEL"
     printf 'agent:   %s\n' "${EXPECTED_AGENT:-<unset>}"
@@ -168,20 +190,12 @@ server_definition=$(node -e '
 ' "$ADAPTER" "$LIVE_URL" "$LABEL" "$EXPECTED_AGENT" "$TOKEN_FILE")
 
 if [[ $mode == dry ]]; then
-    echo "would launch: CLAUDE_CONFIG_DIR=<private-overlay> claude --dangerously-load-development-channels server:$CHANNEL_SERVER $*"
+    echo "would launch: CLAUDE_CONFIG_DIR=<private-overlay> claude [--mcp-config <existing-user-config>] --dangerously-load-development-channels server:$CHANNEL_SERVER $*"
     exit 0
 fi
 
 umask 077
-# The overlay holds a copy of the user's ~/.claude.json, which on most hosts
-# carries literal MCP credentials. Keep that copy on the tmpfs runtime dir so it
-# never reaches disk and dies with the login session; refuse rather than fall
-# back to a disk-backed /tmp.
-RUNTIME_ROOT="${XDG_RUNTIME_DIR:-}"
-if [[ -z $RUNTIME_ROOT ]]; then
-    echo 'XDG_RUNTIME_DIR is unset; refusing to write the Claude config overlay to disk-backed storage' >&2
-    exit 2
-fi
+RUNTIME_ROOT="${XDG_RUNTIME_DIR:-/tmp}"
 if [[ -L $RUNTIME_ROOT || ! -d $RUNTIME_ROOT ]]; then
     echo "runtime path must be a real directory: $RUNTIME_ROOT" >&2
     exit 2
@@ -199,8 +213,19 @@ trap cleanup_overlay EXIT INT TERM
 node "$OVERLAY_HELPER" "$overlay_dir" "$CHANNEL_SERVER" "$server_definition"
 unset server_definition
 
+# The overlay contains only the new Channel definition. Load the user's real
+# MCP document in place so credentials and other servers are never duplicated.
+user_mcp_args=()
+if [[ -n ${CLAUDE_CONFIG_DIR:-} ]]; then
+    user_mcp_config="$CLAUDE_CONFIG_DIR/.claude.json"
+else
+    user_mcp_config="$HOME/.claude.json"
+fi
+[[ -f $user_mcp_config ]] && user_mcp_args=(--mcp-config "$user_mcp_config")
+
 set +e
 CLAUDE_CONFIG_DIR="$overlay_dir" claude "$@" \
+    "${user_mcp_args[@]}" \
     --dangerously-load-development-channels "server:$CHANNEL_SERVER"
 exit_status=$?
 set -e

@@ -14,8 +14,9 @@ EXPECTED_AGENT="${OPS_BRAIN_EXPECTED_AGENT:-}"
 LIVE_URL="${OPS_BRAIN_LIVE_URL:-}"
 LABEL="${OPS_BRAIN_CODEX_LABEL:-}"
 APP_PORT="${OPS_BRAIN_CODEX_APP_SERVER_PORT:-}"
-PROFILE_FILE="${OPS_BRAIN_CLIENT_PROFILE:-}"
-STATE_DIR="${OPS_BRAIN_LIVE_STATE_DIR:-$HOME/.local/state/ops-brain}"
+PROFILE_FILE="${OPS_BRAIN_CODEX_PROFILE:-}"
+PROFILE_ERROR=''
+STATE_DIR="${OPS_BRAIN_LIVE_STATE_DIR:-$HOME/.local/state/ops-brain-live}"
 LOG_FILE=''
 unset OPS_BRAIN_AGENT_TOKEN
 
@@ -36,11 +37,12 @@ Environment:
   OPS_BRAIN_CODEX_LABEL              optional non-sensitive peer label
   OPS_BRAIN_CODEX_APP_SERVER_PORT    loopback port (default 4500)
   OPS_BRAIN_LIVE_STATE_DIR           adapter log directory
-  OPS_BRAIN_CLIENT_PROFILE           optional profile path; defaults to the
+  OPS_BRAIN_CODEX_PROFILE            optional profile path; defaults to the
                                      Codex profile reported by ops-brain-client
 
-The token is exported only to the adapter process. It never appears in command
-arguments or logs.
+Only the protected token-file path is exported to the adapter process. The
+bearer itself never appears in command arguments, the launcher environment, or
+logs.
 EOF
 }
 
@@ -87,14 +89,36 @@ if [[ -f $PROFILE_HELPER ]]; then
     fi
     if [[ -f $PROFILE_FILE ]]; then
         profile_get() { node "$PROFILE_HELPER" get codex "$1" --profile "$PROFILE_FILE"; }
-        [[ -n $LIVE_URL ]] || LIVE_URL=$(profile_get live_url)
-        [[ -n $TOKEN_FILE ]] || TOKEN_FILE=$(profile_get credential_file)
-        [[ -n $EXPECTED_AGENT ]] || EXPECTED_AGENT=$(profile_get agent_name)
-        [[ -n $LABEL ]] || LABEL=$(profile_get label)
-        [[ -n $APP_PORT ]] || APP_PORT=$(profile_get app_server_port)
+        read_profile_field() {
+            local field=$1 target=$2 value
+            if ! value=$(profile_get "$field" 2>&1); then
+                PROFILE_ERROR=$value
+                return 1
+            fi
+            printf -v "$target" '%s' "$value"
+        }
+        profile_live_url=''
+        profile_token_file=''
+        profile_agent=''
+        profile_label=''
+        profile_app_port=''
+        if read_profile_field live_url profile_live_url \
+            && read_profile_field credential_file profile_token_file \
+            && read_profile_field agent_name profile_agent \
+            && read_profile_field label profile_label \
+            && read_profile_field app_server_port profile_app_port; then
+            [[ -n $LIVE_URL ]] || LIVE_URL=$profile_live_url
+            [[ -n $TOKEN_FILE ]] || TOKEN_FILE=$profile_token_file
+            [[ -n $EXPECTED_AGENT ]] || EXPECTED_AGENT=$profile_agent
+            [[ -n $LABEL ]] || LABEL=$profile_label
+            [[ -n $APP_PORT ]] || APP_PORT=$profile_app_port
+        elif [[ $mode != status ]]; then
+            printf '%s\n' "$PROFILE_ERROR" >&2
+            exit 2
+        fi
     fi
 fi
-LABEL="${LABEL:-codex}"
+LABEL="${LABEL:-codex-live}"
 APP_PORT="${APP_PORT:-4500}"
 APP_URL="ws://127.0.0.1:$APP_PORT"
 
@@ -106,7 +130,11 @@ fi
 
 if [[ $mode == status ]]; then
     printf 'adapter:    %s\n' "$ADAPTER"
-    printf 'profile:    %s\n' "${PROFILE_FILE:-<unset>}"
+    if [[ -n $PROFILE_ERROR ]]; then
+        printf 'profile:    %s — not ready (%s)\n' "${PROFILE_FILE:-<unset>}" "${PROFILE_ERROR#ops-brain-client: }"
+    else
+        printf 'profile:    %s\n' "${PROFILE_FILE:-<unset>}"
+    fi
     printf 'live url:   %s\n' "$url_status"
     printf 'label:      %s\n' "$LABEL"
     printf 'agent:      %s\n' "${EXPECTED_AGENT:-<unset>}"
@@ -127,6 +155,10 @@ validate_live_url || { echo 'OPS_BRAIN_LIVE_URL is required and must be exact ws
     echo "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path" >&2
     exit 2
 }
+[[ -L $TOKEN_FILE ]] && {
+    echo "token file must be a regular file, not a symlink: $TOKEN_FILE" >&2
+    exit 2
+}
 if [[ ! $APP_PORT =~ ^[0-9]+$ ]] || ((APP_PORT < 1024 || APP_PORT > 65535)); then
     echo 'OPS_BRAIN_CODEX_APP_SERVER_PORT must be 1024-65535' >&2
     exit 2
@@ -139,12 +171,6 @@ token_mode=$(stat -c '%a' "$TOKEN_FILE")
 command -v node >/dev/null || { echo 'node is required' >&2; exit 2; }
 command -v codex >/dev/null || { echo 'codex is required' >&2; exit 2; }
 command -v curl >/dev/null || { echo 'curl is required' >&2; exit 2; }
-
-OPS_BRAIN_AGENT_TOKEN=$(<"$TOKEN_FILE")
-[[ -n $OPS_BRAIN_AGENT_TOKEN && $OPS_BRAIN_AGENT_TOKEN != *$'\n'* && $OPS_BRAIN_AGENT_TOKEN != *$'\r'* ]] || {
-    echo 'token file must contain exactly one non-empty line' >&2
-    exit 2
-}
 
 if [[ $mode == dry ]]; then
     echo "would launch App Server at $APP_URL"
@@ -203,13 +229,12 @@ done
 
 (
     export OPS_BRAIN_LIVE_URL="$LIVE_URL"
-    export OPS_BRAIN_AGENT_TOKEN
+    export OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE"
     export OPS_BRAIN_EXPECTED_AGENT="$EXPECTED_AGENT"
     export OPS_BRAIN_CODEX_APP_SERVER_URL="$APP_URL"
     export OPS_BRAIN_CODEX_LABEL="$LABEL"
     exec node "$ADAPTER" </dev/null >>"$LOG_FILE" 2>&1
 ) &
 adapter_pid=$!
-unset OPS_BRAIN_AGENT_TOKEN
 
 codex --remote "$APP_URL" "$@"

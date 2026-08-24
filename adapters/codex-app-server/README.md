@@ -44,12 +44,13 @@ codex app-server --listen ws://127.0.0.1:4500
 codex --remote ws://127.0.0.1:4500
 ```
 
-After the TUI has loaded the desired thread, start the adapter. Put secrets in
-environment variables; never put a bearer on the command line or in the URL:
+After the TUI has loaded the desired thread, start the adapter. For direct
+development, point it at a protected token file; never put a bearer on the
+command line or in the URL:
 
 ```bash
 export OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live
-export OPS_BRAIN_AGENT_TOKEN='...'
+export OPS_BRAIN_AGENT_TOKEN_FILE="$HOME/.config/ops-brain/agent-token-codex-stealth"
 export OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth
 export OPS_BRAIN_CODEX_APP_SERVER_URL=ws://127.0.0.1:4500
 export OPS_BRAIN_CODEX_LABEL=codex-stealth-1
@@ -84,6 +85,12 @@ Optional variables:
   WebSocket. It is read only from the environment.
 - `OPS_BRAIN_CODEX_BIN`: Codex executable name/path for stdio mode.
 - `OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS`: 500-30000; default 5000.
+
+The adapter also accepts the mutually exclusive
+`OPS_BRAIN_AGENT_TOKEN_HELPER_JSON` source used by the Windows launcher. That
+internal JSON command array lets a short-lived helper decrypt DPAPI material
+into the adapter's private stdout pipe without putting the bearer in an
+environment variable or plaintext file.
 
 `OPS_BRAIN_EXPECTED_AGENT` is required. The adapter compares it to the
 server-returned token binding and disconnects before becoming ready on a

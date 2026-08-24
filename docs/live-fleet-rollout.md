@@ -145,25 +145,25 @@ fail with:
 server:ops-brain-live · no MCP server configured with that name
 ```
 
-The supported launcher creates a private per-launch `CLAUDE_CONFIG_DIR`, mirrors
-the user's ordinary config/state into it without mutating the real config, and
-adds the Channel only to the overlay's user scope. The resolver sees the name;
-sibling and wake sessions do not. The adapter waits for MCP initialization
-before registering with `/live`, and the overlay is deleted when Claude exits.
+The supported launcher creates a private per-launch `CLAUDE_CONFIG_DIR`, links
+the user's non-config state into it without mutating the real files, and adds
+the Channel only to the overlay's user scope. It loads an existing user MCP
+document directly with `--mcp-config`; it never copies `.claude.json`. The
+resolver sees the internal Channel name; sibling and wake sessions do not. The
+adapter waits for MCP initialization before registering with `/live`, and the
+overlay is deleted when Claude exits.
 Do not replace this with ambient local/user registration: every Claude session
 in that scope would spawn the adapter and create duplicate peers.
 
 **Know what the overlay carries.** `CLAUDE_CONFIG_DIR` *replaces* the user
-config rather than layering over it — point it at a directory holding one MCP
-server and `claude mcp list` shows exactly that one. Preserving the operator's
-other MCP servers therefore means copying `~/.claude.json` verbatim, including
-any credential stored literally in an `env` block or an `Authorization` header.
-Measured on stealth 2026-08-24: the overlay copy carried three live values.
-The copy is mode 600 in a mode 700 directory, is deleted on exit, and the
-launcher now **refuses to start when `XDG_RUNTIME_DIR` is unset** rather than
-falling back to a disk-backed `/tmp`, so it lives on tmpfs and dies with the
-login session. The launcher's own bearer is still passed only as a token-file
-path. Treat literal secrets in `~/.claude.json` as the thing to fix upstream.
+config rather than layering over it, so the overlay's `.claude.json` contains
+only the generated `ops-brain-live` Channel entry and credential-file pointer.
+The real user MCP document remains at its existing path and is passed to Claude
+as a file. The launcher's own bearer is read by the adapter from the protected
+token file; it is not copied into the overlay, exported by the launcher, or
+placed in a command argument. On Linux the temporary overlay uses
+`XDG_RUNTIME_DIR` when available and a private mode-700 `/tmp` directory
+otherwise. Same-user processes remain outside this boundary.
 
 Both launchers also accept `--status`, `--dry-run`, and `--profile`. The token path and exact
 expected server-bound identity are required deliberately. There is no generic
@@ -232,11 +232,13 @@ ops-brain-codex
 ```
 
 Substitute the host's exact identities and labels. `-Mode Status` and
-`-Mode DryRun` are credential-safe. The credential helper decrypts the bearer
-only in the adapter child process. It verifies that the DPAPI credential
-username matches `-AgentName`, and the adapter independently verifies the
-server-returned binding. Claude, Codex, command arguments, generated MCP
-configuration, and logs receive only the credential-file path.
+`-Mode DryRun` are credential-safe. A short-lived helper decrypts the bearer
+from DPAPI and writes it only to the adapter's private child-process pipe. The
+adapter captures that output without putting it in its environment, on disk,
+or on the command line. The helper verifies that the DPAPI credential username
+matches `-AgentName`, and the adapter independently verifies the server-returned
+binding. Claude, Codex, command arguments, generated MCP configuration, and
+logs receive only the credential-file path.
 
 ## Capturing launcher output
 

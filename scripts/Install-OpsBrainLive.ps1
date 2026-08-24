@@ -5,7 +5,11 @@
 param(
     [ValidateSet('Install', 'Status')]
     [string]$Mode = 'Install',
-    [string]$BinDirectory = $(Join-Path $env:LOCALAPPDATA 'Programs\ops-brain'),
+    [string]$BinDirectory = $(
+        $legacy = Join-Path $env:LOCALAPPDATA 'Programs\ops-brain-live'
+        $current = Join-Path $env:LOCALAPPDATA 'Programs\ops-brain'
+        if ((Test-Path -LiteralPath $legacy) -and -not (Test-Path -LiteralPath $current)) { $legacy } else { $current }
+    ),
     [switch]$SkipDependencies
 )
 

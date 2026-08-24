@@ -9,20 +9,6 @@ function fail(message) {
   process.exit(2)
 }
 
-function readJsonObject(file, description) {
-  if (!fs.existsSync(file)) return {}
-  let parsed
-  try {
-    parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    fail(`${description} is not valid JSON: ${file}`)
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    fail(`${description} must contain a JSON object: ${file}`)
-  }
-  return parsed
-}
-
 function validateServerDefinition(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     fail('server definition must be a JSON object')
@@ -40,8 +26,16 @@ function validateServerDefinition(value) {
   )) {
     fail('server definition env must map names to strings')
   }
-  if (Object.hasOwn(value.env ?? {}, 'OPS_BRAIN_AGENT_TOKEN')) {
-    fail('server definition must pass a token file or credential helper, never a bearer')
+  const allowedEnvironment = new Set([
+    'OPS_BRAIN_LIVE_URL',
+    'OPS_BRAIN_LIVE_LABEL',
+    'OPS_BRAIN_EXPECTED_AGENT',
+    'OPS_BRAIN_AGENT_TOKEN_FILE',
+    'OPS_BRAIN_AGENT_TOKEN_HELPER_JSON',
+  ])
+  const unsupported = Object.keys(value.env ?? {}).find(name => !allowedEnvironment.has(name))
+  if (unsupported) {
+    fail(`server definition environment key is not allowed: ${unsupported}`)
   }
   return value
 }
@@ -105,8 +99,7 @@ function mirrorConfigFile(source, target) {
   try {
     fs.linkSync(source, target)
   } catch (error) {
-    if (!['EXDEV', 'EPERM', 'EACCES'].includes(error.code)) throw error
-    fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)
+    fail(`cannot mirror Claude state file without copying it: ${source} (${error.code ?? 'unknown error'})`)
   }
 }
 
@@ -127,17 +120,8 @@ try {
 const overlayDirectory = assertEmptyPrivateDirectory(overlayArg)
 const explicitBase = process.env.CLAUDE_CONFIG_DIR?.trim()
 const baseDirectory = path.resolve(explicitBase || path.join(os.homedir(), '.claude'))
-const userConfig = path.resolve(
-  explicitBase ? path.join(baseDirectory, '.claude.json') : path.join(os.homedir(), '.claude.json'),
-)
-
 mirrorConfigDirectory(baseDirectory, overlayDirectory)
-const config = readJsonObject(userConfig, 'Claude user config')
-const existingServers = config.mcpServers
-if (existingServers != null && (typeof existingServers !== 'object' || Array.isArray(existingServers))) {
-  fail(`Claude user config mcpServers must be an object: ${userConfig}`)
-}
-config.mcpServers = { ...(existingServers ?? {}), [serverName]: serverDefinition }
+const config = { mcpServers: { [serverName]: serverDefinition } }
 
 const overlayConfig = path.join(overlayDirectory, '.claude.json')
 fs.writeFileSync(overlayConfig, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 })

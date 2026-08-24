@@ -58,6 +58,7 @@ recognized:
 | `OPS_BRAIN_EXPECTED_AGENT` | yes | Exact server-bound identity expected after registration, such as `CC-Stealth`; a mismatch disconnects fail-closed. |
 | `OPS_BRAIN_AGENT_TOKEN_FILE` | recommended | Protected file containing the identity-bound bearer. |
 | `OPS_BRAIN_AGENT_TOKEN` | alternative | Identity-bound bearer inherited by the adapter; mutually exclusive with the file. |
+| `OPS_BRAIN_AGENT_TOKEN_HELPER_JSON` | launcher-internal alternative | JSON command array for a short-lived credential helper; mutually exclusive with the other token sources. |
 | `OPS_BRAIN_LIVE_LABEL` | no | Non-sensitive local disambiguator; defaults to `claude-code`. |
 
 The internal Channel name remains `ops-brain-live` to avoid colliding with the

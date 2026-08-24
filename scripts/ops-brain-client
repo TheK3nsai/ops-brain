@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
@@ -24,10 +25,12 @@ function usage(exitCode = 0) {
   ops-brain-client profile-path CLIENT [--profile PATH]
   ops-brain-client get CLIENT FIELD [--profile PATH]
   ops-brain-client deps-status CLIENT
+  ops-brain-client write-deps-manifest
 
 CLIENT is claude or codex. Profiles contain credential pointers, never bearer
 values. The default profile is per client under the user's ops-brain config
-directory.
+directory. Override those defaults with OPS_BRAIN_CLAUDE_PROFILE or
+OPS_BRAIN_CODEX_PROFILE.
 `)
   process.exit(exitCode)
 }
@@ -74,7 +77,8 @@ function parseOptions(args) {
 }
 
 function profilePath(client, options) {
-  return expandPath(options.profile || process.env.OPS_BRAIN_CLIENT_PROFILE || path.join(configRoot(), `${client}.json`))
+  const environmentName = `OPS_BRAIN_${client.toUpperCase()}_PROFILE`
+  return expandPath(options.profile || process.env[environmentName] || path.join(configRoot(), `${client}.json`))
 }
 
 function validateLiveUrl(raw) {
@@ -148,7 +152,7 @@ function writeProfile(client, options) {
     live_url: validateLiveUrl(options.live_url),
     agent_name: validateSlug(options.agent, 'agent'),
     credential_file: credentialFile,
-    label: validateSlug(options.label || (client === 'claude' ? 'claude-code' : 'codex'), 'label'),
+    label: validateSlug(options.label || (client === 'claude' ? 'claude-code' : 'codex-live'), 'label'),
   }
   if (client === 'codex') {
     const port = Number(options.app_server_port || 4500)
@@ -214,8 +218,51 @@ function dependencyStatus(adapterDirectory) {
       }
       if (installed.version !== expected.version) return 'missing-or-invalid'
     }
+    const bundleManifest = path.join(clientRoot(), 'DEPENDENCIES.json')
+    if (fs.existsSync(bundleManifest) && !verifyDependencyManifest(bundleManifest)) {
+      return 'missing-or-invalid'
+    }
     return 'ready'
   } catch { return 'missing-or-invalid' }
+}
+
+function dependencyEntries(root) {
+  const entries = []
+  const visit = directory => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const absolute = path.join(directory, name)
+      const relative = path.relative(root, absolute).split(path.sep).join('/')
+      const stat = fs.lstatSync(absolute)
+      if (stat.isDirectory()) {
+        visit(absolute)
+      } else if (stat.isFile()) {
+        const sha256 = createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')
+        entries.push({ path: relative, type: 'file', sha256 })
+      } else if (stat.isSymbolicLink()) {
+        entries.push({ path: relative, type: 'symlink', target: fs.readlinkSync(absolute) })
+      } else {
+        throw new Error(`unsupported dependency entry: ${relative}`)
+      }
+    }
+  }
+  for (const client of CLIENTS) visit(path.join(adapterDirectory(client), 'node_modules'))
+  return entries
+}
+
+function verifyDependencyManifest(file) {
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'))
+  if (manifest.schema !== 1 || !Array.isArray(manifest.entries)) return false
+  return JSON.stringify(dependencyEntries(clientRoot())) === JSON.stringify(manifest.entries)
+}
+
+function writeDependencyManifest() {
+  const file = path.join(clientRoot(), 'DEPENDENCIES.json')
+  if (fs.existsSync(file)) fail(`refusing to replace dependency manifest: ${file}`)
+  const manifest = { schema: 1, entries: dependencyEntries(clientRoot()) }
+  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`, {
+    encoding: 'utf8', flag: 'wx', mode: 0o644,
+  })
+  process.stdout.write(`${file}\n`)
 }
 
 function clientRoot() {
@@ -234,7 +281,9 @@ function doctor(client, options) {
   process.stdout.write(`client root: ${root}\nnode: ${process.execPath} (${process.versions.node})\n`)
   process.stdout.write(`claude adapter: ${claudeDependencies}\n`)
   process.stdout.write(`codex adapter:  ${codexDependencies}\n`)
-  let failed = claudeDependencies !== 'ready' || codexDependencies !== 'ready'
+  let failed = client
+    ? (client === 'claude' ? claudeDependencies : codexDependencies) !== 'ready'
+    : claudeDependencies !== 'ready' || codexDependencies !== 'ready'
   let configured = 0
   for (const item of client ? [client] : [...CLIENTS]) {
     const file = profilePath(item, options)
@@ -268,7 +317,9 @@ try {
     writeProfile(client, parseOptions(rest))
   } else if (command === 'doctor') {
     const client = rest[0] && !rest[0].startsWith('--') ? parseClient(rest.shift()) : null
-    doctor(client, parseOptions(rest))
+    const options = parseOptions(rest)
+    if (!client && options.profile) fail('--profile requires CLIENT with doctor')
+    doctor(client, options)
   } else if (command === 'profile-path') {
     const client = parseClient(rest.shift())
     process.stdout.write(`${profilePath(client, parseOptions(rest))}\n`)
@@ -284,6 +335,9 @@ try {
     const client = parseClient(rest.shift())
     if (rest.length > 0) fail(`unexpected argument: ${rest[0]}`)
     process.stdout.write(`${dependencyStatus(adapterDirectory(client))}\n`)
+  } else if (command === 'write-deps-manifest') {
+    if (rest.length > 0) fail(`unexpected argument: ${rest[0]}`)
+    writeDependencyManifest()
   } else {
     usage(2)
   }

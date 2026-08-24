@@ -10,7 +10,7 @@ param(
     [string]$Mode = 'Run',
     [uri]$LiveUrl = $(if ($env:OPS_BRAIN_LIVE_URL) { $env:OPS_BRAIN_LIVE_URL } else { $null }),
     [string]$AgentCredentialFile = $env:OPS_BRAIN_AGENT_CREDENTIAL_FILE,
-    [string]$ProfileFile = $(if ($env:OPS_BRAIN_CLIENT_PROFILE) { $env:OPS_BRAIN_CLIENT_PROFILE } else { Join-Path $env:LOCALAPPDATA 'ops-brain\claude.json' }),
+    [string]$ProfileFile = $(if ($env:OPS_BRAIN_CLAUDE_PROFILE) { $env:OPS_BRAIN_CLAUDE_PROFILE } else { Join-Path $env:LOCALAPPDATA 'ops-brain\claude.json' }),
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
     [string]$AgentName,
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
@@ -38,6 +38,9 @@ function Get-RequiredApplication {
 
 function Assert-LiveUrl {
     param([Parameter(Mandatory)][uri]$Url)
+    if (-not $Url.IsAbsoluteUri) {
+        throw 'LiveUrl must be an absolute wss://host/live URL'
+    }
     $escapedPath = $Url.GetComponents([System.UriComponents]::Path, [System.UriFormat]::UriEscaped)
     if ($escapedPath -cne 'live' -or $Url.UserInfo -or
         $Url.OriginalString.Contains('?') -or $Url.OriginalString.Contains('#')) {
@@ -60,7 +63,15 @@ function Import-ClientProfile {
 }
 
 $ProfileFile = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($ProfileFile))
-$profile = Import-ClientProfile $ProfileFile 'claude'
+$profile = $null
+$profileError = $null
+try {
+    $profile = Import-ClientProfile $ProfileFile 'claude'
+}
+catch {
+    if ($Mode -ne 'Status') { throw }
+    $profileError = $_.Exception.Message
+}
 if ($null -ne $profile) {
     if ($null -eq $LiveUrl) { $LiveUrl = [uri]$profile.live_url }
     if (-not $AgentName) { $AgentName = [string]$profile.agent_name }
@@ -81,7 +92,7 @@ $credentialStatus = if ($AgentCredentialFile -and (Test-Path -LiteralPath $Agent
 if ($null -ne $LiveUrl) { Assert-LiveUrl $LiveUrl }
 if ($Mode -eq 'Status') {
     "adapter: $Adapter"
-    "profile: $ProfileFile $(if ($null -ne $profile) { '(loaded)' } else { '(missing)' })"
+    "profile: $ProfileFile $(if ($profileError) { '(not ready - {0})' -f $profileError } elseif ($null -ne $profile) { '(loaded)' } else { '(missing)' })"
     "live URL: $(if ($null -ne $LiveUrl) { $LiveUrl.AbsoluteUri } else { '<unset>' })"
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"
@@ -149,7 +160,17 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Claude Channel overlay helper exited $LASTEXITCODE" }
     Remove-Item Env:OPS_BRAIN_AGENT_TOKEN -ErrorAction SilentlyContinue
     $env:CLAUDE_CONFIG_DIR = $configDirectory
-    & $claudeCommand.Source @ClaudeArgs --dangerously-load-development-channels server:ops-brain-live
+    $userMcpConfig = if ($previousConfigDirectory) {
+        Join-Path $previousConfigDirectory '.claude.json'
+    }
+    else {
+        Join-Path $HOME '.claude.json'
+    }
+    $userMcpArguments = if (Test-Path -LiteralPath $userMcpConfig -PathType Leaf) {
+        @('--mcp-config', $userMcpConfig)
+    }
+    else { @() }
+    & $claudeCommand.Source @ClaudeArgs @userMcpArguments --dangerously-load-development-channels server:ops-brain-live
     exit $LASTEXITCODE
 }
 finally {

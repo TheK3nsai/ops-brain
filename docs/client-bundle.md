@@ -5,6 +5,18 @@ and Codex sessions. It contains both host adapters, their lockfile-pinned Node
 dependencies, Linux and Windows launchers, and a credential-safe profile and
 doctor command. No Git checkout or `npm install` is required.
 
+Before extracting a downloaded release archive, verify its checksum and GitHub
+artifact attestation:
+
+```bash
+sha256sum --check ops-brain-client-X.Y.Z.SHA256SUMS
+gh attestation verify ops-brain-client-X.Y.Z.tar.gz --repo TheK3nsai/ops-brain
+```
+
+Use the `.zip` filename in the second command on Windows. The checksum detects
+transfer corruption; the attestation binds the artifact digest to this
+repository's GitHub Actions release workflow.
+
 Keep the extracted versioned directory in a stable user-owned location. On
 Linux, run:
 
