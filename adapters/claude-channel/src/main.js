@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createChannelServer } from './channel-server.js'
 import { loadConfig } from './config.js'
 import { InboundChannelBridge } from './inbound-bridge.js'
+import { bindLiveLifecycle } from './lifecycle.js'
 import { LiveClient } from './live-client.js'
 
 async function main() {
@@ -12,12 +13,12 @@ async function main() {
   const mcp = createChannelServer(live)
   const bridge = new InboundChannelBridge(mcp, live)
   live.on('message', message => bridge.accept(message))
+  const stopLive = bindLiveLifecycle(mcp, live, { warn: message => process.stderr.write(`${message}\n`) })
 
   await mcp.connect(new StdioServerTransport())
-  live.start()
 
   const stop = async () => {
-    live.stop()
+    stopLive()
     await mcp.close()
   }
   process.once('SIGINT', () => void stop())

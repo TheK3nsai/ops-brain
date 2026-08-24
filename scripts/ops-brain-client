@@ -1,0 +1,348 @@
+#!/usr/bin/env node
+
+import fs from 'node:fs'
+import { createHash } from 'node:crypto'
+import os from 'node:os'
+import path from 'node:path'
+import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+
+const CLIENTS = new Set(['claude', 'codex'])
+const FIELDS = new Set(['live_url', 'agent_name', 'credential_file', 'label', 'app_server_port'])
+
+class CliError extends Error {
+  constructor(message, exitCode = 2) {
+    super(message)
+    this.exitCode = exitCode
+  }
+}
+
+function usage(exitCode = 0) {
+  const out = exitCode === 0 ? process.stdout : process.stderr
+  out.write(`Usage:
+  ops-brain-client configure CLIENT --live-url URL --agent NAME --credential-file PATH [--label LABEL] [--app-server-port PORT] [--profile PATH]
+  ops-brain-client doctor [CLIENT] [--profile PATH]
+  ops-brain-client profile-path CLIENT [--profile PATH]
+  ops-brain-client get CLIENT FIELD [--profile PATH]
+  ops-brain-client deps-status CLIENT
+  ops-brain-client write-deps-manifest
+
+CLIENT is claude or codex. Profiles contain credential pointers, never bearer
+values. The default profile is per client under the user's ops-brain config
+directory. Override those defaults with OPS_BRAIN_CLAUDE_PROFILE or
+OPS_BRAIN_CODEX_PROFILE.
+`)
+  process.exit(exitCode)
+}
+
+function fail(message, exitCode = 2) {
+  throw new CliError(message, exitCode)
+}
+
+function expandPath(value) {
+  let expanded = value
+  if (expanded === '~' || /^~[\\/]/.test(expanded)) {
+    expanded = path.join(os.homedir(), expanded.slice(2))
+  }
+  if (process.platform === 'win32') {
+    expanded = expanded.replace(/%([^%]+)%/g, (match, name) => process.env[name] ?? match)
+  }
+  return path.resolve(expanded)
+}
+
+function configRoot() {
+  if (process.platform === 'win32') {
+    return path.resolve(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'ops-brain')
+  }
+  return path.resolve(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'ops-brain')
+}
+
+function parseClient(value) {
+  if (!CLIENTS.has(value)) fail('CLIENT must be claude or codex')
+  return value
+}
+
+function parseOptions(args) {
+  const options = {}
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index]
+    if (!flag.startsWith('--')) fail(`unexpected argument: ${flag}`)
+    if (index + 1 >= args.length) fail(`${flag} requires a value`)
+    const name = flag.slice(2).replaceAll('-', '_')
+    if (Object.hasOwn(options, name)) fail(`${flag} was provided more than once`)
+    options[name] = args[index + 1]
+    index += 1
+  }
+  return options
+}
+
+function profilePath(client, options) {
+  const environmentName = `OPS_BRAIN_${client.toUpperCase()}_PROFILE`
+  return expandPath(options.profile || process.env[environmentName] || path.join(configRoot(), `${client}.json`))
+}
+
+function validateLiveUrl(raw) {
+  let url
+  try { url = new URL(raw) } catch { fail('live URL is invalid') }
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  if (
+    url.pathname !== '/live' || url.username || url.password || url.search || url.hash ||
+    (url.protocol !== 'wss:' && !(url.protocol === 'ws:' && loopback))
+  ) {
+    fail('live URL must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment')
+  }
+  return raw
+}
+
+function validateSlug(value, description) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._-]{1,80}$/.test(value)) {
+    fail(`${description} must be a valid 1-80 character slug`)
+  }
+  return value
+}
+
+function assertPlainString(value, description) {
+  if (typeof value !== 'string' || !value || /[\r\n\0]/.test(value)) fail(`${description} is invalid`)
+  return value
+}
+
+function credentialStatus(file) {
+  let stat
+  try { stat = fs.lstatSync(file) } catch { return { ok: false, text: 'missing' } }
+  if (!stat.isFile() || stat.isSymbolicLink()) return { ok: false, text: 'not a regular file' }
+  if (process.platform !== 'win32') {
+    const mode = stat.mode & 0o777
+    if (![0o400, 0o600].includes(mode)) return { ok: false, text: `unsafe mode ${mode.toString(8)} (require 400 or 600)` }
+    return { ok: true, text: `present (mode ${mode.toString(8)})` }
+  }
+  return { ok: true, text: 'present (content not inspected)' }
+}
+
+function readProfile(client, file) {
+  let stat
+  try { stat = fs.lstatSync(file) } catch { fail(`profile is missing: ${file}`, 3) }
+  if (!stat.isFile() || stat.isSymbolicLink()) fail(`profile must be a regular file: ${file}`)
+  if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
+    fail(`profile has unsafe mode ${(stat.mode & 0o777).toString(8)}; require 600 or 400: ${file}`)
+  }
+  let profile
+  try { profile = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { fail(`profile is not valid JSON: ${file}`) }
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) fail(`profile must contain a JSON object: ${file}`)
+  if (profile.schema !== 1 || profile.client !== client) fail(`profile schema/client mismatch: ${file}`)
+  validateLiveUrl(profile.live_url)
+  validateSlug(profile.agent_name, 'profile agent')
+  assertPlainString(profile.credential_file, 'profile credential path')
+  validateSlug(profile.label, 'profile label')
+  if (client === 'codex' && (!Number.isInteger(profile.app_server_port) || profile.app_server_port < 1024 || profile.app_server_port > 65535)) {
+    fail(`profile app_server_port must be 1024-65535: ${file}`)
+  }
+  return profile
+}
+
+function writeProfile(client, options) {
+  for (const required of ['live_url', 'agent', 'credential_file']) {
+    if (!options[required]) fail(`--${required.replaceAll('_', '-')} is required`)
+  }
+  const credentialFile = expandPath(options.credential_file)
+  const credential = credentialStatus(credentialFile)
+  if (!credential.ok) fail(`credential file ${credential.text}: ${credentialFile}`)
+  const profile = {
+    schema: 1,
+    client,
+    live_url: validateLiveUrl(options.live_url),
+    agent_name: validateSlug(options.agent, 'agent'),
+    credential_file: credentialFile,
+    label: validateSlug(options.label || (client === 'claude' ? 'claude-code' : 'codex-live'), 'label'),
+  }
+  if (client === 'codex') {
+    const port = Number(options.app_server_port || 4500)
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) fail('--app-server-port must be 1024-65535')
+    profile.app_server_port = port
+  }
+
+  const file = profilePath(client, options)
+  const directory = path.dirname(file)
+  if (fs.existsSync(directory)) {
+    const stat = fs.lstatSync(directory)
+    if (!stat.isDirectory() || stat.isSymbolicLink()) fail(`profile directory must be a real directory: ${directory}`)
+  } else {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  }
+  if (fs.existsSync(file)) {
+    const stat = fs.lstatSync(file)
+    if (!stat.isFile() || stat.isSymbolicLink()) fail(`profile must be a real regular file: ${file}`)
+  }
+  const temporary = path.join(directory, `.${path.basename(file)}.${process.pid}.tmp`)
+  const backup = path.join(directory, `.${path.basename(file)}.${process.pid}.bak`)
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(profile, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    if (process.platform === 'win32' && fs.existsSync(file)) {
+      fs.renameSync(file, backup)
+      try {
+        fs.renameSync(temporary, file)
+      } catch (error) {
+        fs.renameSync(backup, file)
+        throw error
+      }
+      fs.unlinkSync(backup)
+    } else {
+      fs.renameSync(temporary, file)
+    }
+    if (process.platform !== 'win32') fs.chmodSync(file, 0o600)
+  } finally {
+    try { fs.unlinkSync(temporary) } catch {}
+    if (process.platform === 'win32' && !fs.existsSync(file) && fs.existsSync(backup)) {
+      fs.renameSync(backup, file)
+    }
+  }
+  process.stdout.write(`configured ${client} profile: ${file}\n`)
+  process.stdout.write(`agent: ${profile.agent_name}\ncredential: ${credentialFile} — ${credential.text}\n`)
+}
+
+function dependencyStatus(adapterDirectory) {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(adapterDirectory, 'package.json'), 'utf8'))
+    const lock = JSON.parse(fs.readFileSync(path.join(adapterDirectory, 'package-lock.json'), 'utf8'))
+    const root = lock.packages?.['']
+    if (!root || root.name !== manifest.name || root.version !== manifest.version) return 'missing-or-invalid'
+    const normalize = value => JSON.stringify(Object.entries(value ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+    if (normalize(root.dependencies) !== normalize(manifest.dependencies)) return 'missing-or-invalid'
+    for (const [relative, expected] of Object.entries(lock.packages)) {
+      if (!relative.startsWith('node_modules/') || !expected.version) continue
+      let installed
+      try {
+        installed = JSON.parse(fs.readFileSync(path.join(adapterDirectory, relative, 'package.json'), 'utf8'))
+      } catch {
+        if (expected.optional) continue
+        return 'missing-or-invalid'
+      }
+      if (installed.version !== expected.version) return 'missing-or-invalid'
+    }
+    const bundleManifest = path.join(clientRoot(), 'DEPENDENCIES.json')
+    if (fs.existsSync(bundleManifest) && !verifyDependencyManifest(bundleManifest)) {
+      return 'missing-or-invalid'
+    }
+    return 'ready'
+  } catch { return 'missing-or-invalid' }
+}
+
+function dependencyEntries(root) {
+  const entries = []
+  const visit = directory => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const absolute = path.join(directory, name)
+      const relative = path.relative(root, absolute).split(path.sep).join('/')
+      const stat = fs.lstatSync(absolute)
+      if (stat.isDirectory()) {
+        visit(absolute)
+      } else if (stat.isFile()) {
+        const sha256 = createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')
+        entries.push({ path: relative, type: 'file', sha256 })
+      } else if (stat.isSymbolicLink()) {
+        entries.push({ path: relative, type: 'symlink', target: fs.readlinkSync(absolute) })
+      } else {
+        throw new Error(`unsupported dependency entry: ${relative}`)
+      }
+    }
+  }
+  for (const client of CLIENTS) visit(path.join(adapterDirectory(client), 'node_modules'))
+  return entries
+}
+
+function verifyDependencyManifest(file) {
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'))
+  if (manifest.schema !== 1 || !Array.isArray(manifest.entries)) return false
+  return JSON.stringify(dependencyEntries(clientRoot())) === JSON.stringify(manifest.entries)
+}
+
+function writeDependencyManifest() {
+  const file = path.join(clientRoot(), 'DEPENDENCIES.json')
+  if (fs.existsSync(file)) fail(`refusing to replace dependency manifest: ${file}`)
+  const manifest = { schema: 1, entries: dependencyEntries(clientRoot()) }
+  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`, {
+    encoding: 'utf8', flag: 'wx', mode: 0o644,
+  })
+  process.stdout.write(`${file}\n`)
+}
+
+function clientRoot() {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+}
+
+function adapterDirectory(client) {
+  const name = client === 'claude' ? 'claude-channel' : 'codex-app-server'
+  return path.join(clientRoot(), 'adapters', name)
+}
+
+function doctor(client, options) {
+  const root = clientRoot()
+  const claudeDependencies = dependencyStatus(adapterDirectory('claude'))
+  const codexDependencies = dependencyStatus(adapterDirectory('codex'))
+  process.stdout.write(`client root: ${root}\nnode: ${process.execPath} (${process.versions.node})\n`)
+  process.stdout.write(`claude adapter: ${claudeDependencies}\n`)
+  process.stdout.write(`codex adapter:  ${codexDependencies}\n`)
+  let failed = client
+    ? (client === 'claude' ? claudeDependencies : codexDependencies) !== 'ready'
+    : claudeDependencies !== 'ready' || codexDependencies !== 'ready'
+  let configured = 0
+  for (const item of client ? [client] : [...CLIENTS]) {
+    const file = profilePath(item, options)
+    if (!fs.existsSync(file)) {
+      process.stdout.write(`${item} profile: not configured (${file})\n`)
+      if (client) failed = true
+      continue
+    }
+    try {
+      const profile = readProfile(item, file)
+      configured += 1
+      const credential = credentialStatus(profile.credential_file)
+      process.stdout.write(`${item} profile: ${file}\n`)
+      process.stdout.write(`  agent: ${profile.agent_name}\n  URL: ${profile.live_url}\n  label: ${profile.label}\n  credential: ${profile.credential_file} — ${credential.text}\n`)
+      if (!credential.ok) failed = true
+    } catch (error) {
+      process.stdout.write(`${item} profile: not ready (${file}) — ${error.message}\n`)
+      failed = true
+    }
+  }
+  if (configured === 0) failed = true
+  process.exit(failed ? 1 : 0)
+}
+
+try {
+  const [command, ...rest] = process.argv.slice(2)
+  if (!command || command === '--help' || command === '-h') usage()
+
+  if (command === 'configure') {
+    const client = parseClient(rest.shift())
+    writeProfile(client, parseOptions(rest))
+  } else if (command === 'doctor') {
+    const client = rest[0] && !rest[0].startsWith('--') ? parseClient(rest.shift()) : null
+    const options = parseOptions(rest)
+    if (!client && options.profile) fail('--profile requires CLIENT with doctor')
+    doctor(client, options)
+  } else if (command === 'profile-path') {
+    const client = parseClient(rest.shift())
+    process.stdout.write(`${profilePath(client, parseOptions(rest))}\n`)
+  } else if (command === 'get') {
+    const client = parseClient(rest.shift())
+    const field = rest.shift()
+    if (!FIELDS.has(field)) fail(`unknown profile field: ${field}`)
+    const options = parseOptions(rest)
+    const profile = readProfile(client, profilePath(client, options))
+    if (profile[field] == null) fail(`profile has no ${field}: ${profilePath(client, options)}`, 3)
+    process.stdout.write(`${profile[field]}\n`)
+  } else if (command === 'deps-status') {
+    const client = parseClient(rest.shift())
+    if (rest.length > 0) fail(`unexpected argument: ${rest[0]}`)
+    process.stdout.write(`${dependencyStatus(adapterDirectory(client))}\n`)
+  } else if (command === 'write-deps-manifest') {
+    if (rest.length > 0) fail(`unexpected argument: ${rest[0]}`)
+    writeDependencyManifest()
+  } else {
+    usage(2)
+  }
+} catch (error) {
+  if (!(error instanceof CliError)) throw error
+  process.stderr.write(`ops-brain-client: ${error.message}\n`)
+  process.exit(error.exitCode)
+}

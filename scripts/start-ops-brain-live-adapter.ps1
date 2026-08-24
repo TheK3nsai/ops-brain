@@ -25,6 +25,7 @@ function Get-NormalizedPath {
 
 function Assert-LiveUrl {
     param([Parameter(Mandatory)][uri]$Url)
+    if (-not $Url.IsAbsoluteUri) { throw 'LiveUrl must be an absolute wss://host/live URL' }
     $escapedPath = $Url.GetComponents([System.UriComponents]::Path, [System.UriFormat]::UriEscaped)
     if ($escapedPath -cne 'live' -or $Url.UserInfo -or
         $Url.OriginalString.Contains('?') -or $Url.OriginalString.Contains('#')) {
@@ -37,6 +38,7 @@ function Assert-LiveUrl {
 
 function Assert-AppServerUrl {
     param([Parameter(Mandatory)][uri]$Url)
+    if (-not $Url.IsAbsoluteUri) { throw 'AppServerUrl must be an absolute WebSocket URL' }
     if ($Url.UserInfo -or $Url.Query -or $Url.Fragment) {
         throw 'AppServerUrl must not contain credentials, query, or fragment'
     }
@@ -44,30 +46,6 @@ function Assert-AppServerUrl {
     if ($Url.Scheme -eq 'ws' -and -not $Url.IsLoopback) {
         throw 'Plaintext AppServerUrl is allowed only on loopback'
     }
-}
-
-function Read-DpapiCredentialSecret {
-    param([Parameter(Mandatory)][string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Agent credential is missing: $Path"
-    }
-    $item = Get-Item -LiteralPath $Path -Force
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        throw "Refusing credential reparse point: $Path"
-    }
-    $credential = Import-Clixml -LiteralPath $Path
-    if ($credential -isnot [System.Management.Automation.PSCredential]) {
-        throw "Agent credential must be a DPAPI-protected PSCredential CliXml file: $Path"
-    }
-    if (-not $credential.UserName.Equals($AgentName, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Credential identity does not match expected agent $AgentName"
-    }
-    $secret = $credential.GetNetworkCredential().Password
-    if ([string]::IsNullOrWhiteSpace($secret) -or $secret.Contains("`n") -or $secret.Contains("`r")) {
-        throw 'Agent credential must contain one non-empty line'
-    }
-    $secret
 }
 
 $Adapter = Get-NormalizedPath $Adapter
@@ -83,11 +61,20 @@ if ($null -ne $AppServerUrl) { Assert-AppServerUrl $AppServerUrl }
 
 $nodeCommand = @(Get-Command node -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
 if ($null -eq $nodeCommand) { throw 'Required executable is missing: node' }
-$secret = Read-DpapiCredentialSecret $AgentCredentialFile
+$tokenHelper = Join-Path $PSScriptRoot 'read-ops-brain-agent-token.ps1'
+if (-not (Test-Path -LiteralPath $tokenHelper -PathType Leaf)) {
+    throw "Agent token helper is missing: $tokenHelper"
+}
+$helperCommand = @(
+    'pwsh.exe', '-NoLogo', '-NoProfile', '-File', $tokenHelper,
+    '-AgentCredentialFile', $AgentCredentialFile,
+    '-AgentName', $AgentName
+) | ConvertTo-Json -Compress
 try {
     $env:OPS_BRAIN_LIVE_URL = $LiveUrl.AbsoluteUri
-    $env:OPS_BRAIN_AGENT_TOKEN = $secret
+    $env:OPS_BRAIN_AGENT_TOKEN_HELPER_JSON = $helperCommand
     $env:OPS_BRAIN_EXPECTED_AGENT = $AgentName
+    Remove-Item Env:OPS_BRAIN_AGENT_TOKEN -ErrorAction SilentlyContinue
     Remove-Item Env:OPS_BRAIN_AGENT_TOKEN_FILE -ErrorAction SilentlyContinue
     if ($Client -eq 'claude') {
         $env:OPS_BRAIN_LIVE_LABEL = $Label
@@ -100,6 +87,6 @@ try {
     exit $LASTEXITCODE
 }
 finally {
-    $secret = $null
     Remove-Item Env:OPS_BRAIN_AGENT_TOKEN -ErrorAction SilentlyContinue
+    Remove-Item Env:OPS_BRAIN_AGENT_TOKEN_HELPER_JSON -ErrorAction SilentlyContinue
 }

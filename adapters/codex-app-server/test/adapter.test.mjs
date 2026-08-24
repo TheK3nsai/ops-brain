@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { WebSocketServer } from 'ws';
@@ -575,6 +578,55 @@ test('configuration rejects unsafe URLs and malformed agent tokens', () => {
     ...base,
     OPS_BRAIN_AGENT_TOKEN: 'secret\nsecond-line',
   }), /single line/);
+});
+
+test('configuration reads the agent bearer from a protected file', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-brain-codex-config.'));
+  const tokenFile = path.join(directory, 'token');
+  try {
+    fs.writeFileSync(tokenFile, 'file-agent-token\n', { mode: 0o600 });
+    const config = loadConfig({
+      OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live',
+      OPS_BRAIN_EXPECTED_AGENT: 'Codex-Test',
+      OPS_BRAIN_AGENT_TOKEN_FILE: tokenFile,
+    });
+    assert.equal(config.agentToken, 'file-agent-token');
+    if (process.platform !== 'win32') {
+      const symlink = path.join(directory, 'token-link');
+      fs.symlinkSync(tokenFile, symlink);
+      assert.throws(() => loadConfig({
+        OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live',
+        OPS_BRAIN_EXPECTED_AGENT: 'Codex-Test',
+        OPS_BRAIN_AGENT_TOKEN_FILE: symlink,
+      }), /protected regular file/);
+    }
+    assert.throws(() => loadConfig({
+      OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live',
+      OPS_BRAIN_EXPECTED_AGENT: 'Codex-Test',
+      OPS_BRAIN_AGENT_TOKEN: 'inline-token',
+      OPS_BRAIN_AGENT_TOKEN_FILE: tokenFile,
+    }), /set only one/);
+    if (process.platform !== 'win32') {
+      fs.chmodSync(tokenFile, 0o644);
+      assert.throws(() => loadConfig({
+        OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live',
+        OPS_BRAIN_EXPECTED_AGENT: 'Codex-Test',
+        OPS_BRAIN_AGENT_TOKEN_FILE: tokenFile,
+      }), /protected regular file/);
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('configuration reads the agent bearer through a credential helper', () => {
+  const helper = JSON.stringify([process.execPath, '-e', 'process.stdout.write("helper-agent-token")']);
+  const config = loadConfig({
+    OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live',
+    OPS_BRAIN_EXPECTED_AGENT: 'Codex-Test',
+    OPS_BRAIN_AGENT_TOKEN_HELPER_JSON: helper,
+  });
+  assert.equal(config.agentToken, 'helper-agent-token');
 });
 
 test('untrusted wrapper quotes every adversarial body line and validates provenance', () => {

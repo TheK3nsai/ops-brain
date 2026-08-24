@@ -97,7 +97,7 @@ jobs:
           shellcheck -x --source-path=SCRIPTDIR "${files[@]}"
 
   live-adapters:
-    name: Live adapters + Linux launchers
+    name: Online adapters + Linux clients
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -121,12 +121,15 @@ jobs:
           npm --prefix adapters/claude-channel test
           npm --prefix adapters/codex-app-server run check
           npm --prefix adapters/codex-app-server test
+          node scripts/test-online-adapter-e2e.mjs
 
       - name: Test Linux fleet launchers
-        run: scripts/test-live-launchers
+        run: |
+          scripts/test-live-launchers
+          scripts/test-client-bundle
 
   live-windows-launchers:
-    name: Windows live launchers
+    name: Windows ops-brain clients
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6

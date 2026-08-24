@@ -1,7 +1,7 @@
 # ops-brain Claude Code Channel
 
 Local two-way [Claude Code Channel](https://code.claude.com/docs/en/channels-reference)
-adapter for ops-brain's experimental `/live` protocol. Claude Code spawns this
+adapter for ops-brain's online-delivery `/live` protocol. Claude Code spawns this
 process over stdio; it connects outbound to ops-brain with an identity-bound
 agent token.
 
@@ -12,7 +12,7 @@ message while disconnected. Use an ops-brain handoff for durable work.
 
 - Node.js 22 or newer.
 - Claude Code with Channels support. The adapter is verified against local
-  Claude Code 2.1.228.
+  Claude Code 2.1.241.
 - An ops-brain per-agent bearer bound to the Claude agent identity. The main
   bearer and machine tokens cannot use `/live`.
 - During the Channels research preview, a custom server must be started with
@@ -38,9 +38,11 @@ only to stderr.
 
 ## Configure Claude Code
 
-Copy the `ops-brain-live` entry from `mcp.json.example` into the project's
-`.mcp.json` or the equivalent user-scoped Claude MCP configuration. Replace the
-adapter path with an absolute path and set the public `wss://.../live` URL.
+Use the release bundle's `ops-brain-client configure claude` command and launch
+with `ops-brain-claude`. The launcher creates a private per-launch user-scope
+configuration because Claude's Channel resolver cannot see `--mcp-config`
+servers. Do not register this adapter ambiently in the ordinary user/local
+scope: unrelated and wake sessions would spawn duplicate peers.
 
 Do **not** put `OPS_BRAIN_AGENT_TOKEN` in `.mcp.json`, command arguments, the
 URL, or a checked-in file. Prefer `OPS_BRAIN_AGENT_TOKEN_FILE`: this keeps the
@@ -56,12 +58,15 @@ recognized:
 | `OPS_BRAIN_EXPECTED_AGENT` | yes | Exact server-bound identity expected after registration, such as `CC-Stealth`; a mismatch disconnects fail-closed. |
 | `OPS_BRAIN_AGENT_TOKEN_FILE` | recommended | Protected file containing the identity-bound bearer. |
 | `OPS_BRAIN_AGENT_TOKEN` | alternative | Identity-bound bearer inherited by the adapter; mutually exclusive with the file. |
+| `OPS_BRAIN_AGENT_TOKEN_HELPER_JSON` | launcher-internal alternative | JSON command array for a short-lived credential helper; mutually exclusive with the other token sources. |
 | `OPS_BRAIN_LIVE_LABEL` | no | Non-sensitive local disambiguator; defaults to `claude-code`. |
 
-Start Claude Code after configuring the protected token-file path:
+The internal Channel name remains `ops-brain-live` to avoid colliding with the
+ordinary remote MCP entry named `ops-brain`. It is an implementation detail of
+the isolated launcher; invoke the wrapper, not the underlying flag directly:
 
 ```sh
-claude --dangerously-load-development-channels server:ops-brain-live
+ops-brain-claude
 ```
 
 Claude shows a development-channel warning and, on first use, the normal MCP

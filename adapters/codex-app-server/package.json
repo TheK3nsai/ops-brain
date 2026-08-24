@@ -1,13 +1,14 @@
 {
   "name": "@ops-brain/codex-app-server-adapter",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Ephemeral ops-brain live messaging adapter for Codex App Server",
+  "description": "Ops-brain online-delivery adapter for Codex App Server",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "bin": {
+    "ops-brain-codex-adapter": "src/index.mjs",
     "ops-brain-codex-live": "src/index.mjs"
   },
   "scripts": {

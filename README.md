@@ -1,6 +1,6 @@
 # ops-brain
 
-The team bus. An [MCP](https://modelcontextprotocol.io/) server that gives Claude Code and Codex a shared coordination surface for state that must cross sessions, machines, or agent vendors — durable handoffs, bounded knowledge, briefings, and experimental online live messaging.
+The team bus. An [MCP](https://modelcontextprotocol.io/) server that gives Claude Code and Codex a shared coordination surface for state that must cross sessions, machines, or agent vendors — durable handoffs, bounded knowledge, briefings, and online delivery between connected sessions.
 
 ops-brain is **not** local truth. Inventory belongs in your config management. Tickets and incidents belong in your ticketing system. Monitoring belongs in your monitoring stack. Reach for ops-brain only when you genuinely need the rest of the team.
 
@@ -49,13 +49,15 @@ Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_
 - **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus`. Cross-agent gotchas, safety warnings, compliance rules, and vendor behavior, with per-agent provenance via `author`. `search_bus` searches knowledge by default and can include handoffs when requested.
 - **Handoffs** — `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit linkage via `commit_hash` on completion + `mark_merged` at integration time. `get_handoff` retrieves one exact handoff without pulling unrelated queue entries.
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
-- **Live peers (experimental)** — `list_live_peers` and `send_live_message` route untrusted text to connected Claude Code and Codex adapters. This lane is best-effort and process-local: nothing is stored or queued, and absent peers require a handoff. Packaged adapters live in [`adapters/claude-channel`](adapters/claude-channel) and [`adapters/codex-app-server`](adapters/codex-app-server). See [`docs/live-messaging.md`](docs/live-messaging.md).
+- **Online peers** — `list_live_peers` and `send_live_message` route untrusted text to connected Claude Code and Codex adapters. This lane is best-effort and process-local: nothing is stored or queued, and absent peers require a handoff. Packaged adapters live in [`adapters/claude-channel`](adapters/claude-channel) and [`adapters/codex-app-server`](adapters/codex-app-server). See [`docs/live-messaging.md`](docs/live-messaging.md).
 
-  Foreground launch wrappers are available as `scripts/ops-brain-claude-live`
-  and `scripts/ops-brain-codex-live`. Both read an identity-bound bearer from a
-  mode-600 token file and expose redacted `--status`/`--dry-run` modes.
-  PowerShell/DPAPI launchers cover Windows hosts. Fleet installation,
-  identity mapping, acceptance, and rollback are documented in
+  Release archives contain pinned host adapters and the `ops-brain-client`
+  profile/doctor command; no Git checkout or `npm install` is required. Launch
+  foreground sessions with `ops-brain-claude` or `ops-brain-codex`. Both read
+  an identity-bound credential through a protected local pointer and expose
+  redacted `--status`/`--dry-run` modes. The old command names ending in
+  `-live` remain compatibility aliases. PowerShell/DPAPI launchers cover
+  Windows hosts. Installation, identity mapping, acceptance, and rollback are documented in
   [`docs/live-fleet-rollout.md`](docs/live-fleet-rollout.md).
 
 Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context.
@@ -141,4 +143,4 @@ Production compose does not publish port 3000 on the host; the service is reache
 
 ## Status
 
-ops-brain is designed for solo operators and small trusted teams coordinating Claude Code and Codex across hosts. The working core remains durable handoffs, bounded shared knowledge, check-in, and narrow REST endpoints; the 15-tool development surface also contains an experimental online-only live lane with packaged host adapters.
+ops-brain is designed for solo operators and small trusted teams coordinating Claude Code and Codex across hosts. Its two coordination lanes are deliberate: handoffs provide durable/offline work with a lifecycle, while online peers provide best-effort delivery between connected foreground sessions. Claude's custom Channel API still carries Anthropic's development opt-in; that upstream preview status does not change ops-brain's durable fallback or trust boundary.

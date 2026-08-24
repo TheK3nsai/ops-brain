@@ -1,11 +1,15 @@
 #requires -Version 7.4
-# Install private ops-brain live launch shims for one Windows user.
+# Install ops-brain foreground client launch shims for one Windows user.
 
 [CmdletBinding()]
 param(
     [ValidateSet('Install', 'Status')]
     [string]$Mode = 'Install',
-    [string]$BinDirectory = $(Join-Path $env:LOCALAPPDATA 'Programs\ops-brain-live'),
+    [string]$BinDirectory = $(
+        $legacy = Join-Path $env:LOCALAPPDATA 'Programs\ops-brain-live'
+        $current = Join-Path $env:LOCALAPPDATA 'Programs\ops-brain'
+        if ((Test-Path -LiteralPath $legacy) -and -not (Test-Path -LiteralPath $current)) { $legacy } else { $current }
+    ),
     [switch]$SkipDependencies
 )
 
@@ -14,7 +18,14 @@ $ErrorActionPreference = 'Stop'
 
 $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $BinDirectory = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($BinDirectory))
-$launchers = @('ops-brain-claude-live', 'ops-brain-codex-live')
+$launchers = @('ops-brain-client', 'ops-brain-claude', 'ops-brain-codex', 'ops-brain-claude-live', 'ops-brain-codex-live')
+$targets = @{
+    'ops-brain-client' = @{ Kind = 'node'; Path = (Join-Path $PSScriptRoot 'ops-brain-client') }
+    'ops-brain-claude' = @{ Kind = 'pwsh'; Path = (Join-Path $PSScriptRoot 'ops-brain-claude-live.ps1') }
+    'ops-brain-codex' = @{ Kind = 'pwsh'; Path = (Join-Path $PSScriptRoot 'ops-brain-codex-live.ps1') }
+    'ops-brain-claude-live' = @{ Kind = 'pwsh'; Path = (Join-Path $PSScriptRoot 'ops-brain-claude-live.ps1') }
+    'ops-brain-codex-live' = @{ Kind = 'pwsh'; Path = (Join-Path $PSScriptRoot 'ops-brain-codex-live.ps1') }
+}
 
 function Assert-RealBinDirectory {
     param([Parameter(Mandatory)][string]$Path)
@@ -40,6 +51,15 @@ function Get-RequiredApplication {
     $command
 }
 
+function Get-AdapterDependencyStatus {
+    param([Parameter(Mandatory)][ValidateSet('claude', 'codex')][string]$Client)
+    $node = @(Get-Command node -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($null -eq $node) { return '<unverified: node missing>' }
+    $output = & $node.Source $targets['ops-brain-client'].Path deps-status $Client
+    if ($LASTEXITCODE -ne 0) { return 'missing-or-invalid' }
+    (@($output) -join '').Trim()
+}
+
 if ($Mode -eq 'Status') {
     "repo: $RepoDirectory"
     "bin: $BinDirectory"
@@ -47,6 +67,8 @@ if ($Mode -eq 'Status') {
     "npm: $(Get-ApplicationPath 'npm')"
     "claude: $(Get-ApplicationPath 'claude')"
     "codex (native required): $(Get-ApplicationPath 'codex.exe')"
+    "claude adapter deps: $(Get-AdapterDependencyStatus 'claude')"
+    "codex adapter deps: $(Get-AdapterDependencyStatus 'codex')"
     foreach ($name in $launchers) {
         $shim = Join-Path $BinDirectory "$name.cmd"
         "$name`: $(if (Test-Path -LiteralPath $shim -PathType Leaf) { $shim } else { '<missing>' })"
@@ -55,17 +77,22 @@ if ($Mode -eq 'Status') {
 }
 
 $nodeCommand = Get-RequiredApplication 'node'
-$npmCommand = Get-RequiredApplication 'npm'
 $nodeMajor = [int](& $nodeCommand.Source -p 'Number(process.versions.node.split(".")[0])')
 if ($nodeMajor -lt 22) { throw 'Node.js 22 or newer is required' }
 
 Assert-RealBinDirectory $BinDirectory
 $launcherPlan = [Collections.Generic.List[object]]::new()
 foreach ($name in $launchers) {
-    $script = Join-Path $PSScriptRoot "$name.ps1"
-    if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw "Launcher is missing: $script" }
+    $target = $targets[$name]
+    $script = $target.Path
+    if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw "Client command is missing: $script" }
     $shim = Join-Path $BinDirectory "$name.cmd"
-    $content = "@echo off`r`npwsh.exe -NoLogo -NoProfile -File `"$script`" %*`r`n"
+    $content = if ($target.Kind -eq 'node') {
+        "@echo off`r`nnode `"$script`" %*`r`n"
+    }
+    else {
+        "@echo off`r`npwsh.exe -NoLogo -NoProfile -File `"$script`" %*`r`n"
+    }
     $exists = Test-Path -LiteralPath $shim
     if ($exists) {
         $shimItem = Get-Item -LiteralPath $shim -Force
@@ -80,6 +107,16 @@ foreach ($name in $launchers) {
 }
 
 if (-not $SkipDependencies) {
+    $claudeDependencies = (& $nodeCommand.Source $targets['ops-brain-client'].Path deps-status claude).Trim()
+    $codexDependencies = (& $nodeCommand.Source $targets['ops-brain-client'].Path deps-status codex).Trim()
+    if ($claudeDependencies -eq 'ready' -and $codexDependencies -eq 'ready') {
+        'using ready lockfile-pinned adapter dependencies'
+        $SkipDependencies = $true
+    }
+}
+
+if (-not $SkipDependencies) {
+    $npmCommand = Get-RequiredApplication 'npm'
     foreach ($adapter in @('claude-channel', 'codex-app-server')) {
         $adapterDirectory = Join-Path $RepoDirectory "adapters\$adapter"
         & $npmCommand.Source --prefix $adapterDirectory ci --ignore-scripts
@@ -101,8 +138,8 @@ foreach ($item in $launcherPlan) {
     }
 }
 
-"installed live launch shims in $BinDirectory"
+"installed ops-brain client commands in $BinDirectory"
 if (-not (($env:PATH -split ';') -contains $BinDirectory)) {
     'add that directory to the user PATH before invoking the shims by name'
 }
-'pass -LiveUrl, -AgentName, and the exact per-agent -AgentCredentialFile on every launch'
+'configure profiles with ops-brain-client configure claude|codex, then run ops-brain-claude or ops-brain-codex'

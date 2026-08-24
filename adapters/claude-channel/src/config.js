@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from 'node:fs'
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 
 const LABEL_RE = /^[A-Za-z0-9._-]+$/
 const AGENT_RE = /^[A-Za-z0-9._-]+$/
@@ -29,23 +30,47 @@ export function loadConfig(env = process.env) {
 function loadToken(env) {
   const inline = env.OPS_BRAIN_AGENT_TOKEN?.trim()
   const file = env.OPS_BRAIN_AGENT_TOKEN_FILE?.trim()
-  if (inline && file) {
-    throw new Error('set only one of OPS_BRAIN_AGENT_TOKEN or OPS_BRAIN_AGENT_TOKEN_FILE')
+  const helper = env.OPS_BRAIN_AGENT_TOKEN_HELPER_JSON?.trim()
+  if ([inline, file, helper].filter(Boolean).length > 1) {
+    throw new Error('set only one agent token source: inline, file, or helper')
   }
+  if (helper) return loadTokenFromHelper(helper)
   if (!file) return required(inline, 'OPS_BRAIN_AGENT_TOKEN')
 
-  let stats
-  let value
+  let descriptor
   try {
-    stats = statSync(file)
-    value = readFileSync(file, 'utf8').trim()
+    const flags = constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW)
+    descriptor = openSync(file, flags)
+    const stats = fstatSync(descriptor)
+    if (!stats.isFile() || (process.platform !== 'win32' && (stats.mode & 0o077) !== 0)) {
+      throw new Error('unsafe token file')
+    }
+    return required(readFileSync(descriptor, 'utf8').trim(), 'OPS_BRAIN_AGENT_TOKEN_FILE')
   } catch {
-    throw new Error('OPS_BRAIN_AGENT_TOKEN_FILE must be a readable regular file')
-  }
-  if (!stats.isFile() || (stats.mode & 0o077) !== 0) {
     throw new Error('OPS_BRAIN_AGENT_TOKEN_FILE must be a regular file inaccessible to group/other')
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
   }
-  return required(value, 'OPS_BRAIN_AGENT_TOKEN_FILE')
+}
+
+function loadTokenFromHelper(raw) {
+  let command
+  try { command = JSON.parse(raw) } catch { throw new Error('OPS_BRAIN_AGENT_TOKEN_HELPER_JSON must be JSON') }
+  if (
+    !Array.isArray(command) || command.length < 1 || command.length > 32 ||
+    command.some(value => typeof value !== 'string' || !value || /[\r\n\0]/.test(value))
+  ) {
+    throw new Error('OPS_BRAIN_AGENT_TOKEN_HELPER_JSON must be an array of safe command strings')
+  }
+  try {
+    const value = execFileSync(command[0], command.slice(1), {
+      encoding: 'utf8', input: '', timeout: 5_000, maxBuffer: 16_384,
+      windowsHide: true,
+    }).trim()
+    return required(value, 'agent token helper output')
+  } catch {
+    throw new Error('agent token helper failed')
+  }
 }
 
 function required(value, name) {

@@ -1,4 +1,6 @@
 import process from "node:process";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const LABEL_RE = /^[A-Za-z0-9._-]+$/;
 
@@ -62,7 +64,7 @@ export function loadConfig(env = process.env) {
 
   return Object.freeze({
     liveUrl,
-    agentToken: singleLineToken('OPS_BRAIN_AGENT_TOKEN', env),
+    agentToken: loadAgentToken(env),
     expectedAgent,
     label,
     threadId: env.OPS_BRAIN_CODEX_THREAD_ID?.trim() || null,
@@ -74,6 +76,55 @@ export function loadConfig(env = process.env) {
     reconnectMaxMs: 10000,
     deliveryQueueCapacity: 32,
   });
+}
+
+function loadAgentToken(env) {
+  const inline = env.OPS_BRAIN_AGENT_TOKEN;
+  const file = env.OPS_BRAIN_AGENT_TOKEN_FILE?.trim();
+  const helper = env.OPS_BRAIN_AGENT_TOKEN_HELPER_JSON?.trim();
+  if ([inline, file, helper].filter(Boolean).length > 1) {
+    throw new Error('set only one agent token source: inline, file, or helper');
+  }
+  if (helper) return loadTokenFromHelper(helper);
+  if (!file) return singleLineToken('OPS_BRAIN_AGENT_TOKEN', env);
+
+  let descriptor;
+  try {
+    const flags = constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW);
+    descriptor = openSync(file, flags);
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) {
+      throw new Error('unsafe token file');
+    }
+    const value = readFileSync(descriptor, 'utf8').trim();
+    return singleLineToken('OPS_BRAIN_AGENT_TOKEN_FILE', { OPS_BRAIN_AGENT_TOKEN_FILE: value });
+  } catch {
+    throw new Error('OPS_BRAIN_AGENT_TOKEN_FILE must be a protected regular file');
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function loadTokenFromHelper(raw) {
+  let command;
+  try { command = JSON.parse(raw); }
+  catch { throw new Error('OPS_BRAIN_AGENT_TOKEN_HELPER_JSON must be JSON'); }
+  if (
+    !Array.isArray(command) || command.length < 1 || command.length > 32
+    || command.some(value => typeof value !== 'string' || !value || /[\r\n\0]/.test(value))
+  ) {
+    throw new Error('OPS_BRAIN_AGENT_TOKEN_HELPER_JSON must be an array of safe command strings');
+  }
+  try {
+    return singleLineToken('agent token helper output', {
+      'agent token helper output': execFileSync(command[0], command.slice(1), {
+        encoding: 'utf8', input: '', timeout: 5_000, maxBuffer: 16_384,
+        windowsHide: true,
+      }).trim(),
+    });
+  } catch {
+    throw new Error('agent token helper failed');
+  }
 }
 
 function singleLineToken(name, env) {

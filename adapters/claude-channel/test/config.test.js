@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -59,6 +59,14 @@ test('loads a protected token file without exposing it through the parent enviro
   })
   assert.equal(config.token, 'file-agent-token')
 
+  const symlink = join(dir, 'token-link')
+  symlinkSync(file, symlink)
+  assert.throws(() => loadConfig({
+    OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
+    OPS_BRAIN_AGENT_TOKEN_FILE: symlink,
+    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+  }), /regular file/)
+
   assert.throws(() => loadConfig({
     OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
     OPS_BRAIN_AGENT_TOKEN: 'inline',
@@ -81,4 +89,20 @@ test('requires a valid expected server-bound identity', () => {
   }
   assert.throws(() => loadConfig(base), /OPS_BRAIN_EXPECTED_AGENT is required/)
   assert.throws(() => loadConfig({ ...base, OPS_BRAIN_EXPECTED_AGENT: 'CC Stealth' }), /EXPECTED_AGENT/)
+})
+
+test('loads a bearer through a credential helper without an environment value', () => {
+  const helper = JSON.stringify([process.execPath, '-e', 'process.stdout.write("helper-agent-token")'])
+  const config = loadConfig({
+    OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
+    OPS_BRAIN_AGENT_TOKEN_HELPER_JSON: helper,
+    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+  })
+  assert.equal(config.token, 'helper-agent-token')
+  assert.throws(() => loadConfig({
+    OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
+    OPS_BRAIN_AGENT_TOKEN: 'inline',
+    OPS_BRAIN_AGENT_TOKEN_HELPER_JSON: helper,
+    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+  }), /only one/)
 })

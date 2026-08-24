@@ -9,7 +9,7 @@ REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 TEST_DIR=$(mktemp -d --tmpdir ops-brain-live-launchers.XXXXXX)
 
 cleanup() {
-    [[ $TEST_DIR == /tmp/ops-brain-live-launchers.* && -d $TEST_DIR ]] || return 0
+    [[ $(basename -- "$TEST_DIR") == ops-brain-live-launchers.* && -d $TEST_DIR && ! -L $TEST_DIR ]] || return 0
     rm -rf -- "$TEST_DIR"
 }
 trap cleanup EXIT
@@ -25,24 +25,23 @@ TOKEN_FILE="$TEST_DIR/agent-token"
 printf '%s\n' 'fixture-token-not-a-secret' >"$TOKEN_FILE"
 chmod 600 "$TOKEN_FILE"
 
-"$SCRIPT_DIR/install-live-adapters" --skip-deps --bin-dir "$BIN_DIR"
+"$SCRIPT_DIR/install-ops-brain-client" --skip-deps --bin-dir "$BIN_DIR"
+[[ -L $BIN_DIR/ops-brain-client ]] || fail 'client command symlink missing'
+[[ -L $BIN_DIR/ops-brain-claude ]] || fail 'Claude command symlink missing'
+[[ -L $BIN_DIR/ops-brain-codex ]] || fail 'Codex command symlink missing'
 [[ -L $BIN_DIR/ops-brain-claude-live ]] || fail 'Claude launcher symlink missing'
 [[ -L $BIN_DIR/ops-brain-codex-live ]] || fail 'Codex launcher symlink missing'
 
 install_status=$("$SCRIPT_DIR/install-live-adapters" --status --bin-dir "$BIN_DIR")
 assert_contains "$install_status" 'claude adapter deps: ready'
 assert_contains "$install_status" 'codex adapter deps:  ready'
-
-mkdir -p -- "$TEST_DIR/failing-npm-bin"
-printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$TEST_DIR/failing-npm-bin/npm"
-chmod +x "$TEST_DIR/failing-npm-bin/npm"
-missing_deps_status=$(PATH="$TEST_DIR/failing-npm-bin:$PATH" "$SCRIPT_DIR/install-live-adapters" --status --bin-dir "$BIN_DIR")
-assert_contains "$missing_deps_status" 'claude adapter deps: missing-or-invalid'
-assert_contains "$missing_deps_status" 'codex adapter deps:  missing-or-invalid'
+assert_contains "$install_status" 'ops-brain-client:'
+assert_contains "$install_status" 'ops-brain-claude:'
 
 status=$("$BIN_DIR/ops-brain-claude-live" --status)
 assert_contains "$status" "$REPO_DIR/adapters/claude-channel/src/main.js"
 assert_contains "$status" 'token:   <unset> — unset'
+assert_contains "$status" 'channel: isolated per-launch user scope (ready)'
 
 if OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live "$BIN_DIR/ops-brain-claude-live" --dry-run >"$TEST_DIR/no-token.out" 2>&1; then
     fail 'Claude dry-run accepted an implicit token path'
@@ -64,18 +63,158 @@ printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$TEST_DIR/fake-bin/codex"
 chmod +x "$TEST_DIR/fake-bin/codex"
 # Fixture script must expand the variable at runtime.
 # shellcheck disable=SC2016
-printf '%s\n' '#!/usr/bin/env bash' '[[ -z ${OPS_BRAIN_AGENT_TOKEN:-} ]] || exit 42' 'exit 0' >"$TEST_DIR/fake-bin/claude"
+printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    '[[ -z ${OPS_BRAIN_AGENT_TOKEN:-} ]] || exit 42' \
+    '[[ -n ${CLAUDE_CONFIG_DIR:-} && -f $CLAUDE_CONFIG_DIR/.claude.json ]] || exit 43' \
+    'cp -- "$CLAUDE_CONFIG_DIR/.claude.json" "$OPS_BRAIN_TEST_CAPTURE"' \
+    'printf "%s" "$CLAUDE_CONFIG_DIR" >"$OPS_BRAIN_TEST_CAPTURE.dir"' \
+    'printf "%s\n" "$@" >"$OPS_BRAIN_TEST_CAPTURE.args"' \
+    'exit 0' >"$TEST_DIR/fake-bin/claude"
 chmod +x "$TEST_DIR/fake-bin/claude"
 
 claude_dry=$(PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth "$BIN_DIR/ops-brain-claude-live" --dry-run)
-assert_contains "$claude_dry" 'generated-redacted-config'
+assert_contains "$claude_dry" 'CLAUDE_CONFIG_DIR=<private-overlay>'
 codex_dry=$(PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state" "$BIN_DIR/ops-brain-codex-live" --dry-run)
 assert_contains "$codex_dry" 'token redacted'
 
+CLAUDE_CAPTURE="$TEST_DIR/claude-overlay.json"
+mkdir -m 700 -- "$TEST_DIR/runtime"
+mkdir -m 700 -- "$TEST_DIR/claude-launch-base"
+printf '%s\n' '{"mcpServers":{"existing":{"command":"/bin/true","env":{"API_KEY":"must-not-be-copied"}}}}' \
+    >"$TEST_DIR/claude-launch-base/.claude.json"
 PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_AGENT_TOKEN='fixture-must-not-reach-claude' \
+    OPS_BRAIN_TEST_CAPTURE="$CLAUDE_CAPTURE" \
+    CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
+    XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
     OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
     "$BIN_DIR/ops-brain-claude-live"
+overlay=$(<"$CLAUDE_CAPTURE.dir")
+[[ ! -e $overlay ]] || fail 'Claude per-launch config overlay was not removed'
+assert_contains "$(<"$CLAUDE_CAPTURE")" '"ops-brain-live"'
+assert_contains "$(<"$CLAUDE_CAPTURE")" '"OPS_BRAIN_AGENT_TOKEN_FILE"'
+[[ $(<"$CLAUDE_CAPTURE") != *'fixture-token-not-a-secret'* ]] || fail 'bearer leaked into Claude config overlay'
+[[ $(<"$CLAUDE_CAPTURE") != *'must-not-be-copied'* ]] || fail 'existing MCP credentials were copied into the overlay'
+assert_contains "$(<"$CLAUDE_CAPTURE.args")" '--mcp-config'
+assert_contains "$(<"$CLAUDE_CAPTURE.args")" "$TEST_DIR/claude-launch-base/.claude.json"
+
+# With no XDG runtime directory the overlay may safely use /tmp: it contains
+# only credential pointers, while the real MCP document is loaded in place.
+PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$TEST_DIR/fallback-overlay.json" \
+    CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
+    OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    env -u XDG_RUNTIME_DIR "$BIN_DIR/ops-brain-claude-live"
+fallback_overlay=$(<"$TEST_DIR/fallback-overlay.json.dir")
+[[ ! -e $fallback_overlay ]] || fail 'fallback Claude overlay was not removed'
+
+# A symlinked credential path must be rejected as a symlink, not incidentally
+# via the link's 0777 mode.
+ln -s -- "$TOKEN_FILE" "$TEST_DIR/token-symlink"
+if PATH="$TEST_DIR/fake-bin:$PATH" XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
+    OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TEST_DIR/token-symlink" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    "$BIN_DIR/ops-brain-claude-live" >"$TEST_DIR/symlink-token.out" 2>&1; then
+    fail 'Claude launcher accepted a symlinked credential file'
+fi
+assert_contains "$(<"$TEST_DIR/symlink-token.out")" 'must be a regular file, not a symlink'
+
+if XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" doctor >"$TEST_DIR/unconfigured-doctor.out" 2>&1; then
+    fail 'doctor accepted a completely unconfigured client installation'
+fi
+assert_contains "$(<"$TEST_DIR/unconfigured-doctor.out")" 'claude profile: not configured'
+
+XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" configure claude \
+    --live-url wss://ops-brain.example/live --agent CC-Stealth \
+    --credential-file "$TOKEN_FILE" --label claude-stealth
+# Reconfiguration replaces the owned regular profile without changing its mode.
+XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" configure claude \
+    --live-url wss://ops-brain.example/live --agent CC-Stealth \
+    --credential-file "$TOKEN_FILE" --label claude-stealth
+claude_only_doctor=$(XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" doctor)
+assert_contains "$claude_only_doctor" 'codex profile: not configured'
+XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" configure codex \
+    --live-url wss://ops-brain.example/live --agent Codex-Stealth \
+    --credential-file "$TOKEN_FILE" --label codex-stealth --app-server-port 4600
+profile_status=$(XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-claude" --status)
+assert_contains "$profile_status" 'agent:   CC-Stealth'
+assert_contains "$profile_status" 'label:   claude-stealth'
+codex_profile_status=$(XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-codex" --status)
+assert_contains "$codex_profile_status" 'agent:      Codex-Stealth'
+assert_contains "$codex_profile_status" 'app server: ws://127.0.0.1:4600'
+doctor=$(XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" doctor)
+assert_contains "$doctor" 'claude adapter: ready'
+assert_contains "$doctor" 'codex adapter:  ready'
+[[ $(<"$TEST_DIR/profile-config/ops-brain/claude.json") != *'fixture-token-not-a-secret'* ]] || fail 'bearer leaked into client profile'
+
+claude_profile="$TEST_DIR/profile-config/ops-brain/claude.json"
+codex_profile="$TEST_DIR/profile-config/ops-brain/codex.json"
+override_doctor=$(OPS_BRAIN_CLAUDE_PROFILE="$claude_profile" \
+    OPS_BRAIN_CODEX_PROFILE="$codex_profile" XDG_CONFIG_HOME="$TEST_DIR/unused-config" \
+    "$BIN_DIR/ops-brain-client" doctor)
+assert_contains "$override_doctor" "claude profile: $claude_profile"
+assert_contains "$override_doctor" "codex profile: $codex_profile"
+override_claude_status=$(OPS_BRAIN_CLAUDE_PROFILE="$claude_profile" "$BIN_DIR/ops-brain-claude" --status)
+assert_contains "$override_claude_status" 'agent:   CC-Stealth'
+override_codex_status=$(OPS_BRAIN_CODEX_PROFILE="$codex_profile" "$BIN_DIR/ops-brain-codex" --status)
+assert_contains "$override_codex_status" 'agent:      Codex-Stealth'
+
+# A client-scoped doctor must ignore the other adapter's readiness while still
+# reporting it. The fixture keeps Claude's installed dependencies and leaves
+# Codex uninstalled, which also pins the dependency check's negative path.
+dependency_fixture="$TEST_DIR/dependency-fixture"
+mkdir -p -- "$dependency_fixture/scripts" \
+    "$dependency_fixture/adapters/claude-channel" \
+    "$dependency_fixture/adapters/codex-app-server"
+cp -- "$SCRIPT_DIR/ops-brain-client" "$dependency_fixture/scripts/ops-brain-client"
+for adapter in claude-channel codex-app-server; do
+    cp -- "$REPO_DIR/adapters/$adapter/package.json" \
+        "$REPO_DIR/adapters/$adapter/package-lock.json" \
+        "$dependency_fixture/adapters/$adapter/"
+done
+ln -s -- "$REPO_DIR/adapters/claude-channel/node_modules" \
+    "$dependency_fixture/adapters/claude-channel/node_modules"
+scoped_doctor=$(node "$dependency_fixture/scripts/ops-brain-client" doctor claude --profile "$claude_profile")
+assert_contains "$scoped_doctor" 'claude adapter: ready'
+assert_contains "$scoped_doctor" 'codex adapter:  missing-or-invalid'
+if node "$dependency_fixture/scripts/ops-brain-client" doctor codex --profile "$codex_profile" \
+    >"$TEST_DIR/missing-codex-deps.out" 2>&1; then
+    fail 'Codex doctor accepted missing adapter dependencies'
+fi
+assert_contains "$(<"$TEST_DIR/missing-codex-deps.out")" 'codex adapter:  missing-or-invalid'
+
+printf '%s\n' '{broken' >"$TEST_DIR/bad-profile.json"
+chmod 600 "$TEST_DIR/bad-profile.json"
+if "$BIN_DIR/ops-brain-client" doctor claude --profile "$TEST_DIR/bad-profile.json" >"$TEST_DIR/bad-profile.out" 2>&1; then
+    fail 'doctor accepted malformed profile JSON'
+fi
+assert_contains "$(<"$TEST_DIR/bad-profile.out")" 'profile: not ready'
+bad_claude_status=$("$BIN_DIR/ops-brain-claude" --status --profile "$TEST_DIR/bad-profile.json")
+assert_contains "$bad_claude_status" 'profile is not valid JSON'
+assert_contains "$bad_claude_status" 'channel: isolated per-launch user scope (ready)'
+bad_codex_status=$("$BIN_DIR/ops-brain-codex" --status --profile "$TEST_DIR/bad-profile.json")
+assert_contains "$bad_codex_status" 'profile is not valid JSON'
+assert_contains "$bad_codex_status" 'ready:'
+if "$BIN_DIR/ops-brain-client" doctor --profile "$claude_profile" >"$TEST_DIR/ambiguous-profile.out" 2>&1; then
+    fail 'doctor accepted one profile override for both clients'
+fi
+assert_contains "$(<"$TEST_DIR/ambiguous-profile.out")" '--profile requires CLIENT with doctor'
+
+mkdir -m 700 -- "$TEST_DIR/claude-base" "$TEST_DIR/overlay-unit"
+printf '%s\n' '{"theme":"dark","mcpServers":{"existing":{"command":"/bin/true","env":{"EXISTING_API_KEY":"carried-secret-value"}}}}' >"$TEST_DIR/claude-base/.claude.json"
+printf '%s\n' 'existing history' >"$TEST_DIR/claude-base/history.jsonl"
+server_json='{"command":"node","args":["adapter.js"],"env":{"OPS_BRAIN_AGENT_TOKEN_FILE":"/protected/token"}}'
+CLAUDE_CONFIG_DIR="$TEST_DIR/claude-base" node "$SCRIPT_DIR/create-claude-channel-overlay.mjs" \
+    "$TEST_DIR/overlay-unit" ops-brain-live "$server_json"
+overlay_json=$(<"$TEST_DIR/overlay-unit/.claude.json")
+assert_contains "$overlay_json" '"ops-brain-live"'
+[[ $(<"$TEST_DIR/claude-base/.claude.json") != *'ops-brain-live'* ]] || fail 'overlay helper mutated the real Claude config'
+[[ $overlay_json != *'carried-secret-value'* ]] || fail 'overlay helper copied an existing MCP credential'
+[[ $overlay_json != *'"existing"'* ]] || fail 'overlay helper copied an existing MCP server definition'
+[[ -L $TEST_DIR/overlay-unit/history.jsonl ]] || fail 'ordinary Claude state file was not mirrored into the overlay'
+printf '%s\n' 'new history' >>"$TEST_DIR/overlay-unit/history.jsonl"
+assert_contains "$(<"$TEST_DIR/claude-base/history.jsonl")" 'new history'
 
 printf '%s\n' occupied >"$TEST_DIR/occupied"
 if "$SCRIPT_DIR/install-live-adapters" --skip-deps --bin-dir "$TEST_DIR/occupied" >"$TEST_DIR/unsafe.out" 2>&1; then
@@ -89,8 +228,11 @@ if "$SCRIPT_DIR/install-live-adapters" --skip-deps --bin-dir "$TEST_DIR/unsafe-b
 fi
 assert_contains "$(<"$TEST_DIR/unsafe-link.out")" 'non-owned launcher symlink'
 [[ ! -e $TEST_DIR/unsafe-bin/ops-brain-codex-live ]] || fail 'installer partially created the second launcher before preflight failed'
+[[ ! -e $TEST_DIR/unsafe-bin/ops-brain-client ]] || fail 'installer partially created the client command before preflight failed'
 
 for file in \
+    "$SCRIPT_DIR/Install-OpsBrain.ps1" \
+    "$SCRIPT_DIR/read-ops-brain-agent-token.ps1" \
     "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" \
     "$SCRIPT_DIR/ops-brain-claude-live.ps1" \
     "$SCRIPT_DIR/ops-brain-codex-live.ps1" \
@@ -98,8 +240,13 @@ for file in \
     [[ -s $file ]] || fail "missing PowerShell fleet file: $file"
     grep -Eq '^#requires -Version 7\.4$' "$file" || fail "PowerShell 7.4 version gate missing: $file"
 done
-grep -Fq 'Import-Clixml -LiteralPath' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'DPAPI credential import missing'
-grep -Fq "OPS_BRAIN_AGENT_TOKEN = \$secret" "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'adapter-only bearer export missing'
+grep -Fq 'Import-Clixml -LiteralPath' "$SCRIPT_DIR/read-ops-brain-agent-token.ps1" || fail 'DPAPI credential import missing'
+grep -Fq 'OPS_BRAIN_AGENT_TOKEN_HELPER_JSON' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'adapter credential-helper wiring missing'
+# The literal PowerShell variable is the insecure assignment being forbidden.
+# shellcheck disable=SC2016
+if grep -Fq 'OPS_BRAIN_AGENT_TOKEN = $secret' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1"; then
+    fail 'Windows adapter launcher still exports the bearer through its environment'
+fi
 if grep -Eq 'AgentCredentialFile.*OPS_BRAIN_AGENT_TOKEN' "$SCRIPT_DIR/ops-brain-claude-live.ps1"; then
     fail 'Claude parent launcher appears to export the bearer'
 fi

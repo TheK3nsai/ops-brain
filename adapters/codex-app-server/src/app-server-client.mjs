@@ -260,7 +260,7 @@ export class AppServerClient extends EventEmitter {
       clientInfo: {
         name: 'ops_brain_live',
         title: 'ops-brain live adapter',
-        version: '0.1.0',
+        version: '1.0.0',
       },
     });
     await assertCurrent();

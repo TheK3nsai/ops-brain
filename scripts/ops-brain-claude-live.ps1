@@ -10,10 +10,11 @@ param(
     [string]$Mode = 'Run',
     [uri]$LiveUrl = $(if ($env:OPS_BRAIN_LIVE_URL) { $env:OPS_BRAIN_LIVE_URL } else { $null }),
     [string]$AgentCredentialFile = $env:OPS_BRAIN_AGENT_CREDENTIAL_FILE,
+    [string]$ProfileFile = $(if ($env:OPS_BRAIN_CLAUDE_PROFILE) { $env:OPS_BRAIN_CLAUDE_PROFILE } else { Join-Path $env:LOCALAPPDATA 'ops-brain\claude.json' }),
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
     [string]$AgentName,
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
-    [string]$Label = $(if ($env:OPS_BRAIN_LIVE_LABEL) { $env:OPS_BRAIN_LIVE_LABEL } else { 'claude-code' }),
+    [string]$Label = $env:OPS_BRAIN_LIVE_LABEL,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ClaudeArgs
 )
@@ -37,6 +38,9 @@ function Get-RequiredApplication {
 
 function Assert-LiveUrl {
     param([Parameter(Mandatory)][uri]$Url)
+    if (-not $Url.IsAbsoluteUri) {
+        throw 'LiveUrl must be an absolute wss://host/live URL'
+    }
     $escapedPath = $Url.GetComponents([System.UriComponents]::Path, [System.UriFormat]::UriEscaped)
     if ($escapedPath -cne 'live' -or $Url.UserInfo -or
         $Url.OriginalString.Contains('?') -or $Url.OriginalString.Contains('#')) {
@@ -47,8 +51,38 @@ function Assert-LiveUrl {
     }
 }
 
+function Import-ClientProfile {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Client)
+    $fullPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { return $null }
+    $item = Get-Item -LiteralPath $fullPath -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing profile reparse point: $fullPath" }
+    $profile = Get-Content -LiteralPath $fullPath -Raw | ConvertFrom-Json
+    if ($profile.schema -ne 1 -or $profile.client -ne $Client) { throw "Profile schema/client mismatch: $fullPath" }
+    $profile
+}
+
+$ProfileFile = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($ProfileFile))
+$profile = $null
+$profileError = $null
+try {
+    $profile = Import-ClientProfile $ProfileFile 'claude'
+}
+catch {
+    if ($Mode -ne 'Status') { throw }
+    $profileError = $_.Exception.Message
+}
+if ($null -ne $profile) {
+    if ($null -eq $LiveUrl) { $LiveUrl = [uri]$profile.live_url }
+    if (-not $AgentName) { $AgentName = [string]$profile.agent_name }
+    if (-not $AgentCredentialFile) { $AgentCredentialFile = [string]$profile.credential_file }
+    if (-not $Label) { $Label = [string]$profile.label }
+}
+if (-not $Label) { $Label = 'claude-code' }
+
 $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $Adapter = Join-Path $RepoDirectory 'adapters\claude-channel\src\main.js'
+$OverlayHelper = Join-Path $PSScriptRoot 'create-claude-channel-overlay.mjs'
 $CredentialLauncher = Join-Path $PSScriptRoot 'start-ops-brain-live-adapter.ps1'
 if ($AgentCredentialFile) {
     $AgentCredentialFile = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($AgentCredentialFile))
@@ -58,12 +92,14 @@ $credentialStatus = if ($AgentCredentialFile -and (Test-Path -LiteralPath $Agent
 if ($null -ne $LiveUrl) { Assert-LiveUrl $LiveUrl }
 if ($Mode -eq 'Status') {
     "adapter: $Adapter"
+    "profile: $ProfileFile $(if ($profileError) { '(not ready - {0})' -f $profileError } elseif ($null -ne $profile) { '(loaded)' } else { '(missing)' })"
     "live URL: $(if ($null -ne $LiveUrl) { $LiveUrl.AbsoluteUri } else { '<unset>' })"
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"
     "credential: $(if ($AgentCredentialFile) { $AgentCredentialFile } else { '<unset>' }) - $credentialStatus"
     "claude: $(Get-ApplicationPath 'claude')"
     "node: $(Get-ApplicationPath 'node')"
+    "channel: $(if (Test-Path -LiteralPath $OverlayHelper -PathType Leaf) { 'isolated per-launch user scope (ready)' } else { 'not ready (overlay helper missing)' })"
     exit 0
 }
 
@@ -72,45 +108,84 @@ if (-not $AgentName) { throw 'AgentName is required; select the exact Claude ide
 if (-not $AgentCredentialFile) { throw 'AgentCredentialFile is required; select the exact Claude identity credential' }
 if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $AgentCredentialFile" }
 if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
+if (-not (Test-Path -LiteralPath $OverlayHelper -PathType Leaf)) { throw "Claude Channel overlay helper is missing: $OverlayHelper" }
 if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
 $claudeCommand = Get-RequiredApplication 'claude'
-[void](Get-RequiredApplication 'node')
+$nodeCommand = Get-RequiredApplication 'node'
 [void](Get-RequiredApplication 'pwsh.exe')
 
-$mcpConfig = @{
-    mcpServers = @{
-        'ops-brain-live' = @{
-            command = 'pwsh.exe'
-            args = @(
-                '-NoLogo', '-NoProfile', '-File', $CredentialLauncher,
-                '-Client', 'claude', '-Adapter', $Adapter,
-                '-LiveUrl', $LiveUrl.AbsoluteUri,
-                '-AgentCredentialFile', $AgentCredentialFile,
-                '-AgentName', $AgentName,
-                '-Label', $Label
-            )
-        }
-    }
+$serverDefinition = @{
+    command = 'pwsh.exe'
+    args = @(
+        '-NoLogo', '-NoProfile', '-File', $CredentialLauncher,
+        '-Client', 'claude', '-Adapter', $Adapter,
+        '-LiveUrl', $LiveUrl.AbsoluteUri,
+        '-AgentCredentialFile', $AgentCredentialFile,
+        '-AgentName', $AgentName,
+        '-Label', $Label
+    )
 } | ConvertTo-Json -Compress -Depth 6
 
+function New-PrivateTemporaryDirectory {
+    $directory = Join-Path ([IO.Path]::GetTempPath()) "ops-brain-claude-$([guid]::NewGuid().ToString('N'))"
+    [IO.Directory]::CreateDirectory($directory) | Out-Null
+    $item = Get-Item -LiteralPath $directory -Force
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing unsafe Claude config overlay: $directory"
+    }
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $security = [Security.AccessControl.DirectorySecurity]::new()
+    $security.SetAccessRuleProtection($true, $false)
+    $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+        $identity,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    )
+    $security.AddAccessRule($rule)
+    [IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]$item, $security)
+    $directory
+}
+
 if ($Mode -eq 'DryRun') {
-    "would launch Claude with the ops-brain development Channel (credential path only; bearer redacted)"
+    "would launch Claude with ops-brain online delivery through a private per-launch config overlay (credential path only; bearer redacted)"
     exit 0
 }
 
-$configFile = [IO.Path]::GetTempFileName()
+$configDirectory = New-PrivateTemporaryDirectory
+$previousConfigDirectory = $env:CLAUDE_CONFIG_DIR
 try {
-    $configItem = Get-Item -LiteralPath $configFile -Force
-    if ($configItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        throw "Refusing temporary MCP config reparse point: $configFile"
-    }
-    [IO.File]::WriteAllText($configFile, $mcpConfig, [Text.UTF8Encoding]::new($false))
+    & $nodeCommand.Source $OverlayHelper $configDirectory 'ops-brain-live' $serverDefinition
+    if ($LASTEXITCODE -ne 0) { throw "Claude Channel overlay helper exited $LASTEXITCODE" }
     Remove-Item Env:OPS_BRAIN_AGENT_TOKEN -ErrorAction SilentlyContinue
-    & $claudeCommand.Source @ClaudeArgs --mcp-config $configFile --dangerously-load-development-channels server:ops-brain-live
+    $env:CLAUDE_CONFIG_DIR = $configDirectory
+    $userMcpConfig = if ($previousConfigDirectory) {
+        Join-Path $previousConfigDirectory '.claude.json'
+    }
+    else {
+        Join-Path $HOME '.claude.json'
+    }
+    $userMcpArguments = if (Test-Path -LiteralPath $userMcpConfig -PathType Leaf) {
+        @('--mcp-config', $userMcpConfig)
+    }
+    else { @() }
+    & $claudeCommand.Source @ClaudeArgs @userMcpArguments --dangerously-load-development-channels server:ops-brain-live
     exit $LASTEXITCODE
 }
 finally {
-    if (Test-Path -LiteralPath $configFile -PathType Leaf) {
-        Remove-Item -LiteralPath $configFile -Force
+    if ($null -eq $previousConfigDirectory) {
+        Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:CLAUDE_CONFIG_DIR = $previousConfigDirectory
+    }
+    if (Test-Path -LiteralPath $configDirectory -PathType Container) {
+        $resolved = [IO.Path]::GetFullPath($configDirectory)
+        $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+        if ($resolved.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgnoreCase) -and
+            [IO.Path]::GetFileName($resolved).StartsWith('ops-brain-claude-', [StringComparison]::Ordinal)) {
+            [IO.Directory]::Delete($resolved, $true)
+        }
     }
 }

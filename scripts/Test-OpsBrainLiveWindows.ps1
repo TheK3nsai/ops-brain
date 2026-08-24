@@ -35,8 +35,13 @@ try {
     Assert-True (-not $parseFailed) 'one or more PowerShell launchers failed to parse'
 
     $binDirectory = Join-Path $testDirectory 'bin'
-    & "$PSScriptRoot\Install-OpsBrainLive.ps1" -SkipDependencies -BinDirectory $binDirectory
-    & "$PSScriptRoot\Install-OpsBrainLive.ps1" -Mode Status -BinDirectory $binDirectory
+    & "$PSScriptRoot\Install-OpsBrain.ps1" -SkipDependencies -BinDirectory $binDirectory
+    $installStatus = & "$PSScriptRoot\Install-OpsBrainLive.ps1" -Mode Status -BinDirectory $binDirectory
+    Assert-True (@($installStatus) -contains 'claude adapter deps: ready') 'Windows installer did not verify bundled Claude dependencies'
+    Assert-True (@($installStatus) -contains 'codex adapter deps: ready') 'Windows installer did not verify bundled Codex dependencies'
+    Assert-True (Test-Path -LiteralPath (Join-Path $binDirectory 'ops-brain-client.cmd')) 'client profile/doctor shim is missing'
+    Assert-True (Test-Path -LiteralPath (Join-Path $binDirectory 'ops-brain-claude.cmd')) 'Claude command shim is missing'
+    Assert-True (Test-Path -LiteralPath (Join-Path $binDirectory 'ops-brain-codex.cmd')) 'Codex command shim is missing'
     & "$PSScriptRoot\ops-brain-claude-live.ps1" -Mode Status
     $codexStatusOutput = & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode Status
     Assert-True (@($codexStatusOutput) -contains 'App Server: ws://127.0.0.1:4500') 'Codex launcher status did not preserve the bare App Server endpoint'
@@ -81,18 +86,45 @@ import fs from 'node:fs';
 if (process.env.OPS_BRAIN_AGENT_TOKEN) process.exit(3);
 const args = process.argv.slice(2);
 const capture = process.env.OPS_BRAIN_TEST_CAPTURE;
-const marker = args.indexOf('--mcp-config');
-if (!capture || marker < 0 || marker + 1 >= args.length) process.exit(2);
-const config = fs.readFileSync(args[marker + 1], 'utf8');
-fs.writeFileSync(capture, `${config}\n---ARGS---\n${args.join('\n')}`);
+const configDirectory = process.env.CLAUDE_CONFIG_DIR;
+if (!capture || !configDirectory) process.exit(2);
+const config = fs.readFileSync(`${configDirectory}/.claude.json`, 'utf8');
+fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---ARGS---\n${args.join('\n')}`);
 '@
     [IO.File]::WriteAllText($fakeClaudeScript, $source, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($fakeClaude, "@echo off`r`nnode `"%~dp0fake-claude.mjs`" %*`r`n", [Text.UTF8Encoding]::new($false))
 
     $credential = Join-Path $testDirectory 'credential.cred.xml'
     [IO.File]::WriteAllText($credential, 'credential fixture is not read by the parent launcher')
+    $claudeProfile = Join-Path $testDirectory 'claude-profile.json'
+    $codexProfile = Join-Path $testDirectory 'codex-profile.json'
+    & node "$PSScriptRoot\ops-brain-client" configure claude `
+        --live-url wss://ops-brain.example/live --agent CC-CI `
+        --credential-file $credential --label claude-ci --profile $claudeProfile
+    Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to configure the Claude profile'
+    & node "$PSScriptRoot\ops-brain-client" configure claude `
+        --live-url wss://ops-brain.example/live --agent CC-CI `
+        --credential-file $credential --label claude-ci --profile $claudeProfile
+    Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to replace its owned Claude profile'
+    & node "$PSScriptRoot\ops-brain-client" configure codex `
+        --live-url wss://ops-brain.example/live --agent Codex-CI `
+        --credential-file $credential --label codex-ci --app-server-port 4600 --profile $codexProfile
+    Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to configure the Codex profile'
+    $profileStatus = & "$PSScriptRoot\ops-brain-claude-live.ps1" -Mode Status -ProfileFile $claudeProfile
+    Assert-True (@($profileStatus) -contains 'agent: CC-CI') 'Claude launcher did not load its protected client profile'
+    $codexProfileStatus = & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode Status -ProfileFile $codexProfile
+    Assert-True (@($codexProfileStatus) -contains 'App Server: ws://127.0.0.1:4600') 'Codex launcher did not load its profile App Server port'
     $originalPath = $env:PATH
+    $originalClaudeConfigDirectory = $env:CLAUDE_CONFIG_DIR
+    $claudeBase = Join-Path $testDirectory 'claude-base'
+    [IO.Directory]::CreateDirectory($claudeBase) | Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $claudeBase '.claude.json'),
+        '{"mcpServers":{"existing":{"command":"cmd.exe","env":{"API_KEY":"must-not-be-copied"}}}}',
+        [Text.UTF8Encoding]::new($false)
+    )
     $env:PATH = "$fakeBin;$originalPath"
+    $env:CLAUDE_CONFIG_DIR = $claudeBase
     $env:OPS_BRAIN_TEST_CAPTURE = $captureFile
     $env:OPS_BRAIN_AGENT_TOKEN = 'fixture-must-not-reach-claude'
     try {
@@ -116,28 +148,38 @@ fs.writeFileSync(capture, `${config}\n---ARGS---\n${args.join('\n')}`);
     }
     finally {
         $env:PATH = $originalPath
+        if ($null -eq $originalClaudeConfigDirectory) {
+            Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
+        }
+        else { $env:CLAUDE_CONFIG_DIR = $originalClaudeConfigDirectory }
         Remove-Item Env:OPS_BRAIN_TEST_CAPTURE -ErrorAction SilentlyContinue
         Remove-Item Env:OPS_BRAIN_AGENT_TOKEN -ErrorAction SilentlyContinue
     }
 
     $capture = [IO.File]::ReadAllText($captureFile)
-    $parts = $capture -split "`n---ARGS---`n", 2
-    Assert-True ($parts.Count -eq 2) 'fake Claude did not receive config and arguments'
-    $config = $parts[0] | ConvertFrom-Json
+    $configParts = $capture -split "`n---CONFIG-DIR---`n", 2
+    Assert-True ($configParts.Count -eq 2) 'fake Claude did not receive an isolated config directory'
+    $parts = $configParts[1] -split "`n---ARGS---`n", 2
+    Assert-True ($parts.Count -eq 2) 'fake Claude did not capture arguments'
+    $config = $configParts[0] | ConvertFrom-Json
     $server = $config.mcpServers.'ops-brain-live'
     Assert-True ($server.command -eq 'pwsh.exe') 'generated Claude MCP command is wrong'
     Assert-True ($server.args -contains '-AgentName') 'generated Claude MCP config omitted AgentName'
     Assert-True ($server.args -contains 'CC-CI') 'generated Claude MCP config omitted the expected identity'
     Assert-True ($capture -notlike '*credential fixture is not read*') 'credential contents leaked into Claude capture'
+    Assert-True ($capture -notlike '*must-not-be-copied*') 'existing MCP credential was copied into the Claude overlay'
+    $configDirectory = ($parts[0] -split "`n", 2)[0]
+    Assert-True (-not (Test-Path -LiteralPath $configDirectory)) 'temporary Claude config overlay was not removed'
     $arguments = @($parts[1] -split "`n")
     $configIndex = [Array]::IndexOf($arguments, '--mcp-config')
-    Assert-True ($configIndex -ge 0 -and $configIndex + 1 -lt $arguments.Count) 'Claude did not receive one MCP config path argument'
-    Assert-True (-not (Test-Path -LiteralPath $arguments[$configIndex + 1])) 'temporary Claude MCP config was not removed'
+    Assert-True ($configIndex -ge 0) 'Claude did not receive the existing user MCP config by path'
+    Assert-True ($arguments[$configIndex + 1] -eq (Join-Path $claudeBase '.claude.json')) 'Claude received the wrong existing MCP config path'
     Assert-True ($arguments -contains '--dangerously-load-development-channels') 'Claude Channel opt-in flag is missing'
     $resumeIndex = [Array]::IndexOf($arguments, 'resume')
     Assert-True ($resumeIndex -ge 0) 'trailing client arguments did not reach $ClaudeArgs'
     Assert-True ($arguments -contains '--model' -and $arguments -contains 'fixture-model') 'trailing client flag and its value did not reach $ClaudeArgs'
-    Assert-True ($resumeIndex -lt $configIndex) 'client arguments were not passed ahead of the launcher-owned Claude flags'
+    $channelIndex = [Array]::IndexOf($arguments, '--dangerously-load-development-channels')
+    Assert-True ($resumeIndex -lt $channelIndex) 'client arguments were not passed ahead of the launcher-owned Claude flags'
 
     # The Codex launcher has no credential-free end-to-end path (it refuses .cmd
     # shims, so there is no fake codex.exe to capture arguments). Status mode still

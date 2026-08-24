@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [5.1.0] — 2026-08-24
+
 ### Fixed
 
 - **REST rejections are JSON, and auth rejections have a body at all.** Every
@@ -21,7 +23,57 @@ All notable changes to this project will be documented in this file.
   (malformed JSON, missing required field) go through the same envelope
   instead of bypassing it.
 
-### Experimental — ephemeral Claude↔Codex live messaging
+### Added — online Claude↔Codex delivery
+
+- **Online delivery is now a supported ops-brain lane.** The server protocol,
+  MCP tools, host adapters, identity binding, and best-effort semantics remain
+  unchanged: handoffs are still the durable/offline lane. The client adapters
+  graduate to 1.0.0 and the README no longer presents online routing as a
+  separate experimental product.
+- **Claude Channel resolution is session-isolated and truthful.** The launcher
+  now creates a private per-launch `CLAUDE_CONFIG_DIR` overlay, adds the Channel
+  to that overlay's user scope, preserves the user's ordinary config/state, and
+  destroys the overlay on exit. This satisfies Claude's scope-only Channel
+  resolver without mutating `~/.claude.json`, ambiently registering an adapter,
+  or exposing sibling/wake sessions to duplicate peers. The adapter does not
+  connect to `/live` until the MCP client sends `notifications/initialized`.
+  A real interactive 2.1.241 control showed the Channel bound with no resolver
+  error; a file-form `--mcp-config` control reproduced the failure.
+- **Supported client UX and distribution.** `ops-brain-client configure` writes
+  protected per-client profiles containing credential pointers only;
+  `ops-brain-client doctor` verifies profiles and pinned dependencies without
+  reading credential contents. `ops-brain-claude` and `ops-brain-codex` are the
+  user-facing commands, with the old `-live` names retained as aliases. Tagged
+  releases now attach self-contained `.tar.gz` and `.zip` client bundles plus
+  SHA-256 checksums, so hosts need neither a Git checkout nor `npm ci`. The
+  bundle records hashes for every installed dependency file and release
+  artifacts carry GitHub build-provenance attestations.
+- **Process-level adapter regression.** CI starts the real Claude adapter over
+  MCP stdio and a loopback WebSocket, proves it stays offline before MCP
+  initialization, injects an untrusted Channel event, verifies the host ACK,
+  and exercises the peer-list tool. Linux and Windows launcher harnesses cover
+  private overlays and profile loading without operational credentials.
+- **The config overlay no longer copies user credentials.** `CLAUDE_CONFIG_DIR`
+  replaces rather than layers over the user config, but the isolated overlay
+  now contains only the internal Channel entry. Claude loads the real user MCP
+  document in place with `--mcp-config`, so literal credentials are not copied
+  to a second Linux or Windows file. Credential files must be regular files: a
+  symlink is rejected explicitly rather than incidentally via its mode.
+- **Compatibility identifiers remain stable.** Public commands and product
+  documentation use `ops-brain`, while the internal `ops-brain-live` Channel,
+  App Server client name, legacy executable alias, peer-label default, and
+  state directory remain unchanged so upgrades do not silently orphan state or
+  break integrations.
+- **Client tooling correctness.** `ops-brain-client get` exits non-zero on an
+  absent profile field instead of printing nothing successfully, dependency
+  comparison is key-order insensitive so a reordered `package.json` no longer
+  reports `missing-or-invalid`, the overlay helper skips a dangling symlink in
+  the Claude config directory instead of throwing, and the bundle/test cleanup
+  traps honour `$TMPDIR` instead of guarding on a hardcoded `/tmp` prefix.
+  `doctor CLIENT` now scopes dependency failures to that client, per-client
+  profile environment overrides no longer collide, malformed profiles render
+  a useful launcher status, and lifecycle cleanup preserves pre-existing MCP
+  initialization handlers.
 
 - **Codex peer registration now requires a resumable thread.** The App Server
   adapter waits until exactly one loaded thread (or the configured thread) can
@@ -58,6 +110,8 @@ All notable changes to this project will be documented in this file.
   foreground-only; the bundle deliberately adds no daemon or startup ritual.
   CI now runs both adapter suites and Linux launcher tests, and a Windows job
   parses every PowerShell launcher and exercises installer/status modes.
+  Windows launchers use a short-lived DPAPI helper and private pipe instead of
+  placing the decrypted bearer in an environment variable or plaintext file.
 - **Fleet-gate hardening.** Windows launchers now preserve trailing client
   arguments, pass Codex App Server a bare `ws://IP:PORT`, and hide redirected
   helpers without sharing TUI input under the required PowerShell 7.4/.NET 8

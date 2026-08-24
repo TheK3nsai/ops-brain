@@ -1,6 +1,6 @@
 # Live messaging fleet rollout
 
-This runbook installs the private Claude Code and Codex live adapters on active
+This runbook installs the Claude Code and Codex online-delivery adapters on active
 fleet hosts. It changes client launch behavior only: the production
 ops-brain server already serves `/live`, and no database migration or server
 restart is part of this rollout.
@@ -32,13 +32,15 @@ The server-side binding is the source of peer identity.
 
 ## Common prerequisites
 
-1. Pull an ops-brain revision containing the live adapters and launchers.
+1. Download and verify the versioned client bundle attached to an ops-brain
+   release, or use a matching source checkout for development.
 2. Install Node.js 22 or newer, current Claude Code with Channels support, and
    current Codex CLI with App Server/`--remote` support.
    **Do not verify Channels support with `claude --help`.** The
    `--dangerously-load-development-channels` flag is hidden: it is absent from
    `--help` output while present in the bundle and fully functional. Claude Code
-   **2.1.231** is known good, confirmed independently on two Linux hosts.
+   **2.1.241** is measured working with the private configuration overlay used
+   by the supported launcher.
    Checking `--help` will make you conclude the client lacks support and chase
    an upgrade that changes nothing. To check positively, grep the installed
    bundle instead of the help text:
@@ -49,10 +51,11 @@ The server-side binding is the source of peer identity.
    ```
 
    A non-zero count means the client **ships the flag**. It does not mean a
-   channel will bind — see the launcher defect below, which reproduces on
-   2.1.231 and 2.1.241 alike with a non-zero count on both. Treat this as a
-   prerequisite check, never as evidence the lane works. On 2.1.231 this returns
-   39 on both Linux hosts measured. The check is the principle, not the
+   channel will bind: direct `--mcp-config` registration fails the Channel
+   resolver on both 2.1.231 and 2.1.241, while the launcher's isolated user-scope
+   overlay binds on 2.1.241. Treat this as a prerequisite check, never as
+   evidence the lane works. On 2.1.231 this returns 39 on both Linux hosts
+   measured. The check is the principle, not the
    one-liner: recursively search the installed Claude Code bundle directory for
    the literal flag string. On Windows, run the equivalent recursive search
    (`Get-ChildItem -Recurse | Select-String`) against the install directory
@@ -94,73 +97,75 @@ do not publish or install similarly named public npm packages.
 
 ## Linux installation and launch
 
-From the ops-brain checkout:
+From the extracted client bundle or an ops-brain checkout:
 
 ```bash
-scripts/install-live-adapters
-scripts/install-live-adapters --status
+scripts/install-ops-brain-client
+scripts/install-ops-brain-client --status
 ```
 
-The installer runs `npm ci --ignore-scripts` for both adapters and links the
-two repo-owned foreground wrappers into `~/.local/bin`. It never reads or
-copies credentials. Its status output checks both pinned dependency trees as
-well as the launcher links, so `missing-or-invalid` is a failed prerequisite,
-not a reason to attempt a live launch. If `~/.local/bin` is not in `PATH`,
-invoke the wrappers by their repo paths or add the directory through the
-host's normal dotfiles.
+Release bundles already contain the lockfile-pinned dependencies; source
+checkouts install them with `npm ci --ignore-scripts`. The installer links
+`ops-brain-client`, `ops-brain-claude`, and `ops-brain-codex` into
+`~/.local/bin`, plus the old `-live` command names as compatibility aliases. It
+never reads or copies credentials. `missing-or-invalid` is a failed
+prerequisite, not a reason to launch.
 
-Launch Claude with the exact Claude token file:
+Configure one protected profile per client. Profiles contain the credential
+path, URL, exact identity, and non-sensitive label—never the bearer:
 
 ```bash
-OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
-OPS_BRAIN_AGENT_TOKEN_FILE="$HOME/.config/ops-brain/agent-token-cc-example" \
-OPS_BRAIN_EXPECTED_AGENT=CC-Example \
-OPS_BRAIN_LIVE_LABEL=claude-example \
-ops-brain-claude-live
+ops-brain-client configure claude \
+  --live-url wss://ops-brain.example/live \
+  --agent CC-Example \
+  --credential-file "$HOME/.config/ops-brain/agent-token-cc-example" \
+  --label claude-example
+ops-brain-client configure codex \
+  --live-url wss://ops-brain.example/live \
+  --agent Codex-Example \
+  --credential-file "$HOME/.config/ops-brain/agent-token-codex-example" \
+  --label codex-example
+ops-brain-client doctor
 ```
 
-Launch Codex with the distinct Codex token file:
+Launch the foreground sessions:
 
 ```bash
-OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
-OPS_BRAIN_AGENT_TOKEN_FILE="$HOME/.config/ops-brain/agent-token-codex-example" \
-OPS_BRAIN_EXPECTED_AGENT=Codex-Example \
-OPS_BRAIN_CODEX_LABEL=codex-example \
-ops-brain-codex-live
+ops-brain-claude
+ops-brain-codex
 ```
 
-### KNOWN DEFECT: the Claude launcher's Channel does not bind (2026-08-24)
+### Claude Channel resolver isolation
 
-`ops-brain-claude-live` is **not usable as written**. It passes the adapter with
-`--mcp-config` and references it as
-`--dangerously-load-development-channels server:ops-brain-live`. The Channel
-name resolver enumerates only the `enterprise`, `user`, `project`, and `local`
-config scopes and checks the name exists in one of them. A server supplied on
-the command line is in none of them, so launch prints:
+Claude's Channel name resolver enumerates configured scopes but ignores servers
+provided only through `--mcp-config`. Both inline JSON and file-form controls
+fail with:
 
 ```
 server:ops-brain-live · no MCP server configured with that name
 ```
 
-`/mcp` still shows the server **connected** — `--mcp-config` loads it fine. Only
-the resolver uses the narrower lookup. **This is not version drift:** the same
-function is byte-identical in 2.1.231 and 2.1.241. Whether passing
-`--mcp-config` a *file path* rather than a JSON string changes anything is
-**unmeasured**; the Windows launcher uses the file form, so its status is
-unmeasured too, not known-good.
+The supported launcher creates a private per-launch `CLAUDE_CONFIG_DIR`, links
+the user's non-config state into it without mutating the real files, and adds
+the Channel only to the overlay's user scope. It loads an existing user MCP
+document directly with `--mcp-config`; it never copies `.claude.json`. The
+resolver sees the internal Channel name; sibling and wake sessions do not. The
+adapter waits for MCP initialization before registering with `/live`, and the
+overlay is deleted when Claude exits.
+Do not replace this with ambient local/user registration: every Claude session
+in that scope would spawn the adapter and create duplicate peers.
 
-`ops-brain-claude-live --status` now reports this directly as a `channel:` line.
-Check it before launching.
+**Know what the overlay carries.** `CLAUDE_CONFIG_DIR` *replaces* the user
+config rather than layering over it, so the overlay's `.claude.json` contains
+only the generated `ops-brain-live` Channel entry and credential-file pointer.
+The real user MCP document remains at its existing path and is passed to Claude
+as a file. The launcher's own bearer is read by the adapter from the protected
+token file; it is not copied into the overlay, exported by the launcher, or
+placed in a command argument. On Linux the temporary overlay uses
+`XDG_RUNTIME_DIR` when available and a private mode-700 `/tmp` directory
+otherwise. Same-user processes remain outside this boundary.
 
-The gate workaround was registering the same definition in `local` scope and
-launching without `--mcp-config`. **Do not ship that as the fix.** Scope
-registration is ambient: every Claude session in that scope spawns an adapter
-and claims the identity, so two overlapping sessions produce two peers under one
-identity and make every send ambiguous — the exact condition step 5 exists to
-catch. Hosts running a wake shim would hit it routinely. The real fix needs
-resolution without ambient registration; tracked in `TODO.md`.
-
-Both wrappers also accept `--status` and `--dry-run`. The token path and exact
+Both launchers also accept `--status`, `--dry-run`, and `--profile`. The token path and exact
 expected server-bound identity are required deliberately. There is no generic
 fallback that could silently bind a sibling identity, and registration fails
 closed if the server reports another slug. Linux token files must be mode 600
@@ -189,49 +194,55 @@ not a security boundary against processes already running as the same user.
 
 ## Windows installation and launch
 
-From a PowerShell 7.4+ prompt in the ops-brain checkout. The Windows bundle
-requires .NET 8 because the Codex launcher redirects helper output while hiding
-the child windows; older runtimes ignore the hidden window style in that mode.
+From a PowerShell 7.4+ prompt in the extracted bundle or ops-brain checkout.
+The Windows bundle requires .NET 8 because the Codex launcher redirects helper
+output while hiding the child windows; older runtimes ignore the hidden window
+style in that mode.
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Install-OpsBrainLive.ps1
-pwsh -NoProfile -File .\scripts\Install-OpsBrainLive.ps1 -Mode Status
+pwsh -NoProfile -File .\scripts\Install-OpsBrain.ps1
+pwsh -NoProfile -File .\scripts\Install-OpsBrain.ps1 -Mode Status
 ```
 
-The installer runs pinned `npm ci --ignore-scripts` and creates two `.cmd`
-shims under `%LOCALAPPDATA%\Programs\ops-brain-live`. It reports when that
+Release bundles contain pinned dependencies; source checkouts install them with
+`npm ci --ignore-scripts`. The installer creates `ops-brain-client`,
+`ops-brain-claude`, and `ops-brain-codex` `.cmd` shims under
+`%LOCALAPPDATA%\Programs\ops-brain`, plus compatibility aliases. It reports when that
 directory still needs to be added to the user's `PATH`.
 
-Claude:
+Configure profiles after creating the two DPAPI credentials:
 
 ```powershell
-ops-brain-claude-live `
-  -LiveUrl 'wss://ops-brain.example/live' `
-  -AgentCredentialFile "$HOME\.secrets\ops-brain-CC-Example.cred.xml" `
-  -AgentName 'CC-Example' `
-  -Label 'claude-example'
+ops-brain-client configure claude `
+  --live-url wss://ops-brain.example/live --agent CC-Example `
+  --credential-file "$HOME\.secrets\ops-brain-CC-Example.cred.xml" `
+  --label claude-example
+ops-brain-client configure codex `
+  --live-url wss://ops-brain.example/live --agent Codex-Example `
+  --credential-file "$HOME\.secrets\ops-brain-Codex-Example.cred.xml" `
+  --label codex-example
+ops-brain-client doctor
 ```
 
-Codex:
+Launch the foreground sessions:
 
 ```powershell
-ops-brain-codex-live `
-  -LiveUrl 'wss://ops-brain.example/live' `
-  -AgentCredentialFile "$HOME\.secrets\ops-brain-Codex-Example.cred.xml" `
-  -AgentName 'Codex-Example' `
-  -Label 'codex-example'
+ops-brain-claude
+ops-brain-codex
 ```
 
 Substitute the host's exact identities and labels. `-Mode Status` and
-`-Mode DryRun` are credential-safe. The credential helper decrypts the bearer
-only in the adapter child process. It verifies that the DPAPI credential
-username matches `-AgentName`, and the adapter independently verifies the
-server-returned binding. Claude, Codex, command arguments, generated MCP
-configuration, and logs receive only the credential-file path.
+`-Mode DryRun` are credential-safe. A short-lived helper decrypts the bearer
+from DPAPI and writes it only to the adapter's private child-process pipe. The
+adapter captures that output without putting it in its environment, on disk,
+or on the command line. The helper verifies that the DPAPI credential username
+matches `-AgentName`, and the adapter independently verifies the server-returned
+binding. Claude, Codex, command arguments, generated MCP configuration, and
+logs receive only the credential-file path.
 
 ## Capturing launcher output
 
-Never pipe a launcher's stdout. `ops-brain-claude-live | tee rollout.log` makes
+Never pipe a launcher's stdout. `ops-brain-claude | tee rollout.log` makes
 Claude Code see a non-TTY stdout and silently switch to `--print` mode, which
 then dies with `Input must be provided either through stdin or as a prompt
 argument when using --print`. This is the trap in recording a rollout receipt:
@@ -241,11 +252,7 @@ the launch.
 Use a recorder that keeps a real terminal in front of the client:
 
 ```bash
-OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
-OPS_BRAIN_AGENT_TOKEN_FILE="$HOME/.config/ops-brain/agent-token-cc-example" \
-OPS_BRAIN_EXPECTED_AGENT=CC-Example \
-OPS_BRAIN_LIVE_LABEL=claude-example \
-script -q -c ops-brain-claude-live rollout.log
+script -q -c ops-brain-claude rollout.log
 ```
 
 `tmux pipe-pane` records the same way, but do not assume tmux is available for
@@ -261,26 +268,21 @@ inferred from the Linux measurement, not yet measured on Windows.
 
 Do not call a host live until all applicable checks pass:
 
-1. Installer status reports Node, npm, and the client binaries; both adapter
-   package installs complete without lifecycle scripts.
+1. Installer status reports Node and the client binaries; both adapter
+   dependency trees report `ready`. (`npm` is needed only when repairing a
+   source checkout whose dependencies are absent or invalid.)
 2. Each launcher status names the intended credential path and a non-sensitive
    label. Dry-run output contains no bearer.
 3. Start only Claude. `list_live_peers` from its bound MCP token shows one
    `claude_code` peer with the exact Claude fleet identity — **and then deliver
    one marker to it and confirm the text actually appears in the session.**
 
-   **A registered peer is not a receiving peer, and the difference is invisible
-   from the bus.** The adapter connects and registers on startup, independent of
-   the client's MCP handshake and independent of whether the Channel ever bound.
-   A peer with the right identity, right label, and a `host_accepted` receipt can
-   sit in front of a session that cannot receive anything. Measured on stealth
-   2026-08-24: a healthy-looking `CC-Stealth` peer, attached to a session whose
-   Channel had failed to resolve.
-
-   This is how the Claude launcher defect below survived a documented
-   "confirmed on two Linux hosts" — the two Claude-side checks were a bundle
-   grep proving the flag exists, and a peer-presence assertion. Neither has ever
-   tested delivery. Peer presence is a prerequisite, not the check.
+   The Claude adapter now waits for MCP initialization before registering, and
+   the isolated config overlay makes the Channel resolvable. Peer presence is
+   still a transport prerequisite, not proof that the Channel event appeared or
+   that the model read it. The previous launcher defect survived two host checks
+   precisely because those checks stopped at presence. Keep the delivered-marker
+   control even though the original defect is fixed.
 4. Stop Claude and confirm the peer disappears. Repeat for Codex.
 5. Start both, then confirm `list_live_peers` reports **exactly one** peer per
    identity before sending anything. `send_live_message` requires exactly one
@@ -330,6 +332,7 @@ credential contents, message bodies containing operational data, PII, or PHI.
 
 Exit the foreground client and use the ordinary `claude` or `codex` launcher.
 Live peers disappear automatically; durable MCP and handoffs are unaffected.
-Uninstalling consists only of removing the two user launch shims/links and the
-adapter `node_modules` directories. Do not delete or rotate credentials merely
-to disable live messaging.
+Uninstalling consists only of removing the installed client command links/shims
+and the extracted client bundle (or adapter `node_modules` in a source
+checkout). Do not delete or rotate credentials merely to disable online
+delivery.
