@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url'
 
 const CLIENTS = new Set(['claude', 'codex'])
 const FIELDS = new Set(['live_url', 'agent_name', 'credential_file', 'label', 'app_server_port'])
+// build-client-bundle replaces this exact declaration in its private copy.
+const BUNDLE_BUILD = false
 
 class CliError extends Error {
   constructor(message, exitCode = 2) {
@@ -221,12 +223,8 @@ function dependencyStatus(client) {
     }
     const root = clientRoot()
     const bundleManifest = path.join(root, 'DEPENDENCIES.json')
-    // Source checkouts carry Cargo.toml; self-contained client bundles do not.
-    // The distinction cannot depend on VERSION because deleting VERSION and
-    // DEPENDENCIES.json together must not disable the bundle integrity gate.
-    const bundleManifestRequired = !fs.existsSync(path.join(root, 'Cargo.toml'))
     if (
-      (bundleManifestRequired && !fs.existsSync(bundleManifest)) ||
+      (BUNDLE_BUILD && !fs.existsSync(bundleManifest)) ||
       (fs.existsSync(bundleManifest) && !verifyDependencyManifest(bundleManifest, client))
     ) {
       return 'missing-or-invalid'
@@ -262,11 +260,17 @@ function verifyDependencyManifest(file, client) {
   const manifest = JSON.parse(fs.readFileSync(file, 'utf8'))
   if (manifest.schema !== 1 || !Array.isArray(manifest.entries)) return false
   const root = clientRoot()
-  const prefix = path.relative(root, path.join(adapterDirectory(client), 'node_modules'))
+  const nodeModulesPrefix = target => path.relative(root, path.join(adapterDirectory(target), 'node_modules'))
     .split(path.sep).join('/')
-  const entries = manifest.entries.filter(entry => (
-    entry && typeof entry.path === 'string' && entry.path.startsWith(`${prefix}/`)
-  ))
+  const prefix = nodeModulesPrefix(client)
+  // Scoping the comparison to one adapter must not turn the rest of the
+  // manifest into unverifiable space: every entry still has to belong to some
+  // adapter, or an appended entry would be invisible to every per-client check.
+  const prefixes = [...CLIENTS].map(nodeModulesPrefix)
+  const claimed = entry => entry && typeof entry.path === 'string'
+    && prefixes.some(candidate => entry.path.startsWith(`${candidate}/`))
+  if (!manifest.entries.every(claimed)) return false
+  const entries = manifest.entries.filter(entry => entry.path.startsWith(`${prefix}/`))
   return JSON.stringify(dependencyEntries(root, [client])) === JSON.stringify(entries)
 }
 
