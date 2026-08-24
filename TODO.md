@@ -8,6 +8,33 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 - **Pre-scrub commit object may still be reachable on GitHub (2026-08-23, PR #85).** The fleet-private string guard caught a client hostname in a `GOTCHAS.md` entry *after* the branch was first pushed. The working tree, commit message, and PR body were scrubbed and force-pushed (guard now passes), but the original object stays reachable by exact SHA on a public repo until GitHub garbage-collects it. Low severity — one hostname, no credential — and the only real remedy is a GitHub Support GC request, so this is Eduardo's call whether to bother. Durable lesson worth more than the cleanup: **the guard runs in CI, i.e. after the push that publishes the string.** The pre-commit hook enforces the same denylist locally for ops-brain, but it only scans the working tree — it does not see the commit message or PR body, which is exactly where this one also landed. If this recurs, extend the local hook to the commit message rather than relying on the CI guard.
 
+### PR #84 — JSON error envelope for the REST surface — awaiting review + deploy
+
+Branch `fix/json-error-envelope`. Closes HSR handoff `01a0206b`. **Not
+live** — needs review, merge, and a rebuild on the deploy host (no migration,
+no config change). Until it deploys, production still returns `text/plain`
+rejections.
+
+Worth knowing when reviewing: the reported symptom (*bodyless 400 on an
+oversized title*) was **not reproducible** — production has always returned
+`title too large (N bytes, max 200)`, measured before any code changed. The
+real defects were the *content-type* (`text/plain` on a JSON API, so a
+JSON-parsing producer drops the body) and `bearer_auth`'s bare `StatusCode`,
+which was genuinely bodyless. Full reasoning in the PR body.
+
+**Confirmed client-side by CC-HSR 2026-08-20** (handoff `01a020e2`): the
+producer lib logged `$_.Exception.Message`, which on PowerShell never carries
+the response body — the body was discarded one line after arriving. Their fix
+plus 4 mutation-proven regression tests shipped the same day. This is why the
+doc note below matters: **the wire fix cannot reach a client that isn't
+reading the right property.**
+
+**On merge, ping CC-HSR** (thread `01a020e2`) — they will re-probe from their
+host to confirm the JSON shape survives the whole chain end to end. Don't skip
+it: their producer is the only caller we have that has actually been bitten by
+this path, so it's the only real end-to-end check of the envelope. Merge is
+deliberately *not* headless work — needs review and a deploy handoff.
+
 ## Don't re-propose without new evidence
 
 Deliberate decisions with their reasons. If real friction ever shows up, re-open the question from first principles — don't resurrect the design.
