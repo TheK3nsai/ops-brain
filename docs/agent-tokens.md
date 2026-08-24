@@ -147,6 +147,45 @@ guard catches collisions against *other* live tokens, but re-minting the exact
 value you are revoking is not a collision — it would abort nothing and silently
 un-revoke the credential.
 
+### When the replacement is gated
+
+Both procedures above assume the new secret can go out immediately. Sometimes it
+cannot: the replacement must not be *installed* until some other condition is
+true — the receiving host still serialises its environment to disk, say, so a new
+value would land in the same store the old one leaked into.
+
+**Do not mint it and attach the condition as an instruction.** Withhold the mint.
+Remove the entry from the map entirely (N → N−1) and leave that lane off-bus
+until the gate clears; on a clean confirmation it is a five-minute cutover.
+
+A staged file is an invitation. The secret and the condition travel by different
+channels — the secret out-of-band in someone's hand, the condition onto the bus —
+and the secret always arrives first. Worse, when the revocation that made the
+rotation urgent is also what cut that host's bus access, the condition is not
+merely slower, it is undeliverable to exactly the peer who needs it.
+
+Removing the entry costs the gated lane its availability, and that is the point:
+an off-bus agent is visible and self-correcting, while a wrongly-installed
+credential is silent and reads as a clean rotation from both ends. Check what the
+outage actually costs before treating it as a reason to hurry — a host that keeps
+a separate machine token, or a second agent identity, usually still has its
+scheduled lane and is far less dark than it looks.
+
+Three rules make the gate hold:
+
+- **Never post an instruction to a channel you are about to close.** Send the
+  heads-up *before* the recreate, or hand the condition to whoever carries the
+  secret.
+- **Whoever carries the credential carries the condition.** If the value goes
+  out-of-band, the constraint goes in the same hand — not onto a bus.
+- **The gate clears on posted evidence, not on a status report.** "They're
+  working on it", relayed by an operator or by the host itself, is progress, not
+  measurement. Name the specific readings you need, and mint when they land. A
+  precondition released early is indistinguishable from one that was never set,
+  and the request to release it will usually arrive framed as an availability
+  problem — *the lane is down, just issue the token* — because from outside, a
+  deliberate off-bus lane and a broken one look identical.
+
 ### What "revoked" does and does not mean
 
 Revocation is authoritative about the *server*, and says nothing about copies.
