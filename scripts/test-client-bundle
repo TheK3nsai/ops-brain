@@ -21,6 +21,7 @@ BUNDLE="$TEST_DIR/ops-brain-client-9.9.9-test"
 [[ -d $BUNDLE/adapters/codex-app-server/node_modules ]]
 [[ -f $BUNDLE/LICENSE-MIT && -f $BUNDLE/LICENSE-APACHE ]]
 [[ -f $BUNDLE/DEPENDENCIES.json ]]
+grep -Fq 'const BUNDLE_BUILD = true' "$BUNDLE/scripts/ops-brain-client"
 mkdir -p -- "$TEST_DIR/fake-bin"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$TEST_DIR/fake-bin/npm"
 chmod +x "$TEST_DIR/fake-bin/npm"
@@ -43,7 +44,7 @@ rm -- "$BUNDLE/DEPENDENCIES.json"
 rm -- "$BUNDLE/VERSION"
 [[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status claude) == missing-or-invalid ]]
 [[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status codex) == missing-or-invalid ]]
-# A planted empty Cargo.toml must not pass the bundle off as a source checkout.
+# A planted Cargo.toml must not pass the stamped bundle off as a source checkout.
 : >"$BUNDLE/Cargo.toml"
 [[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status claude) == missing-or-invalid ]]
 [[ $(node "$BUNDLE/scripts/ops-brain-client" deps-status codex) == missing-or-invalid ]]

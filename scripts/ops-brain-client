@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url'
 
 const CLIENTS = new Set(['claude', 'codex'])
 const FIELDS = new Set(['live_url', 'agent_name', 'credential_file', 'label', 'app_server_port'])
+// build-client-bundle replaces this exact declaration in its private copy.
+const BUNDLE_BUILD = false
 
 class CliError extends Error {
   constructor(message, exitCode = 2) {
@@ -221,26 +223,14 @@ function dependencyStatus(client) {
     }
     const root = clientRoot()
     const bundleManifest = path.join(root, 'DEPENDENCIES.json')
-    // Source checkouts carry a real Cargo package manifest; self-contained
-    // client bundles do not. The distinction cannot depend on VERSION because
-    // deleting VERSION and DEPENDENCIES.json together must not disable the
-    // bundle integrity gate — and it cannot depend on Cargo.toml merely
-    // existing, or a planted empty file would switch the gate off.
-    const bundleManifestRequired = !isSourceCheckout(root)
     if (
-      (bundleManifestRequired && !fs.existsSync(bundleManifest)) ||
+      (BUNDLE_BUILD && !fs.existsSync(bundleManifest)) ||
       (fs.existsSync(bundleManifest) && !verifyDependencyManifest(bundleManifest, client))
     ) {
       return 'missing-or-invalid'
     }
     return 'ready'
   } catch { return 'missing-or-invalid' }
-}
-
-function isSourceCheckout(root) {
-  try {
-    return /^[ \t]*\[package\][ \t]*$/m.test(fs.readFileSync(path.join(root, 'Cargo.toml'), 'utf8'))
-  } catch { return false }
 }
 
 function dependencyEntries(root, clients = CLIENTS) {

@@ -168,7 +168,6 @@ mkdir -p -- "$dependency_fixture/scripts" \
     "$dependency_fixture/adapters/claude-channel" \
     "$dependency_fixture/adapters/codex-app-server"
 cp -- "$SCRIPT_DIR/ops-brain-client" "$dependency_fixture/scripts/ops-brain-client"
-cp -- "$REPO_DIR/Cargo.toml" "$dependency_fixture/Cargo.toml"
 for adapter in claude-channel codex-app-server; do
     cp -- "$REPO_DIR/adapters/$adapter/package.json" \
         "$REPO_DIR/adapters/$adapter/package-lock.json" \

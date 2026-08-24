@@ -77,6 +77,15 @@ for script in \
     test-live-launchers; do
     cp -a -- "$REPO_DIR/scripts/$script" "$BUNDLE_DIR/scripts/$script"
 done
+# Stamp bundle-only integrity behavior into the copied tool. The source command
+# intentionally permits no DEPENDENCIES.json; a shipped bundle must fail closed
+# if its manifest is deleted, regardless of adjacent marker files.
+perl -0pi -e 's/const BUNDLE_BUILD = false/const BUNDLE_BUILD = true/' \
+    "$BUNDLE_DIR/scripts/ops-brain-client"
+grep -Fq 'const BUNDLE_BUILD = true' "$BUNDLE_DIR/scripts/ops-brain-client" || {
+    echo 'failed to stamp bundle integrity mode' >&2
+    exit 2
+}
 cp -a -- "$REPO_DIR/docs/live-messaging.md" "$REPO_DIR/docs/live-fleet-rollout.md" "$BUNDLE_DIR/docs/"
 cp -a -- "$REPO_DIR/docs/client-bundle.md" "$BUNDLE_DIR/README.md"
 cp -a -- "$REPO_DIR/LICENSE-MIT" "$REPO_DIR/LICENSE-APACHE" "$BUNDLE_DIR/"
