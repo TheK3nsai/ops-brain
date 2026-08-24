@@ -90,4 +90,13 @@
 
 ## GitHub PR Workflow
 
+- **Editing a PR body does not retract it — GitHub keeps the old revisions, and they stay world-readable.** Measured 2026-08-24 on PR #85. When a fleet-private string reaches a PR description, the reflex is to edit the body and force-push; the fleet has treated that as remediation. It isn't. GitHub retains every prior revision as a `userContentEdits` node with `deletedAt: null`, queryable over GraphQL by anyone with read access — which on a public repo is everyone:
+
+  ```
+  gh api graphql -f query='{ repository(owner:"OWNER",name:"REPO") {
+    pullRequest(number:N) { userContentEdits(first:20){ totalCount nodes{ editedAt deletedAt diff } } } } }'
+  ```
+
+  Same applies to issue and comment bodies. Treat a string that has *ever* been in a PR body as published — the edit changes what's rendered, not what's retrievable. Related: a force-push does not unpublish the pre-push commit either, and the blob is served by the blobs API independently of the commit, so naming only the commit in a cleanup request leaves the blob reachable. Verify reachability with a *paired control* (a fabricated SHA returns 422 for commits / 404 for blobs) — a bare 200 proves as little as a bare 401.
+
 - **`gh pr merge --delete-branch` on a stacked PR's base CLOSES the stacked PR — GitHub does not retarget it.** Hit on the v4.1.0 audit series (2026-07-17): #66 was stacked on #65's branch; merging #65 with `--delete-branch` auto-closed #66, and a closed PR whose base ref is gone can be neither reopened nor retargeted (`gh pr reopen` / `gh pr edit --base` both fail). Recovery is a rebase onto main (`git rebase --onto main <old-base-tip> <branch>`), force-push, and a fresh PR. When merging a stack bottom-up, either skip `--delete-branch` until the whole stack is in, or expect to re-file the upper PRs.
