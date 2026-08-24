@@ -48,12 +48,25 @@ if [[ -n $node_status ]]; then
     node_major=$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)
 fi
 
+adapter_deps_status() {
+    local adapter=$1
+    if [[ -z $npm_status ]]; then
+        echo '<unverified: npm missing>'
+    elif npm --prefix "$REPO_DIR/adapters/$adapter" ls --omit=dev --depth=0 >/dev/null 2>&1; then
+        echo ready
+    else
+        echo missing-or-invalid
+    fi
+}
+
 if [[ $MODE == status ]]; then
     printf 'repo:    %s\n' "$REPO_DIR"
     printf 'node:    %s\n' "${node_status:-<missing>}"
     printf 'npm:     %s\n' "${npm_status:-<missing>}"
     printf 'claude:  %s\n' "$(command -v claude || echo '<missing>')"
     printf 'codex:   %s\n' "$(command -v codex || echo '<missing>')"
+    printf 'claude adapter deps: %s\n' "$(adapter_deps_status claude-channel)"
+    printf 'codex adapter deps:  %s\n' "$(adapter_deps_status codex-app-server)"
     for name in ops-brain-claude-live ops-brain-codex-live; do
         target="$BIN_DIR/$name"
         if [[ -L $target ]]; then

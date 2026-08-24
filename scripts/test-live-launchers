@@ -29,6 +29,17 @@ chmod 600 "$TOKEN_FILE"
 [[ -L $BIN_DIR/ops-brain-claude-live ]] || fail 'Claude launcher symlink missing'
 [[ -L $BIN_DIR/ops-brain-codex-live ]] || fail 'Codex launcher symlink missing'
 
+install_status=$("$SCRIPT_DIR/install-live-adapters" --status --bin-dir "$BIN_DIR")
+assert_contains "$install_status" 'claude adapter deps: ready'
+assert_contains "$install_status" 'codex adapter deps:  ready'
+
+mkdir -p -- "$TEST_DIR/failing-npm-bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$TEST_DIR/failing-npm-bin/npm"
+chmod +x "$TEST_DIR/failing-npm-bin/npm"
+missing_deps_status=$(PATH="$TEST_DIR/failing-npm-bin:$PATH" "$SCRIPT_DIR/install-live-adapters" --status --bin-dir "$BIN_DIR")
+assert_contains "$missing_deps_status" 'claude adapter deps: missing-or-invalid'
+assert_contains "$missing_deps_status" 'codex adapter deps:  missing-or-invalid'
+
 status=$("$BIN_DIR/ops-brain-claude-live" --status)
 assert_contains "$status" "$REPO_DIR/adapters/claude-channel/src/main.js"
 assert_contains "$status" 'token:   <unset> — unset'
