@@ -77,9 +77,11 @@ for script in \
     test-live-launchers; do
     cp -a -- "$REPO_DIR/scripts/$script" "$BUNDLE_DIR/scripts/$script"
 done
-# Stamp bundle-only integrity behavior into the copied tool. The source command
-# intentionally permits no DEPENDENCIES.json; a shipped bundle must fail closed
-# if its manifest is deleted, regardless of adjacent marker files.
+# Stamp bundle-only dependency-integrity behavior into the copied tool. The
+# source command intentionally permits no DEPENDENCIES.json; a shipped bundle
+# must fail closed if its dependency manifest is deleted, regardless of
+# adjacent marker files. Archive-wide trust comes from release checksums and
+# provenance attestations, not this self-check.
 perl -0pi -e 's/const BUNDLE_BUILD = false/const BUNDLE_BUILD = true/' \
     "$BUNDLE_DIR/scripts/ops-brain-client"
 grep -Fq 'const BUNDLE_BUILD = true' "$BUNDLE_DIR/scripts/ops-brain-client" || {

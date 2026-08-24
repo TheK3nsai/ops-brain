@@ -17,6 +17,13 @@ Use the `.zip` filename in the second command on Windows. The checksum detects
 transfer corruption; the attestation binds the artifact digest to this
 repository's GitHub Actions release workflow.
 
+`DEPENDENCIES.json` has a narrower, runtime role: `ops-brain-client doctor`
+uses it to detect missing, added, or changed files under the two adapters'
+installed `node_modules` trees. It does not authenticate the bundle and does
+not cover `scripts/`, `docs/`, licenses, or `VERSION`. Verify the downloaded
+archive against the published checksum and attestation before extracting it;
+those release artifacts are the whole-bundle integrity and provenance boundary.
+
 Keep the extracted versioned directory in a stable user-owned location. On
 Linux, run:
 
