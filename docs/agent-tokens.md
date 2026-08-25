@@ -147,6 +147,73 @@ guard catches collisions against *other* live tokens, but re-minting the exact
 value you are revoking is not a collision — it would abort nothing and silently
 un-revoke the credential.
 
+### When the replacement is gated
+
+Both procedures above assume the new secret can go out immediately. Sometimes it
+cannot: the replacement must not be *installed* until some other condition is
+true — the receiving host still serialises its environment to disk, say, so a new
+value would land in the same store the old one leaked into.
+
+**Do not mint it and attach the condition as an instruction.** Withhold the mint.
+Remove the entry from the map entirely (N → N−1) and leave that lane off-bus
+until the gate clears; on a clean confirmation it is a five-minute cutover.
+
+A staged file is an invitation. The secret and the condition travel by different
+channels — the secret out-of-band in someone's hand, the condition onto the bus —
+and the secret always arrives first. Worse, when the revocation that made the
+rotation urgent is also what cut that host's bus access, the condition is not
+merely slower, it is undeliverable to exactly the peer who needs it.
+
+Removing the entry costs the gated lane its availability, and that is the point:
+a wrongly-installed credential is silent and reads as a clean rotation from both
+ends, whereas a missing entry has to be explained.
+
+But do not rely on the absence being noticed. On a host with more than one
+identity — a separate machine token, a second agent slug, a scheduled lane —
+pulling one entry is not conspicuous at all: the host keeps answering on every
+other lane and looks healthy. Nobody observes a deliberate absence; they observe
+nothing. **Say the withhold out loud.**
+
+Three rules make the gate hold:
+
+- **Post the withhold explicitly, before the recreate.** Never post an
+  instruction to a channel you are about to close: send the heads-up *first*, or
+  hand the condition to whoever carries the secret. State that you are
+  withholding, which lane is off-bus, and what will release it — a multi-identity
+  host will not surface the gap on its own.
+- **Whoever carries the credential carries the condition.** If the value goes
+  out-of-band, the constraint goes in the same hand — not onto a bus.
+- **The gate clears on posted evidence, not on a status report.** "They're
+  working on it", relayed by an operator or by the host itself, is progress, not
+  measurement. Name the specific readings you need, and mint when they land. A
+  precondition released early is indistinguishable from one that was never set,
+  and the request to release it will usually arrive framed as an availability
+  problem — *the lane is down, just issue the token* — because from outside, a
+  deliberate off-bus lane and a broken one look identical. Check what the outage
+  actually costs before treating it as a reason to hurry; a host that keeps a
+  separate machine token or a second agent identity is usually far less dark than
+  the request implies.
+
+Confirm you are actually in the withheld state — the whole point of the gate is
+an artifact that does *not* exist, and "I withheld it" and "I never got to it"
+leave identical evidence on the minting side. The observable is the startup
+binding log:
+
+1. Assert the fingerprint of the entry you are about to remove, *before*
+   removing it.
+2. Remove that entry from `OPS_BRAIN_AGENT_TOKENS` (N → N−1) and recreate the
+   container with `-f docker-compose.prod.yml`.
+3. Read the startup `agent tokens configured` line: it must report
+   `count = N−1`, the gated slug must be **absent** from `bindings`, and every
+   other slug must still be listed with its client intact.
+4. Probe the burned value for **401** against a no-auth control that also
+   returns 401, and probe one untouched lane for 200 — a regression check that
+   the rewrite changed exactly what you meant.
+
+A gate discovered *after* the mint is not this procedure — that is a leaked
+credential, so use *Revoking a compromised token* above and treat the condition
+as a precondition on re-install rather than on minting.
+
 ### What "revoked" does and does not mean
 
 Revocation is authoritative about the *server*, and says nothing about copies.
