@@ -157,3 +157,20 @@ an App Server response is lost.
 These remain local adapters because Claude Channels and Codex App Server own the
 host-specific injection semantics. ops-brain remains the generic authenticated
 routing primitive.
+
+## Choosing a launcher
+
+The live tools appearing on the main ops-brain MCP does not mean the current
+session has a live adapter. Ordinary `claude` and `codex` sessions retain their
+configured main MCP and its durable handoff/knowledge tools, but do not open a
+live peer. Use `ops-brain-claude` or `ops-brain-codex` only for sessions that
+should join the online lane. A normal launcher-owned exit removes its peer
+promptly; an abrupt kill remains visible until transport failure is detected.
+
+This explicit choice is the rollout boundary, not a permanent requirement.
+Any future integration into a host's main launcher must keep adapter ownership
+foreground-only and make connected, degraded, and ordinary/no-live startup
+visibly distinct. If live was requested and preflight fails, do not silently or
+automatically continue ordinary: require affirmative operator choice or exit
+nonzero. Never treat tool discovery or a successful client start as proof of
+live delivery; use the per-host acceptance gate.

@@ -111,6 +111,13 @@ checkouts install them with `npm ci --ignore-scripts`. The installer links
 never reads or copies credentials. `missing-or-invalid` is a failed
 prerequisite, not a reason to launch.
 
+For a source checkout those commands are symlinks into that checkout, not
+copies. A later branch switch or pull changes what the next invocation runs
+without reinstalling anything. Pin the acceptance run to a clean checkout whose
+tree matches the intended client revision, and do not change that checkout
+between status/dry-run validation and teardown. A release bundle avoids this
+source-tree drift because its extracted files are the installed client root.
+
 Configure one protected profile per client. Profiles contain the credential
 path, URL, exact identity, and non-sensitive label—never the bearer:
 
