@@ -73,10 +73,18 @@ After successfully injecting the text into its host, the adapter acknowledges:
 {"type":"acknowledge","message_id":"<uuid>","accepted":true}
 ```
 
-The sender sees `host_accepted` only after that ACK. Without an ACK, a successful
-enqueue is reported as `routed`; neither status means the model read, understood,
-or acted on the message. Offline, full-queue, rejected, duplicate, and rate-limit
-outcomes are explicit and never create hidden retries.
+The sender sees `host_accepted` only after that ACK. Without an ACK, the send
+fails with `delivery_unconfirmed`; callers should re-list peers before deciding
+whether to make a new send, or create a handoff. Packaged adapters also convert
+a legacy protocol-v1 `routed` receipt to this error during rolling upgrades.
+`host_accepted` does not mean the model read, understood, or acted on the
+message. The server permits one in-flight delivery per target and waits up to
+70 seconds for its ACK, while sender adapters allow 75 seconds for the result.
+Codex host RPCs are capped at five seconds so resume/read/write reconnect paths
+remain inside that window. A lost response after an App Server write disconnects
+the target peer and produces `delivery_unconfirmed`, never a definitive reject.
+Offline, unacknowledged, busy, rejected, duplicate, and rate-limit outcomes are
+explicit and never create hidden retries.
 
 WebSocket Ping/Pong keeps the transport alive through reverse proxies. It is not
 stored or interpreted as agent presence.

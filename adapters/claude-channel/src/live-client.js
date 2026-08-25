@@ -4,6 +4,7 @@ import WebSocket from 'ws'
 
 const PROTOCOL_VERSION = 1
 const REQUEST_TIMEOUT_MS = 5_000
+const SEND_REQUEST_TIMEOUT_MS = 75_000
 const REGISTER_TIMEOUT_MS = 6_000
 const MAX_PENDING_REQUESTS = 16
 const MAX_PAYLOAD_BYTES = 16 * 1024
@@ -190,11 +191,15 @@ export class LiveClient extends EventEmitter {
       clearTimeout(pending.timer)
       this.#pending.delete(frame.request_id)
       if (frame.type === 'error') {
-        pending.reject(new Error(`ops-brain live request failed (${safeCode(frame.code)})`))
+        pending.reject(liveRequestError(frame.code))
       } else if (frame.type === 'peers') {
         pending.resolve({ peers: Array.isArray(frame.peers) ? frame.peers : [] })
       } else {
-        pending.resolve({ receipt: frame.receipt })
+        if (frame.receipt?.status !== 'host_accepted') {
+          pending.reject(deliveryUnconfirmedError())
+        } else {
+          pending.resolve({ receipt: frame.receipt })
+        }
       }
     }
   }
@@ -210,10 +215,15 @@ export class LiveClient extends EventEmitter {
     }
     const requestId = randomUUID()
     return new Promise((resolve, reject) => {
+      const timeoutMs = type === 'send_message' ? SEND_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS
       const timer = setTimeout(() => {
         this.#pending.delete(requestId)
-        reject(new Error('ops-brain live request timed out; delivery was not confirmed'))
-      }, REQUEST_TIMEOUT_MS)
+        reject(
+          type === 'send_message'
+            ? deliveryUnconfirmedError()
+            : new Error('ops-brain live request timed out'),
+        )
+      }, timeoutMs)
       this.#pending.set(requestId, { resolve, reject, timer })
       if (!this.#send({ type, request_id: requestId, ...fields })) {
         clearTimeout(timer)
@@ -259,6 +269,19 @@ function isUuid(value) {
 
 function safeCode(value) {
   return typeof value === 'string' && /^[a-z_]{1,40}$/.test(value) ? value : 'unknown'
+}
+
+function deliveryUnconfirmedError() {
+  return new Error(
+    'ops-brain live delivery was not confirmed; re-list live peers before deciding whether to send again, or use a handoff',
+  )
+}
+
+function liveRequestError(code) {
+  const safe = safeCode(code)
+  return safe === 'delivery_unconfirmed'
+    ? deliveryUnconfirmedError()
+    : new Error(`ops-brain live request failed (${safe})`)
 }
 
 function defaultLogger(message) {

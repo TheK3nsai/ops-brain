@@ -65,6 +65,35 @@ test('does not queue requests while disconnected', async () => {
   )
 })
 
+test('treats server and legacy unconfirmed delivery results as errors', async t => {
+  FakeWebSocket.instances.length = 0
+  FakeWebSocket.sendOutcome = 'delivery_unconfirmed'
+  t.after(() => { FakeWebSocket.sendOutcome = 'host_accepted' })
+  const client = new LiveClient(
+    {
+      url: 'ws://127.0.0.1:3000/live',
+      token: 'test-agent-token',
+      label: 'claude-test',
+      expectedAgent: 'CC-Stealth',
+    },
+    { WebSocketImpl: FakeWebSocket, logger: () => {} },
+  )
+  t.after(() => client.stop())
+  client.start()
+  await client.waitUntilReady()
+
+  await assert.rejects(
+    client.sendMessage({ toPeerId: CODEX_PEER, body: 'ambiguous' }),
+    /delivery was not confirmed; re-list live peers.*handoff/,
+  )
+
+  FakeWebSocket.sendOutcome = 'routed'
+  await assert.rejects(
+    client.sendMessage({ toPeerId: CODEX_PEER, body: 'legacy ambiguous' }),
+    /delivery was not confirmed; re-list live peers.*handoff/,
+  )
+})
+
 test('fails closed when the token is bound to an unexpected identity', async t => {
   FakeWebSocket.instances.length = 0
   const diagnostics = []
@@ -88,6 +117,7 @@ test('fails closed when the token is bound to an unexpected identity', async t =
 class FakeWebSocket extends EventEmitter {
   static OPEN = 1
   static instances = []
+  static sendOutcome = 'host_accepted'
 
   constructor(url, options) {
     super()
@@ -124,11 +154,24 @@ class FakeWebSocket extends EventEmitter {
         peers: [{ peer_id: CODEX_PEER, agent_name: 'Codex-Stealth', adapter: 'codex', label: 'codex-test' }],
       })
     } else if (frame.type === 'send_message') {
-      this.serverSend({
-        type: 'send_result',
-        request_id: frame.request_id,
-        receipt: { message_id: MESSAGE_ID, status: 'host_accepted', detail: 'accepted' },
-      })
+      if (FakeWebSocket.sendOutcome === 'delivery_unconfirmed') {
+        this.serverSend({
+          type: 'error',
+          request_id: frame.request_id,
+          code: 'delivery_unconfirmed',
+          message: 'untrusted server detail must not be rendered',
+        })
+      } else {
+        this.serverSend({
+          type: 'send_result',
+          request_id: frame.request_id,
+          receipt: {
+            message_id: MESSAGE_ID,
+            status: FakeWebSocket.sendOutcome,
+            detail: 'test receipt',
+          },
+        })
+      }
     }
   }
 

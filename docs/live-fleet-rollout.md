@@ -284,15 +284,14 @@ Do not call a host live until all applicable checks pass:
 2. Each launcher status names the intended credential path and a non-sensitive
    label. Dry-run output contains no bearer.
 3. Start only Claude. `list_live_peers` from its bound MCP token shows one
-   `claude_code` peer with the exact Claude fleet identity — **and then deliver
-   one marker to it and confirm the text actually appears in the session.**
+   `claude_code` peer with the exact Claude fleet identity.
 
    The Claude adapter now waits for MCP initialization before registering, and
    the isolated config overlay makes the Channel resolvable. Peer presence is
-   still a transport prerequisite, not proof that the Channel event appeared or
-   that the model read it. The previous launcher defect survived two host checks
-   precisely because those checks stopped at presence. Keep the delivered-marker
-   control even though the original defect is fixed.
+   still only a transport prerequisite. Do not attempt the delivered-marker
+   control from that same identity-bound MCP session: the server correctly
+   refuses a live peer messaging itself. Step 6 performs the rendered-delivery
+   control once both distinct identities are connected.
 4. Stop Claude and confirm the peer disappears. Repeat for Codex.
 5. Start both, then confirm `list_live_peers` reports **exactly one** peer per
    identity before sending anything. `send_live_message` requires exactly one
@@ -303,7 +302,9 @@ Do not call a host live until all applicable checks pass:
    than diagnosing a later send failure as a server problem.
 6. Send one unique marker Claude -> Codex and a correlated reply
    Codex -> Claude. A `host_accepted` receipt means host injection accepted the
-   text, not that the model read or followed it.
+   text, not that the model read or followed it. Confirm that both markers
+   actually render in their target sessions; this is the delivered-marker
+   control for both adapters, not merely a receipt check.
 7. Run both halves of the identity negative control. They exercise different
    enforcement points, so passing one does not imply the other:
    - **7a, rendered provenance:** send harmless text that claims the sibling's

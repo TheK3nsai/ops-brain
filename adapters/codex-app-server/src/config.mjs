@@ -58,8 +58,8 @@ export function loadConfig(env = process.env) {
     : null;
 
   const requestTimeoutMs = Number(env.OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS || 5000);
-  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 500 || requestTimeoutMs > 30000) {
-    throw new Error('OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS must be an integer from 500 to 30000');
+  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 500 || requestTimeoutMs > 5000) {
+    throw new Error('OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS must be an integer from 500 to 5000');
   }
 
   return Object.freeze({

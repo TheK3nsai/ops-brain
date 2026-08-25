@@ -15,6 +15,7 @@ import {
 } from './protocol.mjs';
 
 const MAX_PENDING_REQUESTS = 16;
+const SEND_REQUEST_TIMEOUT_MS = 75_000;
 
 export class LiveClient extends EventEmitter {
   constructor(config) {
@@ -158,8 +159,17 @@ export class LiveClient extends EventEmitter {
       }
       clearTimeout(pending.timer);
       this.pending.delete(frame.request_id);
-      if (frame.type === 'error') pending.reject(new Error(`${frame.code}: ${frame.message}`));
-      else pending.resolve(frame.type === 'peers' ? frame.peers : frame.receipt);
+      if (frame.type === 'error') {
+        pending.reject(
+          frame.code === 'delivery_unconfirmed'
+            ? deliveryUnconfirmedError()
+            : new Error(`${frame.code}: ${frame.message}`),
+        );
+      } else if (frame.type === 'send_result' && frame.receipt.status !== 'host_accepted') {
+        pending.reject(deliveryUnconfirmedError());
+      } else {
+        pending.resolve(frame.type === 'peers' ? frame.peers : frame.receipt);
+      }
       return;
     }
     this.#protocolFailure(new Error(`unsupported ops-brain frame type: ${frame.type}`));
@@ -180,10 +190,17 @@ export class LiveClient extends EventEmitter {
     }
     frame.request_id = requestId;
     return new Promise((resolve, reject) => {
+      const timeoutMs = frame.type === 'send_message'
+        ? SEND_REQUEST_TIMEOUT_MS
+        : this.config.requestTimeoutMs;
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error(`${frame.type} timed out`));
-      }, this.config.requestTimeoutMs);
+        reject(
+          frame.type === 'send_message'
+            ? deliveryUnconfirmedError()
+            : new Error(`${frame.type} timed out`),
+        );
+      }, timeoutMs);
       this.pending.set(requestId, { kind: frame.type, resolve, reject, timer });
       this.socket.send(JSON.stringify(frame), (error) => {
         if (!error) return;
@@ -260,4 +277,10 @@ export class LiveClient extends EventEmitter {
       }, 1000).unref();
     });
   }
+}
+
+function deliveryUnconfirmedError() {
+  return new Error(
+    'delivery_unconfirmed: live delivery was not confirmed; re-list live peers before deciding whether to send again, or use a handoff',
+  );
 }
