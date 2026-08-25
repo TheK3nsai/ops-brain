@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][ValidateSet('claude', 'codex')]
     [string]$Client,
     [Parameter(Mandatory)][string]$Adapter,
+    [Parameter(Mandatory)][string]$PowerShellPath,
     [Parameter(Mandatory)][uri]$LiveUrl,
     [Parameter(Mandatory)][string]$AgentCredentialFile,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
@@ -49,9 +50,13 @@ function Assert-AppServerUrl {
 }
 
 $Adapter = Get-NormalizedPath $Adapter
+$PowerShellPath = Get-NormalizedPath $PowerShellPath
 $AgentCredentialFile = Get-NormalizedPath $AgentCredentialFile
 if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) {
     throw "Adapter is missing: $Adapter"
+}
+if (-not (Test-Path -LiteralPath $PowerShellPath -PathType Leaf)) {
+    throw "PowerShell executable is missing: $PowerShellPath"
 }
 Assert-LiveUrl $LiveUrl
 if ($Client -eq 'codex' -and $null -eq $AppServerUrl) {
@@ -66,7 +71,7 @@ if (-not (Test-Path -LiteralPath $tokenHelper -PathType Leaf)) {
     throw "Agent token helper is missing: $tokenHelper"
 }
 $helperCommand = @(
-    'pwsh.exe', '-NoLogo', '-NoProfile', '-File', $tokenHelper,
+    $PowerShellPath, '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $tokenHelper,
     '-AgentCredentialFile', $AgentCredentialFile,
     '-AgentName', $AgentName
 ) | ConvertTo-Json -Compress

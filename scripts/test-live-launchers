@@ -245,6 +245,14 @@ for file in \
     grep -Eq '^#requires -Version 7\.4$' "$file" || fail "PowerShell 7.4 version gate missing: $file"
 done
 grep -Fq 'Import-Clixml -LiteralPath' "$SCRIPT_DIR/read-ops-brain-agent-token.ps1" || fail 'DPAPI credential import missing'
+grep -Fq 'GetFileType' "$SCRIPT_DIR/read-ops-brain-agent-token.ps1" || fail 'DPAPI helper does not guard stdout handle type'
+grep -Fq 'ValidateOnly' "$SCRIPT_DIR/ops-brain-claude-live.ps1" || fail 'Claude launcher does not preflight credential identity'
+grep -Fq 'ValidateOnly' "$SCRIPT_DIR/ops-brain-codex-live.ps1" || fail 'Codex launcher does not preflight credential identity'
+grep -Fq 'OPS_BRAIN_LIVE_STOP_FILE' "$SCRIPT_DIR/ops-brain-codex-live.ps1" || fail 'Codex launcher does not request graceful adapter teardown'
+grep -Fq 'OPS_BRAIN_LIVE_STOP_FILE' "$REPO_DIR/adapters/codex-app-server/src/index.mjs" || fail 'Codex adapter does not honor graceful launcher teardown'
+grep -Fq 'process.stdin.isTTY' "$REPO_DIR/adapters/codex-app-server/src/index.mjs" || fail 'Codex adapter can contend for the TUI console input'
+grep -Fq "process.stdin.on('error'" "$REPO_DIR/adapters/codex-app-server/src/index.mjs" || fail 'Codex adapter does not handle control-input errors'
+grep -Fq "process.stdout.on('error'" "$REPO_DIR/adapters/codex-app-server/src/index.mjs" || fail 'Codex adapter does not handle control-output errors'
 grep -Fq 'OPS_BRAIN_AGENT_TOKEN_HELPER_JSON' "$SCRIPT_DIR/start-ops-brain-live-adapter.ps1" || fail 'adapter credential-helper wiring missing'
 # The literal PowerShell variable is the insecure assignment being forbidden.
 # shellcheck disable=SC2016

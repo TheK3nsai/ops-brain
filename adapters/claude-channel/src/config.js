@@ -64,7 +64,7 @@ function loadTokenFromHelper(raw) {
   }
   try {
     const value = execFileSync(command[0], command.slice(1), {
-      encoding: 'utf8', input: '', timeout: 5_000, maxBuffer: 16_384,
+      encoding: 'utf8', input: '', timeout: 15_000, maxBuffer: 16_384,
       windowsHide: true,
     }).trim()
     return required(value, 'agent token helper output')

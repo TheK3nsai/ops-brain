@@ -207,7 +207,10 @@ pwsh -NoProfile -File .\scripts\Install-OpsBrain.ps1 -Mode Status
 Release bundles contain pinned dependencies; source checkouts install them with
 `npm ci --ignore-scripts`. The installer creates `ops-brain-client`,
 `ops-brain-claude`, and `ops-brain-codex` `.cmd` shims under
-`%LOCALAPPDATA%\Programs\ops-brain`, plus compatibility aliases. It reports when that
+`%LOCALAPPDATA%\Programs\ops-brain`, plus compatibility aliases. An upgraded
+host that already has `%LOCALAPPDATA%\Programs\ops-brain-live` and does not yet
+have the current directory keeps using that legacy location; installer status
+is the source of truth for the effective path. It reports when the selected
 directory still needs to be added to the user's `PATH`.
 
 Configure profiles after creating the two DPAPI credentials:
@@ -231,14 +234,21 @@ ops-brain-claude
 ops-brain-codex
 ```
 
+On a brand-new Codex TUI, submit one ordinary initial prompt before expecting a
+live peer. The adapter deliberately waits—with bounded exponential backoff—until
+exactly one loaded thread has a persisted rollout and can be resumed. App Server
+readiness alone is not peer readiness.
+
 Substitute the host's exact identities and labels. `-Mode Status` and
-`-Mode DryRun` are credential-safe. A short-lived helper decrypts the bearer
-from DPAPI and writes it only to the adapter's private child-process pipe. The
-adapter captures that output without putting it in its environment, on disk,
-or on the command line. The helper verifies that the DPAPI credential username
-matches `-AgentName`, and the adapter independently verifies the server-returned
-binding. Claude, Codex, command arguments, generated MCP configuration, and
-logs receive only the credential-file path.
+`-Mode DryRun` are credential-safe. Before either client is spawned, a
+validation-only helper invocation checks that the DPAPI credential username
+matches `-AgentName` without reading the bearer. A second short-lived helper
+invocation decrypts the bearer for the adapter and refuses to emit unless its
+stdout handle is an operating-system pipe; consoles and file redirections fail
+closed. The adapter captures that pipe without putting the bearer in its
+environment, on disk, or on the command line, and independently verifies the
+server-returned binding. Claude, Codex, command arguments, generated MCP
+configuration, and logs receive only the credential-file path.
 
 ## Capturing launcher output
 

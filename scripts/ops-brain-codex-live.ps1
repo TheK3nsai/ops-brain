@@ -44,6 +44,23 @@ function Get-RequiredApplication {
     $command
 }
 
+function Assert-AgentCredentialIdentity {
+    param(
+        [Parameter(Mandatory)][System.Management.Automation.ApplicationInfo]$PowerShell,
+        [Parameter(Mandatory)][string]$TokenHelper,
+        [Parameter(Mandatory)][string]$CredentialFile,
+        [Parameter(Mandatory)][string]$ExpectedAgent
+    )
+    try {
+        & $PowerShell.Source -NoLogo -NoProfile -NonInteractive -File $TokenHelper `
+            -AgentCredentialFile $CredentialFile -AgentName $ExpectedAgent -ValidateOnly
+        if ($LASTEXITCODE -ne 0) { throw "helper exited $LASTEXITCODE" }
+    }
+    catch {
+        throw "Agent credential identity preflight failed for $ExpectedAgent"
+    }
+}
+
 function Assert-LiveUrl {
     param([Parameter(Mandatory)][uri]$Url)
     if (-not $Url.IsAbsoluteUri) {
@@ -86,6 +103,28 @@ function Stop-OwnedProcessTree {
         }
     }
     catch [InvalidOperationException] { }
+}
+
+function Stop-AdapterProcess {
+    param(
+        [Diagnostics.Process]$Process,
+        [Parameter(Mandatory)][string]$StopFile
+    )
+    if ($null -eq $Process) { return }
+    try {
+        if ($Process.HasExited) { return }
+        [IO.File]::WriteAllText($StopFile, 'stop', [Text.UTF8Encoding]::new($false))
+        if (-not $Process.WaitForExit(3000)) {
+            Stop-OwnedProcessTree $Process
+        }
+    }
+    catch [InvalidOperationException] { }
+    catch { Stop-OwnedProcessTree $Process }
+    finally {
+        if (Test-Path -LiteralPath $StopFile -PathType Leaf) {
+            Remove-Item -LiteralPath $StopFile -Force
+        }
+    }
 }
 
 function Test-AppServerReady {
@@ -139,6 +178,7 @@ if (-not $Label) { $Label = 'codex-live' }
 $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $Adapter = Join-Path $RepoDirectory 'adapters\codex-app-server\src\index.mjs'
 $CredentialLauncher = Join-Path $PSScriptRoot 'start-ops-brain-live-adapter.ps1'
+$TokenHelper = Join-Path $PSScriptRoot 'read-ops-brain-agent-token.ps1'
 $AppServerUrl = [uri]"ws://127.0.0.1:$AppServerPort"
 # codex app-server --listen rejects any path component -- `--help` documents the
 # supported form as bare ws://IP:PORT. [uri].AbsoluteUri normalizes the empty path to
@@ -172,9 +212,14 @@ if (-not $AgentCredentialFile) { throw 'AgentCredentialFile is required; select 
 if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $AgentCredentialFile" }
 if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
 if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
+if (-not (Test-Path -LiteralPath $TokenHelper -PathType Leaf)) { throw "Agent token helper is missing: $TokenHelper" }
+$pwshCommand = Get-RequiredApplication 'pwsh.exe'
+
+# Reject a crossed identity before starting the owned App Server or Codex TUI.
+# Validation-only checks DPAPI metadata without reading the bearer.
+Assert-AgentCredentialIdentity $pwshCommand $TokenHelper $AgentCredentialFile $AgentName
 $codexCommand = Get-RequiredApplication 'codex.exe'
 [void](Get-RequiredApplication 'node')
-$pwshCommand = Get-RequiredApplication 'pwsh.exe'
 
 if ($Mode -eq 'DryRun') {
     "would launch App Server at $AppServerEndpoint"
@@ -190,6 +235,7 @@ $appOut = Join-Path $StateDirectory "app-server.$runId.stdout.log"
 $appErr = Join-Path $StateDirectory "app-server.$runId.stderr.log"
 $adapterOut = Join-Path $StateDirectory "codex-adapter.$runId.stdout.log"
 $adapterErr = Join-Path $StateDirectory "codex-adapter.$runId.stderr.log"
+$adapterStopFile = Join-Path $StateDirectory "codex-adapter.$runId.stop"
 $appProcess = $null
 $adapterProcess = $null
 
@@ -219,8 +265,9 @@ try {
     if (-not $ready) { throw "App Server failed to become ready; see $appErr" }
 
     $adapterArguments = @(
-        '-NoLogo', '-NoProfile', '-File', $CredentialLauncher,
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $CredentialLauncher,
         '-Client', 'codex', '-Adapter', $Adapter,
+        '-PowerShellPath', $pwshCommand.Source,
         '-LiveUrl', $LiveUrl.AbsoluteUri,
         '-AgentCredentialFile', $AgentCredentialFile,
         '-AgentName', $AgentName,
@@ -230,12 +277,24 @@ try {
     # Hidden for the same reasons as the App Server above. This is the process whose
     # death removes the live peer, so it must be neither closable nor able to contend
     # for the TUI's console input.
-    $adapterProcess = Start-Process -FilePath $pwshCommand.Source -ArgumentList @($adapterArguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -RedirectStandardOutput $adapterOut -RedirectStandardError $adapterErr -WindowStyle Hidden -PassThru
+    $previousStopFile = $env:OPS_BRAIN_LIVE_STOP_FILE
+    try {
+        $env:OPS_BRAIN_LIVE_STOP_FILE = $adapterStopFile
+        $adapterProcess = Start-Process -FilePath $pwshCommand.Source -ArgumentList @($adapterArguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -RedirectStandardOutput $adapterOut -RedirectStandardError $adapterErr -WindowStyle Hidden -PassThru
+    }
+    finally {
+        if ($null -eq $previousStopFile) {
+            Remove-Item Env:OPS_BRAIN_LIVE_STOP_FILE -ErrorAction SilentlyContinue
+        }
+        else { $env:OPS_BRAIN_LIVE_STOP_FILE = $previousStopFile }
+    }
 
     & $codexCommand.Source --remote $AppServerEndpoint @CodexArgs
     exit $LASTEXITCODE
 }
 finally {
-    Stop-OwnedProcessTree $adapterProcess
+    # Let the adapter close its WebSocket before the owned process tree is reaped.
+    # Abrupt termination can leave the remote peer visible until proxy TCP expiry.
+    Stop-AdapterProcess $adapterProcess $adapterStopFile
     Stop-OwnedProcessTree $appProcess
 }

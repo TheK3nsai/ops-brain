@@ -118,7 +118,7 @@ function loadTokenFromHelper(raw) {
   try {
     return singleLineToken('agent token helper output', {
       'agent token helper output': execFileSync(command[0], command.slice(1), {
-        encoding: 'utf8', input: '', timeout: 5_000, maxBuffer: 16_384,
+        encoding: 'utf8', input: '', timeout: 15_000, maxBuffer: 16_384,
         windowsHide: true,
       }).trim(),
     });

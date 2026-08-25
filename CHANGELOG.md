@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows DPAPI helper has a pipe-handle disclosure guard.** The credential
+  helper now refuses console and file stdout handles before materializing bearer plaintext. Both
+  launchers validate the DPAPI username against the requested identity before
+  spawning Claude, Codex, or the App Server, so crossed identities fail visibly
+  without leaving client processes behind.
+- **Codex live teardown is graceful.** The Windows launcher gives the adapter a
+  private per-run stop marker and waits for its WebSocket close before forceful
+  process cleanup. Control-stream `EPIPE` is handled without leaving a live
+  peer registered until TCP expiry.
+
 ## [5.1.0] — 2026-08-24
 
 ### Fixed

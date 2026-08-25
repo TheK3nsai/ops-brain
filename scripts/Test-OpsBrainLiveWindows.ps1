@@ -1,5 +1,5 @@
 #requires -Version 7.4
-# Credential-free Windows runtime checks for the live installer and launchers.
+# Operational-credential-free Windows runtime checks for the live installer and launchers.
 
 [CmdletBinding()]
 param()
@@ -94,21 +94,117 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     [IO.File]::WriteAllText($fakeClaudeScript, $source, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($fakeClaude, "@echo off`r`nnode `"%~dp0fake-claude.mjs`" %*`r`n", [Text.UTF8Encoding]::new($false))
 
-    $credential = Join-Path $testDirectory 'credential.cred.xml'
-    [IO.File]::WriteAllText($credential, 'credential fixture is not read by the parent launcher')
+    $fixtureToken = [guid]::NewGuid().ToString('N')
+    $fixtureSecret = ConvertTo-SecureString $fixtureToken -AsPlainText -Force
+    $claudeCredential = Join-Path $testDirectory 'claude.cred.xml'
+    $codexCredential = Join-Path $testDirectory 'codex.cred.xml'
+    [PSCredential]::new('CC-CI', $fixtureSecret) | Export-Clixml -LiteralPath $claudeCredential
+    [PSCredential]::new('Codex-CI', $fixtureSecret) | Export-Clixml -LiteralPath $codexCredential
+    $fixtureSecret = $null
+
+    $validationOutput = & "$PSScriptRoot\read-ops-brain-agent-token.ps1" `
+        -AgentCredentialFile $claudeCredential -AgentName 'CC-CI' -ValidateOnly
+    Assert-True ($null -eq $validationOutput) 'credential identity preflight emitted output'
+    $mismatchRejected = $false
+    try {
+        & "$PSScriptRoot\read-ops-brain-agent-token.ps1" `
+            -AgentCredentialFile $claudeCredential -AgentName 'Codex-CI' -ValidateOnly
+    }
+    catch { $mismatchRejected = $_.Exception.Message -like '*Credential identity does not match*' }
+    Assert-True $mismatchRejected 'credential identity preflight accepted a crossed identity'
+
+    # A child-process capture is the supported operating-system-pipe path. Keep the
+    # generated fixture in memory and never render it in test output.
+    $pwsh = (@(Get-Command pwsh -CommandType Application -ErrorAction Stop) | Select-Object -First 1).Source
+    $helperStartInfo = [Diagnostics.ProcessStartInfo]::new($pwsh)
+    $helperStartInfo.UseShellExecute = $false
+    $helperStartInfo.RedirectStandardOutput = $true
+    $helperStartInfo.RedirectStandardError = $true
+    foreach ($argument in @(
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-File', "$PSScriptRoot\read-ops-brain-agent-token.ps1",
+        '-AgentCredentialFile', $claudeCredential, '-AgentName', 'CC-CI'
+    )) { [void]$helperStartInfo.ArgumentList.Add($argument) }
+    $helperProcess = [Diagnostics.Process]::Start($helperStartInfo)
+    $helperOutputTask = $helperProcess.StandardOutput.ReadToEndAsync()
+    $helperErrorTask = $helperProcess.StandardError.ReadToEndAsync()
+    $helperProcess.WaitForExit()
+    $helperOutput = $helperOutputTask.GetAwaiter().GetResult()
+    $helperError = $helperErrorTask.GetAwaiter().GetResult()
+    Assert-True ($helperProcess.ExitCode -eq 0) 'credential helper rejected its child-process pipe'
+    Assert-True ($helperError.Length -eq 0) 'credential helper wrote an error on its supported pipe path'
+    Assert-True ($helperOutput -ceq $fixtureToken) 'credential helper pipe output did not match the generated fixture'
+    $helperOutput = $null
+
+    $fileOutput = Join-Path $testDirectory 'helper-file-output.txt'
+    $fileError = Join-Path $testDirectory 'helper-file-error.txt'
+    $fileProcess = Start-Process -FilePath $pwsh -ArgumentList @(
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+        ('"{0}"' -f "$PSScriptRoot\read-ops-brain-agent-token.ps1"),
+        '-AgentCredentialFile', ('"{0}"' -f $claudeCredential), '-AgentName', 'CC-CI'
+    ) -RedirectStandardOutput $fileOutput -RedirectStandardError $fileError -Wait -PassThru
+    Assert-True ($fileProcess.ExitCode -ne 0) 'credential helper accepted file-backed stdout'
+    Assert-True ((Get-Item -LiteralPath $fileOutput).Length -eq 0) 'credential helper wrote to file-backed stdout'
+    $fileErrorText = Get-Content -LiteralPath $fileError -Raw
+    Assert-True ($fileErrorText -like '*Refusing to emit an agent token*') 'credential helper file test failed for an unexpected reason'
+
+    # Start-Process gives a Windows console application its own console by
+    # default. The probe reports through a sentinel file so neither its fixture
+    # token nor its expected error is copied into this test's output stream.
+    $consoleProbe = Join-Path $testDirectory 'helper-console-probe.ps1'
+    $consoleSentinel = Join-Path $testDirectory 'helper-console-result.txt'
+    $consoleProbeSource = @'
+param(
+    [Parameter(Mandatory)][string]$Helper,
+    [Parameter(Mandatory)][string]$Credential,
+    [Parameter(Mandatory)][string]$Sentinel
+)
+try {
+    & $Helper -AgentCredentialFile $Credential -AgentName 'CC-CI'
+    [IO.File]::WriteAllText($Sentinel, 'accepted', [Text.UTF8Encoding]::new($false))
+}
+catch {
+    [IO.File]::WriteAllText($Sentinel, $_.Exception.Message, [Text.UTF8Encoding]::new($false))
+}
+'@
+    [IO.File]::WriteAllText($consoleProbe, $consoleProbeSource, [Text.UTF8Encoding]::new($false))
+    $consoleProcess = Start-Process -FilePath $pwsh -ArgumentList @(
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-File', ('"{0}"' -f $consoleProbe),
+        '-Helper', ('"{0}"' -f "$PSScriptRoot\read-ops-brain-agent-token.ps1"),
+        '-Credential', ('"{0}"' -f $claudeCredential),
+        '-Sentinel', ('"{0}"' -f $consoleSentinel)
+    ) -Wait -PassThru
+    Assert-True ($consoleProcess.ExitCode -eq 0) 'credential helper console probe process failed'
+    Assert-True (Test-Path -LiteralPath $consoleSentinel -PathType Leaf) 'credential helper console probe did not report a result'
+    $consoleResult = Get-Content -LiteralPath $consoleSentinel -Raw
+    Assert-True ($consoleResult -like '*Refusing to emit an agent token*') 'credential helper accepted console stdout'
+
+    $missingProfile = Join-Path $testDirectory 'crossed-identity-profile-must-not-exist.json'
+    foreach ($launcher in @('ops-brain-claude-live.ps1', 'ops-brain-codex-live.ps1')) {
+        $launcherMismatchRejected = $false
+        try {
+            & "$PSScriptRoot\$launcher" -Mode DryRun `
+                -ProfileFile $missingProfile `
+                -LiveUrl 'wss://ops-brain.example/live' `
+                -AgentCredentialFile $claudeCredential `
+                -AgentName 'Codex-CI'
+        }
+        catch { $launcherMismatchRejected = $_.Exception.Message -like '*identity preflight failed*' }
+        Assert-True $launcherMismatchRejected "$launcher did not reject a crossed identity before client discovery"
+    }
+
     $claudeProfile = Join-Path $testDirectory 'claude-profile.json'
     $codexProfile = Join-Path $testDirectory 'codex-profile.json'
     & node "$PSScriptRoot\ops-brain-client" configure claude `
         --live-url wss://ops-brain.example/live --agent CC-CI `
-        --credential-file $credential --label claude-ci --profile $claudeProfile
+        --credential-file $claudeCredential --label claude-ci --profile $claudeProfile
     Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to configure the Claude profile'
     & node "$PSScriptRoot\ops-brain-client" configure claude `
         --live-url wss://ops-brain.example/live --agent CC-CI `
-        --credential-file $credential --label claude-ci --profile $claudeProfile
+        --credential-file $claudeCredential --label claude-ci --profile $claudeProfile
     Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to replace its owned Claude profile'
     & node "$PSScriptRoot\ops-brain-client" configure codex `
         --live-url wss://ops-brain.example/live --agent Codex-CI `
-        --credential-file $credential --label codex-ci --app-server-port 4600 --profile $codexProfile
+        --credential-file $codexCredential --label codex-ci --app-server-port 4600 --profile $codexProfile
     Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to configure the Codex profile'
     $profileStatus = & "$PSScriptRoot\ops-brain-claude-live.ps1" -Mode Status -ProfileFile $claudeProfile
     Assert-True (@($profileStatus) -contains 'agent: CC-CI') 'Claude launcher did not load its protected client profile'
@@ -128,13 +224,12 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     $env:OPS_BRAIN_TEST_CAPTURE = $captureFile
     $env:OPS_BRAIN_AGENT_TOKEN = 'fixture-must-not-reach-claude'
     try {
-        $pwsh = (@(Get-Command pwsh -CommandType Application -ErrorAction Stop) | Select-Object -First 1).Source
         $startInfo = [Diagnostics.ProcessStartInfo]::new($pwsh)
         $startInfo.UseShellExecute = $false
         foreach ($argument in @(
             '-NoLogo', '-NoProfile', '-File', "$PSScriptRoot\ops-brain-claude-live.ps1",
             '-LiveUrl', 'wss://ops-brain.example/live',
-            '-AgentCredentialFile', $credential,
+            '-AgentCredentialFile', $claudeCredential,
             '-AgentName', 'CC-CI',
             '-Label', 'claude-ci',
             # Trailing client arguments. These must reach $ClaudeArgs; with
@@ -163,10 +258,11 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     Assert-True ($parts.Count -eq 2) 'fake Claude did not capture arguments'
     $config = $configParts[0] | ConvertFrom-Json
     $server = $config.mcpServers.'ops-brain-live'
-    Assert-True ($server.command -eq 'pwsh.exe') 'generated Claude MCP command is wrong'
+    Assert-True ($server.command -eq $pwsh) 'generated Claude MCP command is not the resolved PowerShell executable'
     Assert-True ($server.args -contains '-AgentName') 'generated Claude MCP config omitted AgentName'
     Assert-True ($server.args -contains 'CC-CI') 'generated Claude MCP config omitted the expected identity'
-    Assert-True ($capture -notlike '*credential fixture is not read*') 'credential contents leaked into Claude capture'
+    Assert-True ($capture -notlike "*$fixtureToken*") 'credential contents leaked into Claude capture'
+    $fixtureToken = $null
     Assert-True ($capture -notlike '*must-not-be-copied*') 'existing MCP credential was copied into the Claude overlay'
     $configDirectory = ($parts[0] -split "`n", 2)[0]
     Assert-True (-not (Test-Path -LiteralPath $configDirectory)) 'temporary Claude config overlay was not removed'
@@ -193,12 +289,13 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     [IO.File]::WriteAllText((Join-Path $fakeBin 'codex.cmd'), "@echo off`r`nexit /b 0`r`n", [Text.UTF8Encoding]::new($false))
     $shimRejected = $false
     try {
-        $env:PATH = "$fakeBin;$env:SystemRoot\System32;$env:SystemRoot"
+        $pwshDirectory = Split-Path -Parent $pwsh
+        $env:PATH = "$fakeBin;$pwshDirectory;$env:SystemRoot\System32;$env:SystemRoot"
         $installerStatus = & "$PSScriptRoot\Install-OpsBrainLive.ps1" -Mode Status -BinDirectory $binDirectory
         Assert-True (($installerStatus -join "`n") -like '*codex (native required): <missing>*') 'installer status treated codex.cmd as a runnable native Codex binary'
         & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode DryRun `
             -LiveUrl 'wss://ops-brain.example/live' `
-            -AgentCredentialFile $credential `
+            -AgentCredentialFile $codexCredential `
             -AgentName 'Codex-CI'
     }
     catch { $shimRejected = $_.Exception.Message -like '*Required executable is missing: codex.exe*' }
