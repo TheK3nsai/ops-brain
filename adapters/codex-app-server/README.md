@@ -11,10 +11,13 @@ JSON-RPC connection, resumes the target thread, uses `turn/start` when the
 thread is idle, and uses `turn/steer` with `expectedTurnId` while a turn is
 active. It acknowledges a live message only after App Server accepts that
 request. Acceptance does not mean Codex read, understood, or acted on it.
-There is an unavoidable lost-ACK ambiguity: if App Server accepts an injection
-and the live WebSocket disconnects before its ACK reaches ops-brain, the sender
-can see `routed` even though Codex received the text. The adapter never retries
-that message because doing so could inject it twice.
+There is an unavoidable lost-ACK ambiguity: App Server may accept an injection
+while the live WebSocket disconnects before its ACK reaches ops-brain. The
+sender receives a `delivery_unconfirmed` error and must re-list peers before
+deciding whether to make a new send. The adapter never retries that message
+because doing so could inject it twice. During a rolling upgrade, the decoder
+accepts a legacy protocol-v1 `routed` receipt but exposes it as the same
+unconfirmed-delivery error, never as success.
 
 ## Requirements
 
@@ -84,7 +87,9 @@ Optional variables:
 - `OPS_BRAIN_CODEX_APP_SERVER_TOKEN`: bearer for an authenticated App Server
   WebSocket. It is read only from the environment.
 - `OPS_BRAIN_CODEX_BIN`: Codex executable name/path for stdio mode.
-- `OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS`: 500-30000; default 5000.
+- `OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS`: 500-5000; default 5000. The upper
+  bound keeps every supported resume/read/write reconnect path inside the
+  server's 70-second host-acknowledgement window.
 
 The adapter also accepts the mutually exclusive
 `OPS_BRAIN_AGENT_TOKEN_HELPER_JSON` source used by the Windows launcher. That

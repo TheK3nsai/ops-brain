@@ -128,6 +128,7 @@ function fakeLiveServer({
   ignoreListRequests = false,
   malformedSendResult = false,
   messageBeforeRegistration = false,
+  sendStatus = 'host_accepted',
 } = {}) {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   const frames = [];
@@ -181,8 +182,8 @@ function fakeLiveServer({
           request_id: frame.request_id,
           receipt: {
             message_id: malformedSendResult ? 'not-a-uuid' : randomUUID(),
-            status: 'routed',
-            detail: 'test routed',
+            status: sendStatus,
+            detail: 'test receipt',
           },
         }));
       }
@@ -520,6 +521,30 @@ test('App Server rejection produces a negative live acknowledgement', async () =
   }
 });
 
+test('lost App Server write response disconnects without a definitive negative ACK', async () => {
+  const fixture = await makeFixture({
+    status: 'idle',
+    staleMethod: 'turn/start',
+    staleAfterCount: 0,
+  });
+  try {
+    const delivered = fixture.live.deliver();
+    await waitForCondition(() => fixture.live.server.clients.size === 0, 1500);
+    assert.equal(
+      fixture.live.frames.some(
+        (frame) => frame.type === 'acknowledge' && frame.message_id === delivered.message_id,
+      ),
+      false,
+    );
+    assert.equal(
+      fixture.app.requests.filter((request) => request.method === 'turn/start').length,
+      1,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('list and send proxy the live wire protocol without exposing tokens', async () => {
   const fixture = await makeFixture();
   try {
@@ -531,11 +556,27 @@ test('list and send proxy the live wire protocol without exposing tokens', async
       body: 'Status only, no file contents.',
       requestId,
     });
-    assert.equal(receipt.status, 'routed');
+    assert.equal(receipt.status, 'host_accepted');
     assert.ok(fixture.live.frames.some((frame) => frame.type === 'list_peers'));
     assert.ok(fixture.live.frames.some((frame) => frame.type === 'send_message' && frame.request_id === requestId));
     assert.equal(JSON.stringify(redactedConfig(fixture.config)).includes('super-secret'), false);
     assert.equal(JSON.stringify(redactedConfig(fixture.config)).includes('local-app-server-token'), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('legacy routed receipts are treated as unconfirmed delivery errors', async () => {
+  const fixture = await makeFixture({}, { sendStatus: 'routed' });
+  try {
+    await assert.rejects(
+      fixture.bridge.sendMessage({
+        toPeerId: fixture.live.peers[0].peer_id,
+        body: 'do not treat a legacy routed receipt as success',
+        requestId: randomUUID(),
+      }),
+      /delivery_unconfirmed: live delivery was not confirmed; re-list live peers.*handoff/,
+    );
   } finally {
     await fixture.close();
   }
@@ -578,6 +619,10 @@ test('configuration rejects unsafe URLs and malformed agent tokens', () => {
     ...base,
     OPS_BRAIN_AGENT_TOKEN: 'secret\nsecond-line',
   }), /single line/);
+  assert.throws(() => loadConfig({
+    ...base,
+    OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS: '5001',
+  }), /500 to 5000/);
 });
 
 test('configuration reads the agent bearer from a protected file', () => {
@@ -665,7 +710,7 @@ test('control commands reject scalars and malformed fields without throwing', as
   const calls = [];
   const bridge = {
     async listPeers() { calls.push(['list']); return []; },
-    async sendMessage(message) { calls.push(['send', message]); return { status: 'routed' }; },
+    async sendMessage(message) { calls.push(['send', message]); return { status: 'host_accepted' }; },
   };
   for (const command of [null, [], 'list_peers', 42, true]) {
     const response = await handleControlCommand(command, bridge);

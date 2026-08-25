@@ -36,6 +36,23 @@ function Get-RequiredApplication {
     $command
 }
 
+function Assert-AgentCredentialIdentity {
+    param(
+        [Parameter(Mandatory)][System.Management.Automation.ApplicationInfo]$PowerShell,
+        [Parameter(Mandatory)][string]$TokenHelper,
+        [Parameter(Mandatory)][string]$CredentialFile,
+        [Parameter(Mandatory)][string]$ExpectedAgent
+    )
+    try {
+        & $PowerShell.Source -NoLogo -NoProfile -NonInteractive -File $TokenHelper `
+            -AgentCredentialFile $CredentialFile -AgentName $ExpectedAgent -ValidateOnly
+        if ($LASTEXITCODE -ne 0) { throw "helper exited $LASTEXITCODE" }
+    }
+    catch {
+        throw "Agent credential identity preflight failed for $ExpectedAgent"
+    }
+}
+
 function Assert-LiveUrl {
     param([Parameter(Mandatory)][uri]$Url)
     if (-not $Url.IsAbsoluteUri) {
@@ -84,6 +101,7 @@ $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $Adapter = Join-Path $RepoDirectory 'adapters\claude-channel\src\main.js'
 $OverlayHelper = Join-Path $PSScriptRoot 'create-claude-channel-overlay.mjs'
 $CredentialLauncher = Join-Path $PSScriptRoot 'start-ops-brain-live-adapter.ps1'
+$TokenHelper = Join-Path $PSScriptRoot 'read-ops-brain-agent-token.ps1'
 if ($AgentCredentialFile) {
     $AgentCredentialFile = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($AgentCredentialFile))
 }
@@ -110,15 +128,21 @@ if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $Agen
 if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
 if (-not (Test-Path -LiteralPath $OverlayHelper -PathType Leaf)) { throw "Claude Channel overlay helper is missing: $OverlayHelper" }
 if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
+if (-not (Test-Path -LiteralPath $TokenHelper -PathType Leaf)) { throw "Agent token helper is missing: $TokenHelper" }
+$pwshCommand = Get-RequiredApplication 'pwsh.exe'
+
+# Reject a crossed identity before creating an overlay or spawning Claude. The
+# helper's validation-only path checks DPAPI metadata without reading the bearer.
+Assert-AgentCredentialIdentity $pwshCommand $TokenHelper $AgentCredentialFile $AgentName
 $claudeCommand = Get-RequiredApplication 'claude'
 $nodeCommand = Get-RequiredApplication 'node'
-[void](Get-RequiredApplication 'pwsh.exe')
 
 $serverDefinition = @{
-    command = 'pwsh.exe'
+    command = $pwshCommand.Source
     args = @(
-        '-NoLogo', '-NoProfile', '-File', $CredentialLauncher,
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $CredentialLauncher,
         '-Client', 'claude', '-Adapter', $Adapter,
+        '-PowerShellPath', $pwshCommand.Source,
         '-LiveUrl', $LiveUrl.AbsoluteUri,
         '-AgentCredentialFile', $AgentCredentialFile,
         '-AgentName', $AgentName,

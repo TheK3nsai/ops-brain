@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AppServerClient } from './app-server-client.mjs';
+import { AppServerClient, RpcError } from './app-server-client.mjs';
 import { LiveClient } from './live-client.mjs';
 import { assertUuid, validateIncomingMessage } from './protocol.mjs';
 
@@ -67,6 +67,10 @@ function markDeliveryStage(error, stage) {
     error.deliveryStage = stage;
   }
   return error;
+}
+
+function isAmbiguousHostWrite(error) {
+  return error?.deliveryStage === 'app_server_write' && !(error instanceof RpcError);
 }
 
 export class CodexLiveBridge extends EventEmitter {
@@ -162,6 +166,13 @@ export class CodexLiveBridge extends EventEmitter {
         injected = true;
       } catch (error) {
         this.emit('deliveryError', { messageId: message?.message_id, error });
+        if (isAmbiguousHostWrite(error)) {
+          // The write may have reached App Server even though its response was
+          // lost. Disconnect instead of sending a definitive negative ACK so
+          // ops-brain reports delivery_unconfirmed and never invites a blind retry.
+          await live.close().catch(() => {});
+          return;
+        }
       }
       live.acknowledge(message?.message_id, injected);
     });

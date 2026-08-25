@@ -31,12 +31,16 @@ const PEER_QUEUE_CAPACITY: usize = 32;
 const SENDS_PER_MINUTE: usize = 30;
 const IDEMPOTENCY_WINDOW: Duration = Duration::from_secs(600);
 const MAX_RECENT_SENDS: usize = 4_096;
-const ACK_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(not(test))]
+const ACK_TIMEOUT: Duration = Duration::from_secs(70);
+#[cfg(test)]
+const ACK_TIMEOUT: Duration = Duration::from_millis(250);
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PEERS: usize = 256;
 const MAX_PEERS_PER_AGENT: usize = 8;
 const MAX_WIRE_MESSAGE_BYTES: usize = 16 * 1024;
 const MAX_IN_FLIGHT_SENDS_PER_PEER: usize = 8;
+const MAX_IN_FLIGHT_DELIVERIES_PER_TARGET: usize = 1;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -70,7 +74,6 @@ pub struct LiveMessage {
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryStatus {
     HostAccepted,
-    Routed,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -89,6 +92,7 @@ pub enum LiveError {
     RateLimited(String),
     Duplicate(String),
     Rejected(String),
+    DeliveryUnconfirmed(String),
 }
 
 impl std::fmt::Display for LiveError {
@@ -100,7 +104,8 @@ impl std::fmt::Display for LiveError {
             | Self::Busy(message)
             | Self::RateLimited(message)
             | Self::Duplicate(message)
-            | Self::Rejected(message) => message,
+            | Self::Rejected(message)
+            | Self::DeliveryUnconfirmed(message) => message,
         };
         write!(f, "{message}")
     }
@@ -110,6 +115,7 @@ impl std::fmt::Display for LiveError {
 enum HostAck {
     Accepted,
     Rejected(String),
+    DeliveryUnconfirmed(String),
 }
 
 #[derive(Debug)]
@@ -218,7 +224,10 @@ impl LiveHub {
             .collect();
         for key in pending_keys {
             if let Some(waiter) = state.pending_acks.remove(&key) {
-                let _ = waiter.send(HostAck::Rejected("target peer disconnected".to_string()));
+                let _ = waiter.send(HostAck::DeliveryUnconfirmed(
+                    "target peer disconnected before acknowledging the message; delivery is unconfirmed, so re-list live peers before deciding whether to send again, or create a handoff"
+                        .to_string(),
+                ));
             }
         }
         tracing::info!(
@@ -360,6 +369,18 @@ impl LiveHub {
                         "target peer is offline; create a handoff for durable delivery".to_string(),
                     )
                 })?;
+            if state
+                .pending_acks
+                .keys()
+                .filter(|(target, _)| *target == to_peer_id)
+                .count()
+                >= MAX_IN_FLIGHT_DELIVERIES_PER_TARGET
+            {
+                return Err(LiveError::Busy(
+                    "target peer is already processing a live delivery; retry later or create a handoff"
+                        .to_string(),
+                ));
+            }
 
             while state
                 .recent
@@ -406,6 +427,12 @@ impl LiveHub {
             state
                 .pending_acks
                 .insert((to_peer_id, message.message_id), ack_sender);
+            let expiry_state = Arc::clone(&self.state);
+            let expiry_key = (to_peer_id, message.message_id);
+            tokio::spawn(async move {
+                tokio::time::sleep(ACK_TIMEOUT).await;
+                expiry_state.lock().await.pending_acks.remove(&expiry_key);
+            });
 
             if let Err(error) = target_tx.try_send(message.clone()) {
                 state.pending_acks.remove(&(to_peer_id, message.message_id));
@@ -438,19 +465,30 @@ impl LiveHub {
                 detail: "target adapter accepted the message for host injection".to_string(),
             }),
             Ok(Ok(HostAck::Rejected(reason))) => Err(LiveError::Rejected(reason)),
-            Ok(Err(_)) | Err(_) => {
+            Ok(Ok(HostAck::DeliveryUnconfirmed(reason))) => {
+                Err(LiveError::DeliveryUnconfirmed(reason))
+            }
+            Ok(Err(_)) => {
                 self.state
                     .lock()
                     .await
                     .pending_acks
                     .remove(&(to_peer_id, message.message_id));
-                Ok(DeliveryReceipt {
-                    message_id: message.message_id,
-                    status: DeliveryStatus::Routed,
-                    detail:
-                        "enqueued for the target connection; host acceptance was not acknowledged"
-                            .to_string(),
-                })
+                Err(LiveError::DeliveryUnconfirmed(
+                    "target peer disconnected before acknowledging the message; re-list live peers before deciding whether to send again, or create a handoff"
+                        .to_string(),
+                ))
+            }
+            Err(_) => {
+                self.state
+                    .lock()
+                    .await
+                    .pending_acks
+                    .remove(&(to_peer_id, message.message_id));
+                Err(LiveError::DeliveryUnconfirmed(
+                    "target adapter did not acknowledge the message; delivery is unconfirmed, so re-list live peers before deciding whether to send again, or create a handoff"
+                        .to_string(),
+                ))
             }
         }
     }
@@ -558,6 +596,7 @@ impl ServerFrame {
             LiveError::RateLimited(_) => "rate_limited",
             LiveError::Duplicate(_) => "duplicate",
             LiveError::Rejected(_) => "rejected",
+            LiveError::DeliveryUnconfirmed(_) => "delivery_unconfirmed",
         };
         Self::Error {
             request_id,
@@ -838,6 +877,158 @@ mod tests {
                 claude.peer.peer_id,
                 codex_id,
                 "hello from Claude",
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.status, DeliveryStatus::HostAccepted);
+    }
+
+    #[tokio::test]
+    async fn delivery_without_host_ack_is_an_error() {
+        let hub = LiveHub::default();
+        let (claude, mut codex) = pair(&hub).await;
+        let sender_hub = hub.clone();
+        let from_id = claude.peer.peer_id;
+        let target_id = codex.peer.peer_id;
+        let send = tokio::spawn(async move {
+            sender_hub
+                .send(
+                    "CC-Stealth",
+                    from_id,
+                    target_id,
+                    "do not report an unacknowledged delivery as success",
+                    None,
+                )
+                .await
+        });
+
+        let _message = codex.receiver.recv().await.unwrap();
+        let error = send.await.unwrap().unwrap_err();
+        assert!(matches!(error, LiveError::DeliveryUnconfirmed(_)));
+        assert!(error.to_string().contains("delivery is unconfirmed"));
+    }
+
+    #[tokio::test]
+    async fn disconnect_during_delivery_is_unconfirmed() {
+        let hub = LiveHub::default();
+        let (claude, mut codex) = pair(&hub).await;
+        let sender_hub = hub.clone();
+        let from_id = claude.peer.peer_id;
+        let target_id = codex.peer.peer_id;
+        let send = tokio::spawn(async move {
+            sender_hub
+                .send(
+                    "CC-Stealth",
+                    from_id,
+                    target_id,
+                    "disconnect before acknowledgement",
+                    None,
+                )
+                .await
+        });
+
+        let _message = codex.receiver.recv().await.unwrap();
+        hub.unregister(target_id).await;
+        let error = send.await.unwrap().unwrap_err();
+        assert!(matches!(error, LiveError::DeliveryUnconfirmed(_)));
+        assert!(error.to_string().contains("disconnected"));
+    }
+
+    #[tokio::test]
+    async fn target_accepts_only_one_in_flight_delivery() {
+        let hub = LiveHub::default();
+        let (claude, mut codex) = pair(&hub).await;
+        let sender_hub = hub.clone();
+        let from_id = claude.peer.peer_id;
+        let target_id = codex.peer.peer_id;
+        let first = tokio::spawn(async move {
+            sender_hub
+                .send("CC-Stealth", from_id, target_id, "first", None)
+                .await
+        });
+        let first_message = codex.receiver.recv().await.unwrap();
+
+        let busy = hub
+            .send("CC-Stealth", from_id, target_id, "second", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(busy, LiveError::Busy(_)));
+
+        hub.acknowledge(target_id, first_message.message_id, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            first.await.unwrap().unwrap().status,
+            DeliveryStatus::HostAccepted
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_send_preserves_then_expires_the_target_slot() {
+        let hub = LiveHub::default();
+        let (claude, mut codex) = pair(&hub).await;
+        let sender_hub = hub.clone();
+        let from_id = claude.peer.peer_id;
+        let target_id = codex.peer.peer_id;
+        let cancelled = tokio::spawn(async move {
+            sender_hub
+                .send("CC-Stealth", from_id, target_id, "cancel me", None)
+                .await
+        });
+        let _cancelled_message = codex.receiver.recv().await.unwrap();
+        cancelled.abort();
+        assert!(cancelled.await.unwrap_err().is_cancelled());
+
+        let busy = hub
+            .send("CC-Stealth", from_id, target_id, "too early", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(busy, LiveError::Busy(_)));
+
+        tokio::time::sleep(ACK_TIMEOUT + Duration::from_millis(25)).await;
+        let ack_hub = hub.clone();
+        tokio::spawn(async move {
+            let message = codex.receiver.recv().await.unwrap();
+            ack_hub
+                .acknowledge(target_id, message.message_id, true)
+                .await
+                .unwrap();
+        });
+        let receipt = hub
+            .send(
+                "CC-Stealth",
+                from_id,
+                target_id,
+                "target slot was released",
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.status, DeliveryStatus::HostAccepted);
+    }
+
+    #[tokio::test]
+    async fn delayed_host_acceptance_before_deadline_succeeds() {
+        let hub = LiveHub::default();
+        let (claude, mut codex) = pair(&hub).await;
+        let receiver_hub = hub.clone();
+        let target_id = codex.peer.peer_id;
+        tokio::spawn(async move {
+            let message = codex.receiver.recv().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            receiver_hub
+                .acknowledge(target_id, message.message_id, true)
+                .await
+                .unwrap();
+        });
+
+        let receipt = hub
+            .send(
+                "CC-Stealth",
+                claude.peer.peer_id,
+                target_id,
+                "wait for the valid host acknowledgement",
                 None,
             )
             .await

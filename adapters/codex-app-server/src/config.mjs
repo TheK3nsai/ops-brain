@@ -58,8 +58,8 @@ export function loadConfig(env = process.env) {
     : null;
 
   const requestTimeoutMs = Number(env.OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS || 5000);
-  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 500 || requestTimeoutMs > 30000) {
-    throw new Error('OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS must be an integer from 500 to 30000');
+  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 500 || requestTimeoutMs > 5000) {
+    throw new Error('OPS_BRAIN_CODEX_REQUEST_TIMEOUT_MS must be an integer from 500 to 5000');
   }
 
   return Object.freeze({
@@ -118,7 +118,7 @@ function loadTokenFromHelper(raw) {
   try {
     return singleLineToken('agent token helper output', {
       'agent token helper output': execFileSync(command[0], command.slice(1), {
-        encoding: 'utf8', input: '', timeout: 5_000, maxBuffer: 16_384,
+        encoding: 'utf8', input: '', timeout: 15_000, maxBuffer: 16_384,
         windowsHide: true,
       }).trim(),
     });

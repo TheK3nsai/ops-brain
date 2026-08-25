@@ -207,7 +207,10 @@ pwsh -NoProfile -File .\scripts\Install-OpsBrain.ps1 -Mode Status
 Release bundles contain pinned dependencies; source checkouts install them with
 `npm ci --ignore-scripts`. The installer creates `ops-brain-client`,
 `ops-brain-claude`, and `ops-brain-codex` `.cmd` shims under
-`%LOCALAPPDATA%\Programs\ops-brain`, plus compatibility aliases. It reports when that
+`%LOCALAPPDATA%\Programs\ops-brain`, plus compatibility aliases. An upgraded
+host that already has `%LOCALAPPDATA%\Programs\ops-brain-live` and does not yet
+have the current directory keeps using that legacy location; installer status
+is the source of truth for the effective path. It reports when the selected
 directory still needs to be added to the user's `PATH`.
 
 Configure profiles after creating the two DPAPI credentials:
@@ -231,14 +234,21 @@ ops-brain-claude
 ops-brain-codex
 ```
 
+On a brand-new Codex TUI, submit one ordinary initial prompt before expecting a
+live peer. The adapter deliberately waits—with bounded exponential backoff—until
+exactly one loaded thread has a persisted rollout and can be resumed. App Server
+readiness alone is not peer readiness.
+
 Substitute the host's exact identities and labels. `-Mode Status` and
-`-Mode DryRun` are credential-safe. A short-lived helper decrypts the bearer
-from DPAPI and writes it only to the adapter's private child-process pipe. The
-adapter captures that output without putting it in its environment, on disk,
-or on the command line. The helper verifies that the DPAPI credential username
-matches `-AgentName`, and the adapter independently verifies the server-returned
-binding. Claude, Codex, command arguments, generated MCP configuration, and
-logs receive only the credential-file path.
+`-Mode DryRun` are credential-safe. Before either client is spawned, a
+validation-only helper invocation checks that the DPAPI credential username
+matches `-AgentName` without reading the bearer. A second short-lived helper
+invocation decrypts the bearer for the adapter and refuses to emit unless its
+stdout handle is an operating-system pipe; consoles and file redirections fail
+closed. The adapter captures that pipe without putting the bearer in its
+environment, on disk, or on the command line, and independently verifies the
+server-returned binding. Claude, Codex, command arguments, generated MCP
+configuration, and logs receive only the credential-file path.
 
 ## Capturing launcher output
 
@@ -274,15 +284,14 @@ Do not call a host live until all applicable checks pass:
 2. Each launcher status names the intended credential path and a non-sensitive
    label. Dry-run output contains no bearer.
 3. Start only Claude. `list_live_peers` from its bound MCP token shows one
-   `claude_code` peer with the exact Claude fleet identity — **and then deliver
-   one marker to it and confirm the text actually appears in the session.**
+   `claude_code` peer with the exact Claude fleet identity.
 
    The Claude adapter now waits for MCP initialization before registering, and
    the isolated config overlay makes the Channel resolvable. Peer presence is
-   still a transport prerequisite, not proof that the Channel event appeared or
-   that the model read it. The previous launcher defect survived two host checks
-   precisely because those checks stopped at presence. Keep the delivered-marker
-   control even though the original defect is fixed.
+   still only a transport prerequisite. Do not attempt the delivered-marker
+   control from that same identity-bound MCP session: the server correctly
+   refuses a live peer messaging itself. Step 6 performs the rendered-delivery
+   control once both distinct identities are connected.
 4. Stop Claude and confirm the peer disappears. Repeat for Codex.
 5. Start both, then confirm `list_live_peers` reports **exactly one** peer per
    identity before sending anything. `send_live_message` requires exactly one
@@ -293,7 +302,9 @@ Do not call a host live until all applicable checks pass:
    than diagnosing a later send failure as a server problem.
 6. Send one unique marker Claude -> Codex and a correlated reply
    Codex -> Claude. A `host_accepted` receipt means host injection accepted the
-   text, not that the model read or followed it.
+   text, not that the model read or followed it. Confirm that both markers
+   actually render in their target sessions; this is the delivered-marker
+   control for both adapters, not merely a receipt check.
 7. Run both halves of the identity negative control. They exercise different
    enforcement points, so passing one does not imply the other:
    - **7a, rendered provenance:** send harmless text that claims the sibling's

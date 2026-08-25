@@ -1,5 +1,7 @@
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SLUG_RE = /^[A-Za-z0-9._-]+$/;
+// Accept routed only to decode protocol-v1 servers during rolling upgrades.
+// LiveClient converts it to delivery_unconfirmed; it is never a success.
 const DELIVERY_STATUSES = new Set(['host_accepted', 'routed']);
 const ADAPTERS = new Set(['claude_code', 'codex']);
 const SOURCE_BINDINGS = new Set(['connection_bound', 'agent_bound_unique_adapter']);

@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Unacknowledged live sends no longer report success.** `host_accepted` is
+  now the only successful delivery receipt. Disconnects and ACK timeouts return
+  the distinct `delivery_unconfirmed` error, and both packaged adapters convert
+  legacy protocol-v1 `routed` receipts to that same error during rolling
+  upgrades. The server admits only one in-flight delivery per target and waits
+  up to 70 seconds for host acceptance, closing both the stale-peer false-success
+  window and the previous three-second deadline race with Codex App Server.
+  Codex host RPCs are capped at five seconds so even reconnect-and-retry paths
+  remain inside that acknowledgement budget; ambiguous post-write failures
+  disconnect without a definitive negative ACK.
+- **The fleet gate no longer requires an impossible self-send.** Isolated
+  startup checks prove peer presence; rendered-delivery controls run during the
+  two-identity exchange, where distinct sender and target identities satisfy
+  the server's provenance rules.
+- **Windows DPAPI helper has a pipe-handle disclosure guard.** The credential
+  helper now refuses console and file stdout handles before materializing bearer plaintext. Both
+  launchers validate the DPAPI username against the requested identity before
+  spawning Claude, Codex, or the App Server, so crossed identities fail visibly
+  without leaving client processes behind.
+- **Codex live teardown is graceful.** The Windows launcher gives the adapter a
+  private per-run stop marker and waits for its WebSocket close before forceful
+  process cleanup. Control-stream `EPIPE` is handled without leaving a live
+  peer registered until TCP expiry.
+
 ## [5.1.0] — 2026-08-24
 
 ### Fixed

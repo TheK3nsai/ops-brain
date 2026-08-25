@@ -2,6 +2,7 @@
 
 import process from 'node:process';
 import readline from 'node:readline';
+import { existsSync } from 'node:fs';
 import { CodexLiveBridge } from './bridge.mjs';
 import { loadConfig, redactedConfig } from './config.mjs';
 import { handleControlCommand } from './control.mjs';
@@ -43,8 +44,23 @@ async function main() {
     error_code: Number.isSafeInteger(error.code) ? error.code : undefined,
   }));
 
-  const controls = readline.createInterface({ input: process.stdin });
-  controls.on('line', async (line) => {
+  // The Windows launcher shares the Codex TUI's console stdin. Only claim the
+  // control channel when stdin is a pipe so the adapter cannot consume TUI keys.
+  const controls = process.stdin.isTTY
+    ? null
+    : readline.createInterface({ input: process.stdin });
+  let controlInputFailed = false;
+  const handleControlInputError = (error) => {
+    if (controlInputFailed) return;
+    controlInputFailed = true;
+    log('warn', 'adapter control input is unavailable; live delivery remains active', {
+      error: error?.message || String(error),
+    });
+    controls?.close();
+  };
+  if (controls) process.stdin.on('error', handleControlInputError);
+  controls?.on('error', handleControlInputError);
+  controls?.on('line', async (line) => {
     let command;
     try { command = JSON.parse(line); }
     catch {
@@ -59,18 +75,43 @@ async function main() {
     if (stopping) return;
     stopping = true;
     log('info', 'stopping live adapter', { signal });
-    controls.close();
-    process.stdin.pause();
+    controls?.close();
+    if (controls) process.stdin.pause();
     await bridge.stop();
   };
+  let controlOutputFailed = false;
+  const handleControlOutputError = (error) => {
+    if (controlOutputFailed) return;
+    controlOutputFailed = true;
+    log('warn', 'adapter control output is unavailable; stopping live delivery', {
+      error: error?.message || String(error),
+    });
+    void stop('control-output-error').catch((stopError) => {
+      log('error', 'adapter graceful stop failed', { error: stopError.message });
+      process.exitCode = 1;
+    });
+  };
+  process.stdout.on('error', handleControlOutputError);
+  const stopFile = process.env.OPS_BRAIN_LIVE_STOP_FILE;
+  const stopPoll = stopFile ? setInterval(() => {
+    if (!existsSync(stopFile)) return;
+    void stop('launcher-stop-file').catch((error) => {
+      log('error', 'adapter graceful stop failed', { error: error.message });
+      process.exitCode = 1;
+    });
+  }, 100) : null;
+  stopPoll?.unref();
   process.once('SIGINT', () => stop('SIGINT'));
   process.once('SIGTERM', () => stop('SIGTERM'));
 
   try {
     await bridge.start();
   } finally {
-    controls.close();
-    process.stdin.pause();
+    if (stopPoll) clearInterval(stopPoll);
+    if (controls) process.stdin.off('error', handleControlInputError);
+    process.stdout.off('error', handleControlOutputError);
+    controls?.close();
+    if (controls) process.stdin.pause();
   }
 }
 
