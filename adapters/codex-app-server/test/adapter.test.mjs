@@ -996,16 +996,23 @@ test('pre-registration protocol failure cannot be revived by registration', asyn
   }
 });
 
-function resolveOnlyBridge({ threadId = null, resume }) {
+function resolveOnlyBridge({
+  threadId = null,
+  resume,
+  loaded = null,
+  reconnect = null,
+}) {
   const discovered = randomUUID();
+  const loadedIds = loaded || [discovered];
   const requests = [];
   const warnings = [];
   const appServer = new EventEmitter();
   appServer.connect = async () => {};
   appServer.close = async () => {};
+  if (reconnect) appServer.reconnect = reconnect;
   appServer.request = async (method, params) => {
     requests.push({ method, params });
-    if (method === 'thread/loaded/list') return { data: [discovered] };
+    if (method === 'thread/loaded/list') return { data: loadedIds };
     if (method === 'thread/resume') return resume(params.threadId, requests);
     throw new Error(`unexpected method ${method}`);
   };
@@ -1028,6 +1035,61 @@ function resolveOnlyBridge({ threadId = null, resume }) {
   };
   return { bridge, requests, warnings, discovered, live, teardown };
 }
+
+test('discovery ignores an unpersisted extra loaded thread', async () => {
+  const transient = randomUUID();
+  const persisted = randomUUID();
+  let reconnects = 0;
+  const harness = resolveOnlyBridge({
+    loaded: [transient, persisted],
+    resume: (id) => {
+      if (id === transient) {
+        throw new RpcError('thread/resume', { code: -32600, message: 'no rollout found' });
+      }
+      return {};
+    },
+    reconnect: async () => { reconnects += 1; },
+  });
+  const connected = once(harness.bridge, 'connected');
+  const run = harness.bridge.start();
+  try {
+    await connected;
+    assert.equal(harness.bridge.targetThreadId, persisted);
+    assert.equal(reconnects, 0, 'an App Server rejection is not a stale transport');
+    assert.deepEqual(
+      harness.requests
+        .filter((item) => item.method === 'thread/resume')
+        .map((item) => item.params.threadId),
+      [transient, persisted],
+      'every loaded candidate must be probed before the persisted one is latched',
+    );
+  } finally {
+    await harness.teardown(run);
+  }
+});
+
+test('discovery stays offline when multiple loaded threads are persisted', async () => {
+  const loaded = [randomUUID(), randomUUID()];
+  const harness = resolveOnlyBridge({
+    loaded,
+    resume: () => ({}),
+  });
+  const run = harness.bridge.start();
+  try {
+    await waitForCondition(() => harness.warnings.length >= 1, 2000);
+    assert.match(harness.warnings[0].message, /found 2 among 2 loaded/);
+    assert.equal(harness.bridge.targetThreadId, null);
+    assert.deepEqual(
+      harness.requests
+        .filter((item) => item.method === 'thread/resume')
+        .map((item) => item.params.threadId),
+      loaded,
+      'every candidate must prove resumable before the adapter can reject ambiguity',
+    );
+  } finally {
+    await harness.teardown(run);
+  }
+});
 
 test('a discovered thread that fails to resume is not latched and recovery re-lists', async () => {
   let resumeFailures = 0;
