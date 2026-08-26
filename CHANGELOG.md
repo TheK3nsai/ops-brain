@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [5.2.0] — 2026-08-26
+
 ### Fixed
 
 - **The Claude adapter now records why the live channel failed to bind.** Claude
