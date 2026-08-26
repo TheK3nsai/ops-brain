@@ -60,18 +60,20 @@ export OPS_BRAIN_CODEX_LABEL=codex-stealth-1
 npm start
 ```
 
-When exactly one thread is loaded, the adapter selects it. For multiple loaded
-threads, set `OPS_BRAIN_CODEX_THREAD_ID`; the adapter never guesses. It can also
-spawn `codex app-server` over stdio when
+When exactly one process-wide loaded thread can be resumed, the adapter selects
+it. It ignores additional loaded IDs that `thread/resume` confirms have no
+persisted rollout, but if multiple resumable threads are loaded, set
+`OPS_BRAIN_CODEX_THREAD_ID`; the adapter never guesses between viable targets.
+It can also spawn `codex app-server` over stdio when
 `OPS_BRAIN_CODEX_APP_SERVER_URL` is unset, but then a thread ID must identify a
 resumable thread if no thread is already loaded.
 
 The adapter does not register its `/live` peer until that target thread is
 resolvable and resumable. It repeats the same check before reconnecting and
 disconnects the peer when its target thread closes. While zero or multiple
-threads are loaded and no thread ID is configured, it remains offline and
-retries discovery with bounded backoff, so `list_live_peers` cannot advertise a
-Codex adapter without a resumable target.
+persisted candidates are loaded and no thread ID is configured, it remains
+offline and retries discovery with bounded backoff, so `list_live_peers` cannot
+advertise a Codex adapter without a resumable target.
 
 The foreground wrapper necessarily opens its adapter connection before the TUI
 finishes loading a thread. If that pre-TUI WebSocket later stops answering,

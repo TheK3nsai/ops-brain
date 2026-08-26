@@ -217,6 +217,11 @@ export class CodexLiveBridge extends EventEmitter {
     try {
       return await this.appServer.request(method, params);
     } catch (firstError) {
+      // JSON-RPC rejections are application results, not evidence that the
+      // transport went stale. Reconnecting only repeats the same rejection and
+      // is especially noisy during the clean-launch window before a new thread
+      // has a persisted rollout.
+      if (firstError instanceof RpcError) throw markDeliveryStage(firstError, stage);
       if (typeof this.appServer.reconnect !== 'function') {
         throw markDeliveryStage(firstError, stage);
       }
@@ -260,25 +265,41 @@ export class CodexLiveBridge extends EventEmitter {
       'thread_loaded_list',
     );
     const ids = Array.isArray(loaded?.data) ? loaded.data : [];
-    if (ids.length !== 1) {
+    const resumableIds = [];
+    for (const candidate of ids) {
+      try {
+        // thread/loaded/list is process-global. A client may expose an
+        // additional in-memory thread before that thread has a rollout, so
+        // loaded count alone is not a safe target selector. Resume is the exact
+        // capability the bridge needs and rejects a rollout-less candidate.
+        await this.#safeAppRequest(
+          'thread/resume',
+          { threadId: candidate },
+          'thread_candidate_resume',
+        );
+      } catch (error) {
+        if (error instanceof RpcError) continue;
+        throw error;
+      }
+      resumableIds.push(candidate);
+    }
+    if (resumableIds.length !== 1) {
       if (!required) {
-        this.emit('warning', new Error(`waiting for exactly one loaded Codex thread; found ${ids.length}`));
+        this.emit('warning', new Error(
+          `waiting for exactly one resumable Codex thread; found ${resumableIds.length} among ${ids.length} loaded`,
+        ));
         return null;
       }
       throw markDeliveryStage(
-        new Error(`cannot choose a Codex target: expected exactly one loaded thread, found ${ids.length}`),
+        new Error(
+          `cannot choose a Codex target: expected exactly one resumable thread, found ${resumableIds.length} among ${ids.length} loaded`,
+        ),
         'thread_selection',
       );
     }
-    // Latch only after the resume succeeds. Assigning first strands the adapter
-    // on a thread that never becomes resumable — the clean-launch race where the
-    // TUI thread exists but has no persisted rollout yet.
-    const candidate = ids[0];
-    await this.#safeAppRequest(
-      'thread/resume',
-      { threadId: candidate },
-      'thread_resume',
-    );
+    // The successful probe already resumed the target. Latch only now; assigning
+    // first strands the adapter on the rollout-less clean-launch candidate.
+    const candidate = resumableIds[0];
     this.targetThreadId = candidate;
     return candidate;
   }

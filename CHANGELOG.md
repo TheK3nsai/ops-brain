@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex discovery no longer mistakes a transient in-memory thread for target
+  ambiguity.** `thread/loaded/list` is process-wide, and Codex CLI 0.150.0 was
+  observed returning two loaded IDs on a clean TUI launch while only one had a
+  persisted rollout. The adapter now probes loaded IDs with `thread/resume`,
+  selects only when exactly one resumable candidate exists, and
+  still stays offline if more than one viable target remains. Expected
+  no-rollout JSON-RPC rejections no longer trigger a pointless App Server
+  reconnect. The fleet runbook also pins acceptance to measured Codex 0.149.x
+  until 0.150.0 passes the complete attended gate, and makes the separate MCP
+  bearer preflight and background adapter-log receipt explicit.
+
 ## [5.2.0] — 2026-08-26
 
 ### Fixed

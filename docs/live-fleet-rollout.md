@@ -12,8 +12,9 @@ is present only while its foreground Claude or Codex session is running.
 **"Attended" is a mechanism, not a preference.** Both clients fail closed
 without a real terminal, and they fail late. `codex --remote` exits with
 `Error: stdin is not a terminal`, after which the Codex adapter blocks on
-`waiting for exactly one loaded Codex thread; found 0` — registration is gated
-on a genuinely loaded Codex thread, not on the adapter process being up. The
+`waiting for exactly one resumable Codex thread; found 0 among 0 loaded` —
+registration is gated on a genuinely resumable Codex thread, not on the adapter
+process being up. The
 confusing part is that everything upstream succeeds first: the App Server
 starts and `readyz` passes, so a headless attempt looks like it is working
 right up to the moment it is not, and the failure reads as a broken adapter
@@ -35,7 +36,14 @@ The server-side binding is the source of peer identity.
 1. Download and verify the versioned client bundle attached to an ops-brain
    release, or use a matching source checkout for development.
 2. Install Node.js 22 or newer, current Claude Code with Channels support, and
-   current Codex CLI with App Server/`--remote` support.
+   Codex CLI **0.149.x** with App Server/`--remote` support. Both 0.149.0 and
+   0.149.1 are measured working with the supported launcher. Do not upgrade an
+   acceptance host to 0.150.0 mid-gate: one Linux host measured two process-wide
+   loaded thread IDs on a clean 0.150.0 launch, only one of which had a persisted
+   rollout. The adapter tolerates that shape, but 0.150.0 remains outside the
+   acceptance pin until the full rendered-delivery gate passes on it. Record
+   `codex --version` with the gate receipt so a client change cannot erase the
+   comparison baseline.
    **Do not verify Channels support with `claude --help`.** The
    `--dangerously-load-development-channels` flag is hidden: it is absent from
    `--help` output while present in the bundle and fully functional. Claude Code
@@ -141,6 +149,17 @@ Launch the foreground sessions:
 ops-brain-claude
 ops-brain-codex
 ```
+
+These launchers hydrate the live adapter from its protected credential file;
+they do not hydrate the separate, regular `ops-brain` MCP server configured in
+Claude or Codex. Before launch, confirm that any bearer environment variable
+named by that ordinary MCP configuration is already present in the launcher's
+process environment. A shell hydration *function* in `.bashrc` is insufficient:
+the launcher is an executable script, so the function is not invoked. Claude
+may still open with that MCP returning 401, but Codex treats a missing variable
+for a required MCP server as a fatal TUI bootstrap failure. Hydrate only the
+attended lane from its protected file; never make the bearer a global export or
+put it in a command argument, transcript, or log.
 
 ### Reading the adapter logs
 
@@ -264,8 +283,10 @@ ops-brain-codex
 
 On a brand-new Codex TUI, submit one ordinary initial prompt before expecting a
 live peer. The adapter deliberately waits—with bounded exponential backoff—until
-exactly one loaded thread has a persisted rollout and can be resumed. App Server
-readiness alone is not peer readiness.
+exactly one process-wide loaded thread has persisted state and can be resumed.
+An additional in-memory thread without a rollout is ignored; multiple persisted
+candidates remain an ambiguity and keep the adapter offline. App Server readiness
+alone is not peer readiness.
 
 Substitute the host's exact identities and labels. `-Mode Status` and
 `-Mode DryRun` are credential-safe. Before either client is spawned, a
@@ -292,6 +313,14 @@ Use a recorder that keeps a real terminal in front of the client:
 ```bash
 script -q -c ops-brain-claude rollout.log
 ```
+
+That receipt captures the foreground client, not background adapter diagnostics.
+For Codex in particular, a healthy App Server and quiet launcher can coexist with
+an offline peer. Run `ops-brain-codex --status` before launch, retain the printed
+`codex-adapter.*.log` location with the receipt, and inspect the new JSONL file
+if the peer does not appear. The decisive thread-selection warning is written
+there and is not included in `script -q -c` output. Apply the same rule to the
+Claude adapter log described above.
 
 `tmux pipe-pane` records the same way, but do not assume tmux is available for
 this: on at least one fleet host the tmux *server* itself dies (`server exited
