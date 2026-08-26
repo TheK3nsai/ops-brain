@@ -14,6 +14,7 @@ EXPECTED_AGENT="${OPS_BRAIN_EXPECTED_AGENT:-}"
 LIVE_URL="${OPS_BRAIN_LIVE_URL:-}"
 LABEL="${OPS_BRAIN_LIVE_LABEL:-}"
 PROFILE_FILE="${OPS_BRAIN_CLAUDE_PROFILE:-}"
+STATE_DIR="${OPS_BRAIN_LIVE_STATE_DIR:-$HOME/.local/state/ops-brain-live}"
 PROFILE_ERROR=''
 CHANNEL_SERVER=ops-brain-live
 unset OPS_BRAIN_AGENT_TOKEN
@@ -34,6 +35,9 @@ Environment:
   OPS_BRAIN_LIVE_LABEL        optional non-sensitive peer label
   OPS_BRAIN_CLAUDE_PROFILE    optional profile path; defaults to the Claude
                               profile reported by ops-brain-client
+  OPS_BRAIN_LIVE_STATE_DIR    adapter log directory; Claude Code discards this
+                              adapter's stderr, so this file is the only record
+                              of registration failures
 
 This launcher's own bearer is never placed in Claude's environment, this
 adapter's MCP entry, or a command argument -- only the protected token-file path
@@ -146,6 +150,7 @@ if [[ $mode == status ]]; then
     printf 'claude:  %s\n' "$(command -v claude || echo '<missing>')"
     printf 'node:    %s\n' "$(command -v node || echo '<missing>')"
     printf 'channel: %s\n' "$(channel_status)"
+    printf 'logs:    %s/claude-adapter.*.log\n' "$STATE_DIR"
     exit 0
 fi
 
@@ -177,8 +182,10 @@ token_check=$(<"$TOKEN_FILE")
 }
 unset token_check
 
+# Only the state directory path is added here; like the token file, it is a
+# path and never a credential value.
 server_definition=$(node -e '
-  const [adapter, url, label, expectedAgent, tokenFile] = process.argv.slice(1);
+  const [adapter, url, label, expectedAgent, tokenFile, stateDir] = process.argv.slice(1);
   process.stdout.write(JSON.stringify({
     command: "node",
     args: [adapter],
@@ -187,9 +194,10 @@ server_definition=$(node -e '
       OPS_BRAIN_LIVE_LABEL: label,
       OPS_BRAIN_EXPECTED_AGENT: expectedAgent,
       OPS_BRAIN_AGENT_TOKEN_FILE: tokenFile,
+      OPS_BRAIN_LIVE_STATE_DIR: stateDir,
     },
   }));
-' "$ADAPTER" "$LIVE_URL" "$LABEL" "$EXPECTED_AGENT" "$TOKEN_FILE")
+' "$ADAPTER" "$LIVE_URL" "$LABEL" "$EXPECTED_AGENT" "$TOKEN_FILE" "$STATE_DIR")
 
 if [[ $mode == dry ]]; then
     echo "would launch: CLAUDE_CONFIG_DIR=<private-overlay> claude [--mcp-config <existing-user-config>] --dangerously-load-development-channels server:$CHANNEL_SERVER $*"
@@ -197,6 +205,20 @@ if [[ $mode == dry ]]; then
 fi
 
 umask 077
+# Created only on a real launch so --dry-run stays free of side effects. A
+# symlinked state directory is refused for the same reason the Codex launcher
+# refuses one: it would redirect adapter output to an attacker-chosen path
+# written under the operator's own credentials.
+if [[ -L $STATE_DIR || (-e $STATE_DIR && ! -d $STATE_DIR) ]]; then
+    echo "state path must be a real directory, not a symlink: $STATE_DIR" >&2
+    exit 2
+fi
+mkdir -p -- "$STATE_DIR"
+if [[ -L $STATE_DIR || ! -d $STATE_DIR ]]; then
+    echo "state directory validation failed: $STATE_DIR" >&2
+    exit 2
+fi
+
 RUNTIME_ROOT="${XDG_RUNTIME_DIR:-/tmp}"
 if [[ -L $RUNTIME_ROOT || ! -d $RUNTIME_ROOT ]]; then
     echo "runtime path must be a real directory: $RUNTIME_ROOT" >&2

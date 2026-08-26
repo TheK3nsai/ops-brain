@@ -8,7 +8,9 @@ import { loadConfig, redactedConfig } from './config.mjs';
 import { handleControlCommand } from './control.mjs';
 
 function log(level, message, fields = {}) {
-  process.stderr.write(`${JSON.stringify({ level, message, ...fields })}\n`);
+  // Timestamped because these logs are the evidence in an attended gate, and
+  // each launch writes a separate file with no other ordering between them.
+  process.stderr.write(`${JSON.stringify({ ts: new Date().toISOString(), level, message, ...fields })}\n`);
 }
 
 function writeControl(value) {
@@ -33,6 +35,13 @@ async function main() {
   bridge.on('reconnecting', ({ delayMs }) => log('info', 'live adapter reconnect scheduled', {
     delay_ms: delayMs,
   }));
+  bridge.on('fatal', (error) => {
+    log('error', error.message, {
+      expected_agent: config.expectedAgent,
+      retryable: false,
+    });
+    process.exitCode = 1;
+  });
   bridge.on('warning', (error) => log('warn', error.message, {
     delivery_stage: error.deliveryStage || undefined,
     cause: error.cause?.message || undefined,

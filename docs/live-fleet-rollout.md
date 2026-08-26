@@ -111,6 +111,13 @@ checkouts install them with `npm ci --ignore-scripts`. The installer links
 never reads or copies credentials. `missing-or-invalid` is a failed
 prerequisite, not a reason to launch.
 
+For a source checkout those commands are symlinks into that checkout, not
+copies. A later branch switch or pull changes what the next invocation runs
+without reinstalling anything. Pin the acceptance run to a clean checkout whose
+tree matches the intended client revision, and do not change that checkout
+between status/dry-run validation and teardown. A release bundle avoids this
+source-tree drift because its extracted files are the installed client root.
+
 Configure one protected profile per client. Profiles contain the credential
 path, URL, exact identity, and non-sensitive label—never the bearer:
 
@@ -134,6 +141,27 @@ Launch the foreground sessions:
 ops-brain-claude
 ops-brain-codex
 ```
+
+### Reading the adapter logs
+
+Both adapters write JSON lines to `OPS_BRAIN_LIVE_STATE_DIR`, default
+`~/.local/state/ops-brain-live/`: `codex-adapter.*.log` and
+`claude-adapter.*.log`. Each launcher's `--status` prints the path.
+
+**On Claude this file is the only signal.** Claude Code spawns the adapter and
+discards its stderr, so a live channel that never binds produces no terminal
+output, and Claude Code's own MCP log records only its transport events —
+`Successfully connected (transport: stdio)` refers to the stdio MCP transport,
+**not** the `/live` WebSocket. An operator reading that line alone will
+conclude the lane is working when it is not. Check the adapter log for
+`live adapter connected` before believing a Claude session is bound, and treat
+a `"retryable": false` record as terminal: the adapter has stopped and will not
+recover without a configuration change.
+
+Each launch writes a new file and nothing prunes them. They are small, but the
+directory grows for the life of the host; delete files older than a retention
+window you choose as part of ordinary host maintenance. Records carry a `ts`
+field because separate randomly named files have no other ordering.
 
 ### Claude Channel resolver isolation
 
@@ -293,6 +321,13 @@ Do not call a host live until all applicable checks pass:
    refuses a live peer messaging itself. Step 6 performs the rendered-delivery
    control once both distinct identities are connected.
 4. Stop Claude and confirm the peer disappears. Repeat for Codex.
+
+   **Launching both clients at once skips steps 3 and 4, and nothing later
+   recovers them** — step 9 tears both down together, so neither adapter is
+   ever observed registering or deregistering alone. If both are already
+   running, make teardown sequential (exit one, poll, exit the other) to
+   recover at least the per-adapter deregistration evidence, and record the
+   rest as a deviation rather than a pass.
 5. Start both, then confirm `list_live_peers` reports **exactly one** peer per
    identity before sending anything. `send_live_message` requires exactly one
    connected local adapter per bound agent to attribute source provenance; a
@@ -311,12 +346,25 @@ Do not call a host live until all applicable checks pass:
      `from_agent` and confirm the delivered envelope still renders the sender's
      server-bound identity.
    - **7b, credential claim:** cross exactly one field at a time: keep the
-     launcher's own credential file but pass the sibling `-AgentName`, then
-     repeat in the other direction. Confirm each mismatch is rejected before
-     reading or transmitting the bearer. Passing the sibling name *and* sibling
+     launcher's own credential file but pass the sibling agent name, then
+     repeat in the other direction. Passing the sibling name *and* sibling
      credential together is a valid matching pair and is not a negative
      control. Use only identity metadata in the receipt; never print a token or
      send an actual credential as test content.
+
+     **The enforcement point is platform-dependent, and the two are not
+     equivalent.** On Windows the DPAPI `PSCredential` carries a username, so a
+     validation-only helper compares it to `-AgentName` and rejects before the
+     bearer is decrypted. On Linux the token file is an opaque bearer with no
+     embedded identity, so no local pre-check is possible and
+     `ops-brain-client configure` will accept a crossed profile without
+     complaint. Linux enforcement is fail-closed at registration: the adapter
+     authenticates to the configured endpoint, the server returns the token's
+     bound slug, and the adapter refuses it and stops. Confirm no peer appears
+     in either direction, and read the adapter log for
+     `bound identity does not match`. Do not record the Linux result as
+     "rejected before the bearer was transmitted" — it is not, and no
+     configuration makes it so.
 8. Leave both sessions idle for at least three minutes through the production
    proxy, then repeat one marker exchange.
 9. Exit both clients and confirm their peers disappear promptly and no owned

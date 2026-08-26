@@ -17,6 +17,20 @@ import {
 const MAX_PENDING_REQUESTS = 16;
 const SEND_REQUEST_TIMEOUT_MS = 75_000;
 
+// Marks a failure that reconnecting cannot fix. The bridge's retry loop treats
+// everything else as transient, which is correct for transport faults and
+// wrong for configuration errors: a token bound to another agent will be bound
+// to that same agent on every subsequent attempt.
+export function isNonRetryable(error) {
+  return error?.opsBrainRetryable === false;
+}
+
+function nonRetryable(message) {
+  const error = new Error(message);
+  error.opsBrainRetryable = false;
+  return error;
+}
+
 export class LiveClient extends EventEmitter {
   constructor(config) {
     super();
@@ -24,6 +38,7 @@ export class LiveClient extends EventEmitter {
     this.socket = null;
     this.peer = null;
     this.protocolFailed = false;
+    this.fatalError = null;
     this.pending = new Map();
     this.registerTimer = null;
   }
@@ -65,7 +80,10 @@ export class LiveClient extends EventEmitter {
 
     const registration = new Promise((resolve, reject) => {
       const onRegistered = () => { cleanup(); resolve(); };
-      const onClose = () => { cleanup(); reject(new Error('live connection closed before registration')); };
+      const onClose = () => {
+        cleanup();
+        reject(this.fatalError ?? new Error('live connection closed before registration'));
+      };
       const cleanup = () => {
         clearTimeout(this.registerTimer);
         this.off('registered', onRegistered);
@@ -75,7 +93,10 @@ export class LiveClient extends EventEmitter {
       this.once('close', onClose);
       this.registerTimer = setTimeout(() => {
         cleanup();
-        reject(new Error('ops-brain live registration timed out'));
+        // If a fatal was already recorded, the timeout is a consequence of it,
+        // not an independent transient fault; reporting the generic timeout
+        // would downgrade a terminal error back into a retryable one.
+        reject(this.fatalError ?? new Error('ops-brain live registration timed out'));
         socket.close(1008, 'registration timeout');
       }, this.config.requestTimeoutMs);
     });
@@ -112,7 +133,9 @@ export class LiveClient extends EventEmitter {
         if (this.peer) throw new Error('ops-brain registered this connection more than once');
         const candidate = validateRegisteredFrame(frame, this.config.label);
         if (candidate.agent_name.toLowerCase() !== this.config.expectedAgent.toLowerCase()) {
-          throw new Error('ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT');
+          throw nonRetryable(
+            `ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT (expected ${this.config.expectedAgent}); this token is bound to a different agent, so reconnecting cannot succeed`,
+          );
         }
         this.peer = candidate;
       } catch (error) {
@@ -257,6 +280,10 @@ export class LiveClient extends EventEmitter {
   #protocolFailure(error) {
     if (this.protocolFailed) return;
     this.protocolFailed = true;
+    // Closing the socket makes the registration promise reject with a generic
+    // "closed before registration", which would otherwise discard the specific
+    // reason and leave the bridge retrying a permanent fault.
+    if (isNonRetryable(error)) this.fatalError = error;
     this.peer = null;
     this.emit('protocolError', error);
     if (this.socket?.readyState === WebSocket.OPEN) {

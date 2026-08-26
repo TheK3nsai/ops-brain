@@ -107,11 +107,56 @@ test('fails closed when the token is bound to an unexpected identity', async t =
     { WebSocketImpl: FakeWebSocket, logger: message => diagnostics.push(message) },
   )
   t.after(() => client.stop())
-  const disconnected = once(client, 'disconnected')
+  const fatal = once(client, 'fatal')
   client.start()
-  await disconnected
+  const [error] = await fatal
   assert.equal(client.ready, false)
-  assert.deepEqual(diagnostics, ['ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT'])
+  assert.match(error.message, /bound identity does not match/)
+  assert.match(error.message, /CC-Cloud/)
+  assert.equal(client.fatal, error)
+  assert.equal(diagnostics.length, 1)
+  assert.match(diagnostics[0], /bound identity does not match/)
+})
+
+test('does not reconnect after an identity mismatch', async t => {
+  FakeWebSocket.instances.length = 0
+  const client = new LiveClient(
+    {
+      url: 'ws://127.0.0.1:3000/live',
+      token: 'wrong-sibling-token',
+      label: 'claude-test',
+      expectedAgent: 'CC-Cloud',
+    },
+    { WebSocketImpl: FakeWebSocket, logger: () => {} },
+  )
+  t.after(() => client.stop())
+  client.start()
+  await once(client, 'fatal')
+  // The shortest reconnect backoff is 500ms; a retry would open a second
+  // socket well inside this window. Retrying would re-send the bearer on a
+  // configuration error that cannot resolve itself.
+  await new Promise(resolve => setTimeout(resolve, 900))
+  assert.equal(FakeWebSocket.instances.length, 1)
+})
+
+test('reports the fatal reason instead of a generic offline error', async t => {
+  FakeWebSocket.instances.length = 0
+  const client = new LiveClient(
+    {
+      url: 'ws://127.0.0.1:3000/live',
+      token: 'wrong-sibling-token',
+      label: 'claude-test',
+      expectedAgent: 'CC-Cloud',
+    },
+    { WebSocketImpl: FakeWebSocket, logger: () => {} },
+  )
+  t.after(() => client.stop())
+  client.start()
+  await once(client, 'fatal')
+  // Claude Code discards this adapter's stderr, so the tool error is the
+  // operator's only in-session signal; "offline" would misdirect them.
+  await assert.rejects(() => client.listPeers(), /bound identity does not match/)
+  await assert.rejects(() => client.waitUntilReady(50), /bound identity does not match/)
 })
 
 class FakeWebSocket extends EventEmitter {

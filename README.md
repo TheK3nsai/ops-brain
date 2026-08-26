@@ -57,7 +57,9 @@ Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_
   an identity-bound credential through a protected local pointer and expose
   redacted `--status`/`--dry-run` modes. The old command names ending in
   `-live` remain compatibility aliases. PowerShell/DPAPI launchers cover
-  Windows hosts. Installation, identity mapping, acceptance, and rollback are documented in
+  Windows hosts. The ordinary `claude` and `codex` commands still start normal
+  sessions with their configured main MCP; only the `ops-brain-*` launchers add
+  the foreground live adapter. Installation, identity mapping, acceptance, and rollback are documented in
   [`docs/live-fleet-rollout.md`](docs/live-fleet-rollout.md).
 
 Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context.

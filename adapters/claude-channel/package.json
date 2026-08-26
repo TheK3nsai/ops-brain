@@ -11,7 +11,7 @@
     "ops-brain-claude-channel": "./src/main.js"
   },
   "scripts": {
-    "check": "node --check src/main.js && node --check src/channel-server.js && node --check src/config.js && node --check src/inbound-bridge.js && node --check src/lifecycle.js && node --check src/live-client.js",
+    "check": "node --check src/main.js && node --check src/channel-server.js && node --check src/config.js && node --check src/inbound-bridge.js && node --check src/lifecycle.js && node --check src/live-client.js && node --check src/logger.js",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage"
   },
