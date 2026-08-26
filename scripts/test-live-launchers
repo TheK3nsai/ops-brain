@@ -87,6 +87,7 @@ PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_AGENT_TOKEN='fixture-must-not-reach-cl
     OPS_BRAIN_TEST_CAPTURE="$CLAUDE_CAPTURE" \
     CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
     XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
+    OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/claude-state" \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
     OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
     "$BIN_DIR/ops-brain-claude-live"
@@ -96,6 +97,11 @@ assert_contains "$(<"$CLAUDE_CAPTURE")" '"ops-brain-live"'
 assert_contains "$(<"$CLAUDE_CAPTURE")" '"OPS_BRAIN_AGENT_TOKEN_FILE"'
 [[ $(<"$CLAUDE_CAPTURE") != *'fixture-token-not-a-secret'* ]] || fail 'bearer leaked into Claude config overlay'
 [[ $(<"$CLAUDE_CAPTURE") != *'must-not-be-copied'* ]] || fail 'existing MCP credentials were copied into the overlay'
+# The overlay helper validates the server definition env against a closed
+# allowlist. A key the launcher sends but the helper rejects fails every real
+# launch while --dry-run, which exits before the helper runs, stays green.
+assert_contains "$(<"$CLAUDE_CAPTURE")" '"OPS_BRAIN_LIVE_STATE_DIR"'
+[[ -d "$TEST_DIR/claude-state" ]] || fail 'Claude launcher did not create its adapter log directory'
 assert_contains "$(<"$CLAUDE_CAPTURE.args")" '--mcp-config'
 assert_contains "$(<"$CLAUDE_CAPTURE.args")" "$TEST_DIR/claude-launch-base/.claude.json"
 
@@ -103,6 +109,7 @@ assert_contains "$(<"$CLAUDE_CAPTURE.args")" "$TEST_DIR/claude-launch-base/.clau
 # only credential pointers, while the real MCP document is loaded in place.
 PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$TEST_DIR/fallback-overlay.json" \
     CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
+    OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/claude-state" \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
     OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
     env -u XDG_RUNTIME_DIR "$BIN_DIR/ops-brain-claude-live"
@@ -119,6 +126,29 @@ if PATH="$TEST_DIR/fake-bin:$PATH" XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
     fail 'Claude launcher accepted a symlinked credential file'
 fi
 assert_contains "$(<"$TEST_DIR/symlink-token.out")" 'must be a regular file, not a symlink'
+
+# The adapter log directory is the only signal a Claude live channel failed to
+# bind, so its path must be discoverable without launching.
+claude_status=$(PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/status-state" \
+    "$BIN_DIR/ops-brain-claude-live" --status)
+assert_contains "$claude_status" "$TEST_DIR/status-state/claude-adapter.*.log"
+[[ ! -e "$TEST_DIR/status-state" ]] || fail '--status created the state directory; status must have no side effects'
+
+# A symlinked state directory would redirect adapter output to an
+# attacker-chosen path written under the operator's own credentials.
+mkdir -m 700 -- "$TEST_DIR/state-target"
+ln -s -- "$TEST_DIR/state-target" "$TEST_DIR/state-symlink"
+if PATH="$TEST_DIR/fake-bin:$PATH" XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
+    CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
+    OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state-symlink" \
+    "$BIN_DIR/ops-brain-claude-live" >"$TEST_DIR/symlink-state.out" 2>&1; then
+    fail 'Claude launcher accepted a symlinked state directory'
+fi
+assert_contains "$(<"$TEST_DIR/symlink-state.out")" 'must be a real directory, not a symlink'
 
 if XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" doctor >"$TEST_DIR/unconfigured-doctor.out" 2>&1; then
     fail 'doctor accepted a completely unconfigured client installation'

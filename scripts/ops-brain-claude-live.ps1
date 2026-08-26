@@ -15,12 +15,35 @@ param(
     [string]$AgentName,
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
     [string]$Label = $env:OPS_BRAIN_LIVE_LABEL,
+    [string]$StateDirectory = $(if ($env:OPS_BRAIN_LIVE_STATE_DIR) { $env:OPS_BRAIN_LIVE_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'ops-brain-live' }),
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ClaudeArgs
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Get-NormalizedPath {
+    param([Parameter(Mandatory)][string]$Path)
+    [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+}
+
+function Assert-RealDirectory {
+    param([Parameter(Mandatory)][string]$Path)
+    $fullPath = Get-NormalizedPath $Path
+    $rootPath = [IO.Path]::GetPathRoot($fullPath)
+    if ($fullPath -eq $rootPath) { throw "Refusing unsafe state directory: $fullPath" }
+    if (Test-Path -LiteralPath $fullPath) {
+        $item = Get-Item -LiteralPath $fullPath -Force
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "State path must be a real directory, not a reparse point: $fullPath"
+        }
+    }
+    else {
+        [IO.Directory]::CreateDirectory($fullPath) | Out-Null
+    }
+    $fullPath
+}
 
 function Get-ApplicationPath {
     param([Parameter(Mandatory)][string]$Name)
@@ -118,6 +141,7 @@ if ($Mode -eq 'Status') {
     "claude: $(Get-ApplicationPath 'claude')"
     "node: $(Get-ApplicationPath 'node')"
     "channel: $(if (Test-Path -LiteralPath $OverlayHelper -PathType Leaf) { 'isolated per-launch user scope (ready)' } else { 'not ready (overlay helper missing)' })"
+    "logs: $(Join-Path $StateDirectory 'claude-adapter.*.log')"
     exit 0
 }
 
@@ -137,6 +161,12 @@ Assert-AgentCredentialIdentity $pwshCommand $TokenHelper $AgentCredentialFile $A
 $claudeCommand = Get-RequiredApplication 'claude'
 $nodeCommand = Get-RequiredApplication 'node'
 
+# Created only on a real launch, so Status stays free of side effects. A
+# reparse point is refused for the same reason the Codex launcher refuses one:
+# it would redirect adapter output to an attacker-chosen path written under the
+# operator's own credentials.
+$StateDirectory = Assert-RealDirectory $StateDirectory
+
 $serverDefinition = @{
     command = $pwshCommand.Source
     args = @(
@@ -146,7 +176,8 @@ $serverDefinition = @{
         '-LiveUrl', $LiveUrl.AbsoluteUri,
         '-AgentCredentialFile', $AgentCredentialFile,
         '-AgentName', $AgentName,
-        '-Label', $Label
+        '-Label', $Label,
+        '-StateDirectory', $StateDirectory
     )
 } | ConvertTo-Json -Compress -Depth 6
 

@@ -13,6 +13,7 @@ param(
     [string]$AgentName,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
     [string]$Label,
+    [string]$StateDirectory,
     [uri]$AppServerUrl
 )
 
@@ -83,6 +84,9 @@ try {
     Remove-Item Env:OPS_BRAIN_AGENT_TOKEN_FILE -ErrorAction SilentlyContinue
     if ($Client -eq 'claude') {
         $env:OPS_BRAIN_LIVE_LABEL = $Label
+        # Claude Code owns this adapter's stdio and discards its stderr, so the
+        # adapter writes its own log file. Only the directory path is passed.
+        if ($StateDirectory) { $env:OPS_BRAIN_LIVE_STATE_DIR = $StateDirectory }
     }
     else {
         $env:OPS_BRAIN_CODEX_LABEL = $Label

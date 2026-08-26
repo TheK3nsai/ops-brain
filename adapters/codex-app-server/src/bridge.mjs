@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AppServerClient, RpcError } from './app-server-client.mjs';
-import { LiveClient } from './live-client.mjs';
+import { isNonRetryable, LiveClient } from './live-client.mjs';
 import { assertUuid, validateIncomingMessage } from './protocol.mjs';
 
 class BoundedSerialQueue {
@@ -123,7 +123,12 @@ export class CodexLiveBridge extends EventEmitter {
       const generation = ++this.liveGeneration;
       this.live = live;
       live.on('message', (message) => this.#queueDelivery(live, generation, message));
-      live.on('protocolError', (error) => this.emit('warning', error));
+      // A terminal fault is reported once, through 'fatal', when connect()
+      // rejects; emitting it here too would log the same cause as a retryable
+      // warning immediately before the error that says it is not.
+      live.on('protocolError', (error) => {
+        if (!isNonRetryable(error)) this.emit('warning', error);
+      });
       live.on('serverError', (error) => this.emit('warning', new Error(`${error.code}: ${error.message}`)));
       try {
         const peer = await live.connect();
@@ -137,8 +142,21 @@ export class CodexLiveBridge extends EventEmitter {
           willReconnect: !this.stopped,
         });
       } catch (error) {
-        this.emit('warning', error);
         await live.close().catch(() => {});
+        if (isNonRetryable(error)) {
+          // Retrying a bound-identity mismatch re-sends the bearer on every
+          // attempt and buries the cause under reconnect noise. Stop and let
+          // the operator see one clear, terminal error.
+          this.emit('fatal', error);
+          // Every other exit from this loop happens after stop() has already
+          // run. This one does not, so it must tear down explicitly: the App
+          // Server client holds a spawned child or an open socket, neither
+          // unref()'d, and leaving it open parks the process forever after it
+          // has already reported a terminal failure.
+          await this.stop();
+          break;
+        }
+        this.emit('warning', error);
       }
       if (this.stopped) break;
       const jitter = Math.floor(Math.random() * Math.max(1, backoff / 4));

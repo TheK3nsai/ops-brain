@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **The Claude adapter now records why the live channel failed to bind.** Claude
+  Code spawns the adapter as an MCP server and discards its stderr, so a channel
+  that never registered produced no terminal output and no log — while Claude
+  Code's own MCP log showed `Successfully connected (transport: stdio)`, which
+  describes the stdio transport rather than the `/live` WebSocket and reads as
+  success. The adapter now writes JSON lines to `claude-adapter.*.log` under
+  `OPS_BRAIN_LIVE_STATE_DIR`, at parity with the Codex adapter, covering startup,
+  registration, disconnects, and configuration failures that abort before the
+  first connection. The Claude launcher creates and validates that directory on
+  launch only, and reports the path in `--status`.
+- **A bound-identity mismatch fails terminally instead of reconnecting forever.**
+  Both adapters compared the server-returned slug and closed the socket, whose
+  generic `closed before registration` rejection discarded the real reason and
+  left the retry loop treating a permanent configuration fault as transient —
+  re-sending the bearer on every attempt. The specific error now survives the
+  close, is marked non-retryable, stops the Codex bridge loop, and is reported
+  through the Claude Channel's own tool errors so the operator sees the cause
+  in-session rather than a generic "peer is offline". The Codex bridge also
+  closes its App Server client on that path, so the adapter actually exits with
+  a non-zero status instead of idling with a leaked connection.
+- **Adapter log records carry a timestamp.** Each launch writes a separate,
+  randomly named file, so records had no ordering between them.
+
 - **Unacknowledged live sends no longer report success.** `host_accepted` is
   now the only successful delivery receipt. Disconnects and ACK timeouts return
   the distinct `delivery_unconfirmed` error, and both packaged adapters convert

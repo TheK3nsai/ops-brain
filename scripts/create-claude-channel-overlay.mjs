@@ -32,6 +32,7 @@ function validateServerDefinition(value) {
     'OPS_BRAIN_EXPECTED_AGENT',
     'OPS_BRAIN_AGENT_TOKEN_FILE',
     'OPS_BRAIN_AGENT_TOKEN_HELPER_JSON',
+    'OPS_BRAIN_LIVE_STATE_DIR',
   ])
   const unsupported = Object.keys(value.env ?? {}).find(name => !allowedEnvironment.has(name))
   if (unsupported) {

@@ -9,7 +9,7 @@ import test from 'node:test';
 import { WebSocketServer } from 'ws';
 
 import { CodexLiveBridge, wrapUntrustedMessage } from '../src/bridge.mjs';
-import { LiveClient } from '../src/live-client.mjs';
+import { isNonRetryable, LiveClient } from '../src/live-client.mjs';
 import { AppServerClient, RpcError, StdioRpcClient } from '../src/app-server-client.mjs';
 import { loadConfig, redactedConfig } from '../src/config.mjs';
 import { handleControlCommand } from '../src/control.mjs';
@@ -951,7 +951,10 @@ test('live registration fails closed on an unexpected server-bound identity', as
   let delivered = false;
   client.on('message', () => { delivered = true; });
   try {
-    const connection = assert.rejects(client.connect(), /closed before registration/);
+    // The specific reason must survive the socket close that follows it;
+    // otherwise the generic "closed before registration" replaces it and the
+    // bridge retries a fault that can never clear.
+    const connection = assert.rejects(client.connect(), /bound identity does not match/);
     await waitForFrame(live.frames, (frame) => frame.type === 'register');
     live.deliver();
     assert.equal(client.peer, null);
@@ -959,6 +962,7 @@ test('live registration fails closed on an unexpected server-bound identity', as
     await connection;
     assert.equal(client.peer, null);
     assert.equal(delivered, false);
+    assert.equal(isNonRetryable(client.fatalError), true);
   } finally {
     await client.close();
     await closeServer(live.server);
@@ -1106,4 +1110,57 @@ test('unresumable-thread warnings carry the underlying cause and delivery stage'
   } finally {
     await harness.teardown(run);
   }
+});
+
+test('a bound-identity mismatch stops the retry loop instead of reconnecting', async () => {
+  const appServer = new EventEmitter();
+  let appServerClosed = false;
+  appServer.connect = async () => {};
+  appServer.close = async () => { appServerClosed = true; };
+  appServer.request = async (method) => {
+    if (method === 'thread/loaded/list') return { data: [randomUUID()] };
+    if (method === 'thread/resume') return {};
+    throw new Error(`unexpected method ${method}`);
+  };
+
+  let connectAttempts = 0;
+  const liveFactory = () => {
+    const live = new EventEmitter();
+    live.connect = async () => {
+      connectAttempts += 1;
+      const error = new Error('ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT');
+      error.opsBrainRetryable = false;
+      throw error;
+    };
+    live.close = async () => {};
+    return live;
+  };
+
+  const bridge = new CodexLiveBridge({
+    deliveryQueueCapacity: 1,
+    reconnectMinMs: 10,
+    reconnectMaxMs: 20,
+  }, { appServer, liveFactory });
+
+  const warnings = [];
+  const fatals = [];
+  bridge.on('warning', (error) => warnings.push(error));
+  bridge.on('fatal', (error) => fatals.push(error));
+
+  // start() resolves on its own here: the fatal path breaks the run loop
+  // rather than parking on a reconnect timer.
+  await bridge.start();
+
+  assert.equal(connectAttempts, 1);
+  assert.equal(fatals.length, 1);
+  assert.match(fatals[0].message, /bound identity does not match/);
+  // A permanent fault must not be reported as a retryable warning.
+  assert.deepEqual(warnings, []);
+  // Every other exit from the run loop happens after stop(); this one must
+  // tear down on its own. The App Server client holds a spawned child or an
+  // open socket, so skipping this leaves the process alive forever after it
+  // has already logged a terminal failure and set a non-zero exit code.
+  assert.equal(appServerClosed, true);
+  assert.equal(bridge.stopped, true);
+  await bridge.stop();
 });

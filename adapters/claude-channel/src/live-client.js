@@ -22,6 +22,7 @@ export class LiveClient extends EventEmitter {
   #reconnectTimer = null
   #registerTimer = null
   #attempt = 0
+  #fatal = null
 
   constructor(config, { WebSocketImpl = WebSocket, logger = defaultLogger } = {}) {
     super()
@@ -36,6 +37,10 @@ export class LiveClient extends EventEmitter {
 
   get ready() {
     return this.#socket?.readyState === this.#WebSocket.OPEN && this.#peer !== null
+  }
+
+  get fatal() {
+    return this.#fatal
   }
 
   start() {
@@ -58,10 +63,15 @@ export class LiveClient extends EventEmitter {
 
   async waitUntilReady(timeoutMs = 5_000) {
     if (this.ready) return this.#peer
+    if (this.#fatal) throw this.#fatal
     return new Promise((resolve, reject) => {
       const onReady = peer => {
         cleanup()
         resolve(peer)
+      }
+      const onFatal = error => {
+        cleanup()
+        reject(error)
       }
       const timer = setTimeout(() => {
         cleanup()
@@ -70,8 +80,10 @@ export class LiveClient extends EventEmitter {
       const cleanup = () => {
         clearTimeout(timer)
         this.off('ready', onReady)
+        this.off('fatal', onFatal)
       }
       this.on('ready', onReady)
+      this.on('fatal', onFatal)
     })
   }
 
@@ -141,8 +153,21 @@ export class LiveClient extends EventEmitter {
     })
   }
 
+  #failFatally(message, closeCode, closeReason) {
+    if (this.#fatal) return
+    this.#fatal = new Error(message)
+    this.#logger(message)
+    clearTimeout(this.#registerTimer)
+    this.#registerTimer = null
+    this.#rejectPending(message)
+    // Closed before the event so a throwing listener cannot leave the socket
+    // open on a connection we have already decided to abandon.
+    this.#socket?.close(closeCode, closeReason)
+    this.emit('fatal', this.#fatal)
+  }
+
   #scheduleReconnect() {
-    if (this.#stopped || this.#reconnectTimer) return
+    if (this.#stopped || this.#fatal || this.#reconnectTimer) return
     const base = Math.min(RECONNECT_MIN_MS * 2 ** this.#attempt, RECONNECT_MAX_MS)
     const delay = Math.round(base * (0.8 + Math.random() * 0.4))
     this.#attempt += 1
@@ -168,8 +193,15 @@ export class LiveClient extends EventEmitter {
         return
       }
       if (frame.peer.agent_name.toLowerCase() !== this.#config.expectedAgent.toLowerCase()) {
-        this.#logger('ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT')
-        this.#socket?.close(1008, 'unexpected bound identity')
+        // A bound identity mismatch is a configuration error, not a transient
+        // fault: the token and the expected agent cannot start agreeing on
+        // their own. Retrying re-sends the bearer on every attempt and buries
+        // the real cause under reconnect noise, so fail terminally instead.
+        this.#failFatally(
+          `ops-brain bound identity does not match OPS_BRAIN_EXPECTED_AGENT (expected ${this.#config.expectedAgent}); this token is bound to a different agent, so the live channel will stay disconnected until the profile is corrected`,
+          1008,
+          'unexpected bound identity',
+        )
         return
       }
       clearTimeout(this.#registerTimer)
@@ -206,8 +238,12 @@ export class LiveClient extends EventEmitter {
 
   #request(type, fields) {
     if (!this.ready) {
+      // A fatal misconfiguration is reported verbatim. Claude Code swallows
+      // this adapter's stderr, so a tool error is the operator's only
+      // in-session signal, and "offline" would send them to look at the
+      // network for a problem that is in their profile.
       return Promise.reject(
-        new Error('ops-brain live peer is offline; use a handoff for durable delivery'),
+        this.#fatal ?? new Error('ops-brain live peer is offline; use a handoff for durable delivery'),
       )
     }
     if (this.#pending.size >= MAX_PENDING_REQUESTS) {
