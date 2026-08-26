@@ -1144,14 +1144,20 @@ test('a bound-identity mismatch stops the retry loop instead of reconnecting', a
 
   const warnings = [];
   const fatals = [];
+  const reconnects = [];
   bridge.on('warning', (error) => warnings.push(error));
   bridge.on('fatal', (error) => fatals.push(error));
+  bridge.on('reconnecting', (event) => reconnects.push(event));
 
   // start() resolves on its own here: the fatal path breaks the run loop
   // rather than parking on a reconnect timer.
   await bridge.start();
 
   assert.equal(connectAttempts, 1);
+  // No reconnect may even be *scheduled*: a single connect attempt would also
+  // hold if the loop had parked on a pending backoff timer, so assert the
+  // event directly rather than inferring it from the attempt count.
+  assert.deepEqual(reconnects, []);
   assert.equal(fatals.length, 1);
   assert.match(fatals[0].message, /bound identity does not match/);
   // A permanent fault must not be reported as a retryable warning.
