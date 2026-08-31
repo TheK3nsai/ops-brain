@@ -51,6 +51,25 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging:
+      # Auth history must outlive the container. The default json-file log is
+      # owned by the container and destroyed on recreate, so every
+      # `docker compose up -d --build` silently discards the entire auth
+      # history — and a deploy is often the response TO an auth incident, which
+      # made the 2026-08-10 401 review impossible rather than merely awkward.
+      # journald puts the stream under the host journal (capped 500M / 1 month),
+      # where it survives recreate and is queryable by tag.
+      #
+      # Verified on kensai-cloud 2026-08-31 against a throwaway container before
+      # this was applied to prod: `docker logs`, including the `--tail N
+      # --since Nm` forms the deploy skill and kuma-watchdog use, behaves
+      # identically; and `journalctl -t ops-brain` still returns the stream
+      # after the container is removed. `docker logs` remains scoped to the
+      # CURRENT container — the added retention is on the journalctl side, so
+      # reach for that when reviewing anything from before the last deploy.
+      driver: journald
+      options:
+        tag: ops-brain
     labels:
       # Locally-built image (no registry) — exclude from diun's watch-by-default
       # so it stops probing a non-existent repo and logging daily "access denied".
