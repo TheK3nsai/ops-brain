@@ -126,6 +126,15 @@ tree matches the intended client revision, and do not change that checkout
 between status/dry-run validation and teardown. A release bundle avoids this
 source-tree drift because its extracted files are the installed client root.
 
+Keep the **client revision** separate from the production server revision. A
+rollout SHA in a handoff is a point-in-time instruction, not an evergreen alias
+for whichever commit is deployed when the delayed run finally starts. If a
+client release or blocker fix landed after the handoff was filed, resolve the
+intended client revision on that thread before installing; do not guess whether
+an old rollout SHA, a local rescue commit, or the current server checkout wins.
+Prefer the newest explicitly approved release bundle, then record both client
+and server revisions in the gate receipt.
+
 Configure one protected profile per client. Profiles contain the credential
 path, URL, exact identity, and non-sensitive label—never the bearer:
 
