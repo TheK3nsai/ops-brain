@@ -60,10 +60,13 @@ export OPS_BRAIN_CODEX_LABEL=codex-stealth-1
 npm start
 ```
 
-When exactly one process-wide loaded thread can be resumed, the adapter selects
-it. It ignores additional loaded IDs that `thread/resume` confirms have no
-persisted rollout, but if multiple resumable threads are loaded, set
-`OPS_BRAIN_CODEX_THREAD_ID`; the adapter never guesses between viable targets.
+When exactly one process-wide loaded thread resumes successfully, the adapter
+selects it. Discovery currently excludes a loaded ID after any `thread/resume`
+RPC rejection, not only the expected no-rollout rejection. This handles the
+extra in-memory ID observed on clean launches, but an unrelated rejection on a
+real rollout can make another thread appear to be the sole viable target. On a
+shared or multi-thread App Server, set `OPS_BRAIN_CODEX_THREAD_ID`; if multiple
+threads resume successfully, the adapter never guesses between them.
 It can also spawn `codex app-server` over stdio when
 `OPS_BRAIN_CODEX_APP_SERVER_URL` is unset, but then a thread ID must identify a
 resumable thread if no thread is already loaded.
