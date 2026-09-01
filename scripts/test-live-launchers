@@ -238,19 +238,38 @@ fi
 assert_contains "$(<"$TEST_DIR/ambiguous-profile.out")" '--profile requires CLIENT with doctor'
 
 mkdir -m 700 -- "$TEST_DIR/claude-base" "$TEST_DIR/overlay-unit"
-printf '%s\n' '{"theme":"dark","mcpServers":{"existing":{"command":"/bin/true","env":{"EXISTING_API_KEY":"carried-secret-value"}}}}' >"$TEST_DIR/claude-base/.claude.json"
+printf '%s\n' '{"theme":"dark","hasCompletedOnboarding":true,"oauthAccount":{"emailAddress":"account-metadata-must-stay-private@example.test"},"mcpServers":{"existing":{"command":"/bin/true","env":{"EXISTING_API_KEY":"carried-secret-value"}}}}' >"$TEST_DIR/claude-base/.claude.json"
 printf '%s\n' 'existing history' >"$TEST_DIR/claude-base/history.jsonl"
 server_json='{"command":"node","args":["adapter.js"],"env":{"OPS_BRAIN_AGENT_TOKEN_FILE":"/protected/token"}}'
 CLAUDE_CONFIG_DIR="$TEST_DIR/claude-base" node "$SCRIPT_DIR/create-claude-channel-overlay.mjs" \
     "$TEST_DIR/overlay-unit" ops-brain-live "$server_json"
 overlay_json=$(<"$TEST_DIR/overlay-unit/.claude.json")
 assert_contains "$overlay_json" '"ops-brain-live"'
+assert_contains "$overlay_json" '"theme": "dark"'
+assert_contains "$overlay_json" '"hasCompletedOnboarding": true'
 [[ $(<"$TEST_DIR/claude-base/.claude.json") != *'ops-brain-live'* ]] || fail 'overlay helper mutated the real Claude config'
 [[ $overlay_json != *'carried-secret-value'* ]] || fail 'overlay helper copied an existing MCP credential'
+[[ $overlay_json != *'account-metadata-must-stay-private@example.test'* ]] || fail 'overlay helper copied existing account metadata'
 [[ $overlay_json != *'"existing"'* ]] || fail 'overlay helper copied an existing MCP server definition'
 [[ -L $TEST_DIR/overlay-unit/history.jsonl ]] || fail 'ordinary Claude state file was not mirrored into the overlay'
 printf '%s\n' 'new history' >>"$TEST_DIR/overlay-unit/history.jsonl"
 assert_contains "$(<"$TEST_DIR/claude-base/history.jsonl")" 'new history'
+
+mkdir -m 700 -- "$TEST_DIR/claude-home" "$TEST_DIR/claude-home/.claude" "$TEST_DIR/overlay-home"
+printf '%s\n' '{"theme":"light-ansi","hasCompletedOnboarding":true}' >"$TEST_DIR/claude-home/.claude.json"
+HOME="$TEST_DIR/claude-home" env -u CLAUDE_CONFIG_DIR node "$SCRIPT_DIR/create-claude-channel-overlay.mjs" \
+    "$TEST_DIR/overlay-home" ops-brain-live "$server_json"
+home_overlay_json=$(<"$TEST_DIR/overlay-home/.claude.json")
+assert_contains "$home_overlay_json" '"theme": "light-ansi"'
+assert_contains "$home_overlay_json" '"hasCompletedOnboarding": true'
+
+mkdir -m 700 -- "$TEST_DIR/claude-base-invalid" "$TEST_DIR/overlay-invalid"
+printf '%s\n' '{"theme":"secret-shaped-invalid-theme","hasCompletedOnboarding":false}' >"$TEST_DIR/claude-base-invalid/.claude.json"
+CLAUDE_CONFIG_DIR="$TEST_DIR/claude-base-invalid" node "$SCRIPT_DIR/create-claude-channel-overlay.mjs" \
+    "$TEST_DIR/overlay-invalid" ops-brain-live "$server_json"
+invalid_overlay_json=$(<"$TEST_DIR/overlay-invalid/.claude.json")
+[[ $invalid_overlay_json != *'secret-shaped-invalid-theme'* ]] || fail 'overlay helper copied an unsupported theme value'
+[[ $invalid_overlay_json != *'hasCompletedOnboarding'* ]] || fail 'overlay helper copied incomplete onboarding state'
 
 printf '%s\n' occupied >"$TEST_DIR/occupied"
 if "$SCRIPT_DIR/install-live-adapters" --skip-deps --bin-dir "$TEST_DIR/occupied" >"$TEST_DIR/unsafe.out" 2>&1; then

@@ -4,6 +4,15 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+const supportedThemes = new Set([
+  'dark',
+  'light',
+  'light-daltonized',
+  'dark-daltonized',
+  'light-ansi',
+  'dark-ansi',
+])
+
 function fail(message) {
   process.stderr.write(`Claude Channel overlay failed: ${message}\n`)
   process.exit(2)
@@ -104,6 +113,21 @@ function mirrorConfigFile(source, target) {
   }
 }
 
+function readSafeOnboardingPreferences(configPath) {
+  let config
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  } catch {
+    return {}
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return {}
+
+  const preferences = {}
+  if (config.hasCompletedOnboarding === true) preferences.hasCompletedOnboarding = true
+  if (supportedThemes.has(config.theme)) preferences.theme = config.theme
+  return preferences
+}
+
 const [overlayArg, serverName, serverJson] = process.argv.slice(2)
 if (!overlayArg || !serverName || !serverJson) {
   fail('usage: create-claude-channel-overlay.mjs OVERLAY_DIR SERVER_NAME SERVER_JSON')
@@ -121,8 +145,14 @@ try {
 const overlayDirectory = assertEmptyPrivateDirectory(overlayArg)
 const explicitBase = process.env.CLAUDE_CONFIG_DIR?.trim()
 const baseDirectory = path.resolve(explicitBase || path.join(os.homedir(), '.claude'))
+const userConfig = path.resolve(explicitBase
+  ? path.join(baseDirectory, '.claude.json')
+  : path.join(os.homedir(), '.claude.json'))
 mirrorConfigDirectory(baseDirectory, overlayDirectory)
-const config = { mcpServers: { [serverName]: serverDefinition } }
+const config = {
+  ...readSafeOnboardingPreferences(userConfig),
+  mcpServers: { [serverName]: serverDefinition },
+}
 
 const overlayConfig = path.join(overlayDirectory, '.claude.json')
 fs.writeFileSync(overlayConfig, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 })

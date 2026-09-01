@@ -41,9 +41,10 @@ Environment:
 
 This launcher's own bearer is never placed in Claude's environment, this
 adapter's MCP entry, or a command argument -- only the protected token-file path
-is passed. The private overlay contains only the internal Channel definition;
-an existing user MCP document is loaded in place with --mcp-config and is never
-copied. The overlay is destroyed on exit.
+is passed. The private overlay contains the internal Channel definition plus a
+validated theme and literal completed-onboarding flag; an existing user MCP
+document is loaded in place with --mcp-config and is never copied. The overlay
+is destroyed on exit.
 EOF
 }
 
@@ -237,8 +238,9 @@ trap cleanup_overlay EXIT INT TERM
 node "$OVERLAY_HELPER" "$overlay_dir" "$CHANNEL_SERVER" "$server_definition"
 unset server_definition
 
-# The overlay contains only the new Channel definition. Load the user's real
-# MCP document in place so credentials and other servers are never duplicated.
+# The overlay contains the new Channel definition plus two strictly allowlisted
+# display/onboarding preferences. Load the user's real MCP document in place so
+# credentials and other servers are never duplicated.
 user_mcp_args=()
 if [[ -n ${CLAUDE_CONFIG_DIR:-} ]]; then
     user_mcp_config="$CLAUDE_CONFIG_DIR/.claude.json"

@@ -219,7 +219,7 @@ catch {
     [IO.Directory]::CreateDirectory((Join-Path $claudeBase 'agents')) | Out-Null
     [IO.File]::WriteAllText(
         (Join-Path $claudeBase '.claude.json'),
-        '{"mcpServers":{"existing":{"command":"cmd.exe","env":{"API_KEY":"must-not-be-copied"}}}}',
+        '{"theme":"dark","hasCompletedOnboarding":true,"oauthAccount":{"emailAddress":"account-metadata-must-stay-private@example.test"},"mcpServers":{"existing":{"command":"cmd.exe","env":{"API_KEY":"must-not-be-copied"}}}}',
         [Text.UTF8Encoding]::new($false)
     )
     $env:PATH = "$fakeBin;$originalPath"
@@ -260,6 +260,8 @@ catch {
     $parts = $configParts[1] -split "`n---ARGS---`n", 2
     Assert-True ($parts.Count -eq 2) 'fake Claude did not capture arguments'
     $config = $configParts[0] | ConvertFrom-Json
+    Assert-True ($config.theme -eq 'dark') 'generated Claude overlay omitted the allowlisted theme'
+    Assert-True ($config.hasCompletedOnboarding -eq $true) 'generated Claude overlay omitted completed onboarding state'
     $server = $config.mcpServers.'ops-brain-live'
     Assert-True ($server.command -eq $pwsh) 'generated Claude MCP command is not the resolved PowerShell executable'
     Assert-True ($server.args -contains '-AgentName') 'generated Claude MCP config omitted AgentName'
@@ -267,6 +269,7 @@ catch {
     Assert-True ($capture -notlike "*$fixtureToken*") 'credential contents leaked into Claude capture'
     $fixtureToken = $null
     Assert-True ($capture -notlike '*must-not-be-copied*') 'existing MCP credential was copied into the Claude overlay'
+    Assert-True ($capture -notlike '*account-metadata-must-stay-private@example.test*') 'existing account metadata was copied into the Claude overlay'
     $configDirectory = ($parts[0] -split "`n", 2)[0]
     Assert-True (-not (Test-Path -LiteralPath $configDirectory)) 'temporary Claude config overlay was not removed'
     $arguments = @($parts[1] -split "`n")

@@ -214,28 +214,29 @@ server:ops-brain-live · no MCP server configured with that name
 The supported launcher creates a private per-launch `CLAUDE_CONFIG_DIR`, links
 the user's non-config state into it without mutating the real files, and adds
 the Channel only to the overlay's user scope. It loads an existing user MCP
-document directly with `--mcp-config`; it never copies `.claude.json`. The
-resolver sees the internal Channel name; sibling and wake sessions do not. The
-adapter waits for MCP initialization before registering with `/live`, and the
-overlay is deleted when Claude exits.
+document directly with `--mcp-config`; it never copies the complete
+`.claude.json`. The resolver sees the internal Channel name; sibling and wake
+sessions do not. The adapter waits for MCP initialization before registering
+with `/live`, and the overlay is deleted when Claude exits.
 Do not replace this with ambient local/user registration: every Claude session
 in that scope would spawn the adapter and create duplicate peers.
 
-Claude Code 2.1.257 on the measured Windows host treats the generated
-`.claude.json` as a first-run profile and repeats its onboarding prompts on each
-launch. The Channel adapter does not start until those prompts are completed.
-Account for that attended step when timing peer registration; do not interpret
-the pre-onboarding absence as an adapter failure. Safely carrying only the
-onboarding-complete state, without copying the real user config or credentials,
-remains open work.
+Claude Code 2.1.257 on the measured Windows host treated the v5.2.1 overlay as a
+first-run profile and repeated its onboarding prompts on each launch. The
+current helper avoids that delay by carrying exactly two non-sensitive values
+from the real config: one of Claude's six recognized theme names and a literal
+`hasCompletedOnboarding: true`. It ignores false, malformed, or unknown values.
+The Windows launcher harness verifies the allowlist; the next release gate must
+confirm the prompts are gone in the real client.
 
 **Know what the overlay carries.** `CLAUDE_CONFIG_DIR` *replaces* the user
 config rather than layering over it, so the overlay's `.claude.json` contains
-only the generated `ops-brain-live` Channel entry and credential-file pointer.
-The real user MCP document remains at its existing path and is passed to Claude
-as a file. The launcher's own bearer is read by the adapter from the protected
-token file; it is not copied into the overlay, exported by the launcher, or
-placed in a command argument. On Linux the temporary overlay uses
+only the two allowlisted onboarding/display values and the generated
+`ops-brain-live` Channel entry with a credential-file pointer. The real user MCP
+document remains at its existing path and is passed to Claude as a file. The
+launcher's own bearer is read by the adapter from the protected token file; it
+is not copied into the overlay, exported by the launcher, or placed in a command
+argument. On Linux the temporary overlay uses
 `XDG_RUNTIME_DIR` when available and a private mode-700 `/tmp` directory
 otherwise. Same-user processes remain outside this boundary.
 
