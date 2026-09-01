@@ -65,6 +65,32 @@ test('does not queue requests while disconnected', async () => {
   )
 })
 
+test('owned stop reports one terminal disconnect before closing the socket', async () => {
+  FakeWebSocket.instances.length = 0
+  const client = new LiveClient(
+    {
+      url: 'ws://127.0.0.1:3000/live',
+      token: 'test-agent-token',
+      label: 'claude-test',
+      expectedAgent: 'CC-Stealth',
+    },
+    { WebSocketImpl: FakeWebSocket, logger: () => {} },
+  )
+  client.start()
+  await client.waitUntilReady()
+
+  let count = 0
+  client.on('disconnected', () => { count += 1 })
+  const disconnected = once(client, 'disconnected')
+  client.stop()
+  const [details] = await disconnected
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.deepEqual(details, { code: 1000, reason: 'adapter stopping', willReconnect: false })
+  assert.equal(count, 1)
+  assert.equal(client.ready, false)
+})
+
 test('treats server and legacy unconfirmed delivery results as errors', async t => {
   FakeWebSocket.instances.length = 0
   FakeWebSocket.sendOutcome = 'delivery_unconfirmed'

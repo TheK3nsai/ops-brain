@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Windows client bundles verify their pinned dependencies after ZIP
+  extraction.** The manifest now binds npm symlinks to both their target and
+  resolved bytes, accepting the two observed regular-file materializations
+  while still rejecting tampering. The bundle test models both shapes instead
+  of assuming Linux symlink semantics.
+- **Windows live launchers match the documented client installation.** The
+  Codex launcher resolves the native binary vendored by the npm package when
+  `codex.exe` is absent from `PATH`. Claude overlay cleanup no longer exits
+  early, traverses junctions, or leaks directories created during a session;
+  the runbook now names the PowerShell `-Mode` and `-ProfileFile` interface.
+- **A graceful Claude adapter shutdown records its disconnect before closing
+  the log.** The terminal record includes the close code and reason and cannot
+  be mistaken for a reconnecting network drop.
 - **Codex discovery no longer mistakes a transient in-memory thread for target
   ambiguity.** `thread/loaded/list` is process-wide, and Codex CLI 0.150.0 was
   observed returning two loaded IDs on a clean TUI launch while only one had a

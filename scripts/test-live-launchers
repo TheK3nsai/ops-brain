@@ -38,12 +38,14 @@ assert_contains "$install_status" 'codex adapter deps:  ready'
 assert_contains "$install_status" 'ops-brain-client:'
 assert_contains "$install_status" 'ops-brain-claude:'
 
-status=$("$BIN_DIR/ops-brain-claude-live" --status)
+UNCONFIGURED_XDG="$TEST_DIR/unconfigured-config"
+status=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" "$BIN_DIR/ops-brain-claude-live" --status)
 assert_contains "$status" "$REPO_DIR/adapters/claude-channel/src/main.js"
 assert_contains "$status" 'token:   <unset> — unset'
 assert_contains "$status" 'channel: isolated per-launch user scope (ready)'
 
-if OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live "$BIN_DIR/ops-brain-claude-live" --dry-run >"$TEST_DIR/no-token.out" 2>&1; then
+if XDG_CONFIG_HOME="$UNCONFIGURED_XDG" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+    "$BIN_DIR/ops-brain-claude-live" --dry-run >"$TEST_DIR/no-token.out" 2>&1; then
     fail 'Claude dry-run accepted an implicit token path'
 fi
 assert_contains "$(<"$TEST_DIR/no-token.out")" 'OPS_BRAIN_AGENT_TOKEN_FILE is required'

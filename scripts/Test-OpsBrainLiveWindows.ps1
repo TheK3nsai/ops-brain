@@ -89,6 +89,8 @@ const capture = process.env.OPS_BRAIN_TEST_CAPTURE;
 const configDirectory = process.env.CLAUDE_CONFIG_DIR;
 if (!capture || !configDirectory) process.exit(2);
 const config = fs.readFileSync(`${configDirectory}/.claude.json`, 'utf8');
+fs.mkdirSync(`${configDirectory}/runtime-created`);
+fs.writeFileSync(`${configDirectory}/runtime-created/state.json`, '{}');
 fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---ARGS---\n${args.join('\n')}`);
 '@
     [IO.File]::WriteAllText($fakeClaudeScript, $source, [Text.UTF8Encoding]::new($false))
@@ -214,6 +216,7 @@ catch {
     $originalClaudeConfigDirectory = $env:CLAUDE_CONFIG_DIR
     $claudeBase = Join-Path $testDirectory 'claude-base'
     [IO.Directory]::CreateDirectory($claudeBase) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $claudeBase 'agents')) | Out-Null
     [IO.File]::WriteAllText(
         (Join-Path $claudeBase '.claude.json'),
         '{"mcpServers":{"existing":{"command":"cmd.exe","env":{"API_KEY":"must-not-be-copied"}}}}',
@@ -277,30 +280,37 @@ catch {
     $channelIndex = [Array]::IndexOf($arguments, '--dangerously-load-development-channels')
     Assert-True ($resumeIndex -lt $channelIndex) 'client arguments were not passed ahead of the launcher-owned Claude flags'
 
-    # The Codex launcher has no credential-free end-to-end path (it refuses .cmd
-    # shims, so there is no fake codex.exe to capture arguments). Status mode still
-    # proves the binding: with PositionalBinding on, 'resume' lands in $LiveUrl and
-    # Assert-LiveUrl throws on the relative URI instead of reaching $CodexArgs.
+    # Status mode proves the trailing-argument binding without executing the
+    # native Codex binary: with PositionalBinding on, 'resume' lands in $LiveUrl
+    # and Assert-LiveUrl throws instead of reaching $CodexArgs.
     $codexStatus = $null
     try { $codexStatus = & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode Status -Label 'codex-ci' resume --model fixture-model }
     catch { $codexStatus = @() }
     Assert-True (@($codexStatus) -contains 'label: codex-ci') 'Codex launcher mis-bound a trailing client argument instead of collecting it into $CodexArgs'
 
     [IO.File]::WriteAllText((Join-Path $fakeBin 'codex.cmd'), "@echo off`r`nexit /b 0`r`n", [Text.UTF8Encoding]::new($false))
-    $shimRejected = $false
+    $originalAppData = $env:APPDATA
+    $vendoredCodex = Join-Path $testDirectory 'appdata\npm\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe'
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $vendoredCodex)) | Out-Null
+    [IO.File]::WriteAllText($vendoredCodex, 'fixture', [Text.UTF8Encoding]::new($false))
     try {
         $pwshDirectory = Split-Path -Parent $pwsh
-        $env:PATH = "$fakeBin;$pwshDirectory;$env:SystemRoot\System32;$env:SystemRoot"
+        $nodeDirectory = Split-Path -Parent ((@(Get-Command node -CommandType Application -ErrorAction Stop) | Select-Object -First 1).Source)
+        $env:PATH = "$fakeBin;$pwshDirectory;$nodeDirectory;$env:SystemRoot\System32;$env:SystemRoot"
+        $env:APPDATA = Join-Path $testDirectory 'appdata'
         $installerStatus = & "$PSScriptRoot\Install-OpsBrainLive.ps1" -Mode Status -BinDirectory $binDirectory
-        Assert-True (($installerStatus -join "`n") -like '*codex (native required): <missing>*') 'installer status treated codex.cmd as a runnable native Codex binary'
-        & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode DryRun `
+        Assert-True (($installerStatus -join "`n") -like "*codex (native required): $vendoredCodex*") 'installer status did not resolve the npm package vendored native Codex binary'
+        $codexDryRun = & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode DryRun `
             -LiveUrl 'wss://ops-brain.example/live' `
             -AgentCredentialFile $codexCredential `
             -AgentName 'Codex-CI'
+        Assert-True (@($codexDryRun) -contains 'would launch one Codex TUI through that App Server') 'Codex launcher did not accept the vendored native binary'
     }
-    catch { $shimRejected = $_.Exception.Message -like '*Required executable is missing: codex.exe*' }
-    finally { $env:PATH = $originalPath }
-    Assert-True $shimRejected 'Codex launcher accepted a .cmd shim that Start-Process cannot own with redirected logs'
+    finally {
+        $env:PATH = $originalPath
+        if ($null -eq $originalAppData) { Remove-Item Env:APPDATA -ErrorAction SilentlyContinue }
+        else { $env:APPDATA = $originalAppData }
+    }
 
     'Windows live launcher tests passed'
 }

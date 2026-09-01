@@ -44,6 +44,40 @@ function Get-RequiredApplication {
     $command
 }
 
+function Get-NativeCodexPath {
+    $command = @(Get-Command 'codex.exe' -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($null -ne $command) { return $command.Source }
+
+    $npmRoots = [Collections.Generic.List[string]]::new()
+    $shim = @(Get-Command 'codex.cmd' -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($null -ne $shim) { [void]$npmRoots.Add((Split-Path -Parent $shim.Source)) }
+    if ($env:APPDATA) { [void]$npmRoots.Add((Join-Path $env:APPDATA 'npm')) }
+    $platforms = @(
+        @{ Package = 'codex-win32-x64'; Triple = 'x86_64-pc-windows-msvc' },
+        @{ Package = 'codex-win32-arm64'; Triple = 'aarch64-pc-windows-msvc' }
+    )
+    foreach ($root in @($npmRoots | Select-Object -Unique)) {
+        foreach ($platform in $platforms) {
+            foreach ($relative in @(
+                "node_modules\@openai\codex\node_modules\@openai\$($platform.Package)\vendor\$($platform.Triple)\bin\codex.exe",
+                "node_modules\@openai\$($platform.Package)\vendor\$($platform.Triple)\bin\codex.exe"
+            )) {
+                $candidate = Join-Path $root $relative
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                    return [IO.Path]::GetFullPath($candidate)
+                }
+            }
+        }
+    }
+    '<missing>'
+}
+
+function Get-RequiredNativeCodexPath {
+    $path = Get-NativeCodexPath
+    if ($path -eq '<missing>') { throw 'Required executable is missing: native codex.exe' }
+    $path
+}
+
 function Assert-AgentCredentialIdentity {
     param(
         [Parameter(Mandatory)][System.Management.Automation.ApplicationInfo]$PowerShell,
@@ -201,7 +235,7 @@ if ($Mode -eq 'Status') {
     "App Server: $AppServerEndpoint"
     "credential: $(if ($AgentCredentialFile) { $AgentCredentialFile } else { '<unset>' }) - $credentialStatus"
     "state: $StateDirectory"
-    "codex: $(Get-ApplicationPath 'codex.exe')"
+    "codex: $(Get-NativeCodexPath)"
     "node: $(Get-ApplicationPath 'node')"
     exit 0
 }
@@ -218,7 +252,7 @@ $pwshCommand = Get-RequiredApplication 'pwsh.exe'
 # Reject a crossed identity before starting the owned App Server or Codex TUI.
 # Validation-only checks DPAPI metadata without reading the bearer.
 Assert-AgentCredentialIdentity $pwshCommand $TokenHelper $AgentCredentialFile $AgentName
-$codexCommand = Get-RequiredApplication 'codex.exe'
+$codexCommand = Get-RequiredNativeCodexPath
 [void](Get-RequiredApplication 'node')
 
 if ($Mode -eq 'DryRun') {
@@ -255,7 +289,7 @@ try {
     # child then shares the launcher's console and holds its input handle, so the Codex
     # TUI stops accepting keystrokes. Hidden keeps the child on its own console, off
     # screen and away from the TUI's stdin.
-    $appProcess = Start-Process -FilePath $codexCommand.Source -ArgumentList @('app-server', '--listen', $AppServerEndpoint) -RedirectStandardOutput $appOut -RedirectStandardError $appErr -WindowStyle Hidden -PassThru
+    $appProcess = Start-Process -FilePath $codexCommand -ArgumentList @('app-server', '--listen', $AppServerEndpoint) -RedirectStandardOutput $appOut -RedirectStandardError $appErr -WindowStyle Hidden -PassThru
     $ready = $false
     foreach ($attempt in 1..50) {
         if ($appProcess.HasExited) { break }
@@ -289,7 +323,7 @@ try {
         else { $env:OPS_BRAIN_LIVE_STOP_FILE = $previousStopFile }
     }
 
-    & $codexCommand.Source --remote $AppServerEndpoint @CodexArgs
+    & $codexCommand --remote $AppServerEndpoint @CodexArgs
     exit $LASTEXITCODE
 }
 finally {

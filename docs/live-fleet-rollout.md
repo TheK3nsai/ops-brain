@@ -174,7 +174,8 @@ put it in a command argument, transcript, or log.
 
 Both adapters write JSON lines to `OPS_BRAIN_LIVE_STATE_DIR`, default
 `~/.local/state/ops-brain-live/`: `codex-adapter.*.log` and
-`claude-adapter.*.log`. Each launcher's `--status` prints the path.
+`claude-adapter.*.log`. On Linux, each launcher's `--status` prints the path;
+on Windows, use `-Mode Status`.
 
 **On Claude this file is the only signal.** Claude Code spawns the adapter and
 discards its stderr, so a live channel that never binds produces no terminal
@@ -221,8 +222,10 @@ placed in a command argument. On Linux the temporary overlay uses
 `XDG_RUNTIME_DIR` when available and a private mode-700 `/tmp` directory
 otherwise. Same-user processes remain outside this boundary.
 
-Both launchers also accept `--status`, `--dry-run`, and `--profile`. The token path and exact
-expected server-bound identity are required deliberately. There is no generic
+On Linux, both launchers accept `--status`, `--dry-run`, and `--profile`. The
+PowerShell launchers use `-Mode Status`, `-Mode DryRun`, and `-ProfileFile`
+instead. The token path and exact expected server-bound identity are required
+deliberately. There is no generic
 fallback that could silently bind a sibling identity, and registration fails
 closed if the server reports another slug. Linux token files must be mode 600
 or 400.
