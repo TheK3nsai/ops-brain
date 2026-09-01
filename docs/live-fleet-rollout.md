@@ -34,11 +34,15 @@ The server-side binding is the source of peer identity.
 ## Common prerequisites
 
 1. Download and verify the versioned client bundle attached to an ops-brain
-   release, or use a matching source checkout for development.
+   release, or use a clean, pinned source checkout explicitly approved for the
+   deployed server. Client and server revisions need not be identical; record
+   both independently so a later checkout cannot blur the measured pairing.
 2. Install Node.js 22 or newer, current Claude Code with Channels support, and
-   Codex CLI **0.151.0** with App Server/`--remote` support. Codex 0.151.0 passed
-   the complete attended rendered-delivery gate on Windows with the v5.2.1
-   client bundle; 0.149.0 and 0.149.1 are earlier measured working versions.
+   Codex CLI with App Server/`--remote` support. The complete attended
+   rendered-delivery gates passed with Codex **0.151.0 on Windows** using the
+   published v5.2.1 client bundle (`02bd845`), then **0.152.0 on Linux** using
+   source checkout `279ba8c` against the v5.2.1 server. Versions 0.149.0 and
+   0.149.1 are earlier measured working versions.
    The adapter's resumable-thread selection handles the process-wide extra
    loaded ID first observed in 0.150.0, but 0.150.0 itself has not run the
    complete gate. Do not downgrade a current acceptance host merely to prove
@@ -49,8 +53,8 @@ The server-side binding is the source of peer identity.
    **Do not verify Channels support with `claude --help`.** The
    `--dangerously-load-development-channels` flag is hidden: it is absent from
    `--help` output while present in the bundle and fully functional. Claude Code
-   **2.1.257** is measured working with the private configuration overlay used
-   by the supported launcher; 2.1.241 is the earlier Linux baseline.
+   **2.1.257** passed the complete attended gate with the private configuration
+   overlay on both Linux and Windows; 2.1.241 is the earlier Linux baseline.
    Checking `--help` will make you conclude the client lacks support and chase
    an upgrade that changes nothing. To check positively, grep the installed
    bundle instead of the help text:
