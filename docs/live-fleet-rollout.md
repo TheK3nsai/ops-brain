@@ -36,19 +36,21 @@ The server-side binding is the source of peer identity.
 1. Download and verify the versioned client bundle attached to an ops-brain
    release, or use a matching source checkout for development.
 2. Install Node.js 22 or newer, current Claude Code with Channels support, and
-   Codex CLI **0.149.x** with App Server/`--remote` support. Both 0.149.0 and
-   0.149.1 are measured working with the supported launcher. Do not upgrade an
-   acceptance host to 0.150.0 mid-gate: one Linux host measured two process-wide
-   loaded thread IDs on a clean 0.150.0 launch, only one of which had a persisted
-   rollout. The adapter tolerates that shape, but 0.150.0 remains outside the
-   acceptance pin until the full rendered-delivery gate passes on it. Record
-   `codex --version` with the gate receipt so a client change cannot erase the
+   Codex CLI **0.151.0** with App Server/`--remote` support. Codex 0.151.0 passed
+   the complete attended rendered-delivery gate on Windows with the v5.2.1
+   client bundle; 0.149.0 and 0.149.1 are earlier measured working versions.
+   The adapter's resumable-thread selection handles the process-wide extra
+   loaded ID first observed in 0.150.0, but 0.150.0 itself has not run the
+   complete gate. Do not downgrade a current acceptance host merely to prove
+   that historical point release, and do not generalize one measured version
+   into an open-ended `>=` claim. Pin each gate to a declared client version and
+   record `codex --version` with the receipt so a client change cannot erase the
    comparison baseline.
    **Do not verify Channels support with `claude --help`.** The
    `--dangerously-load-development-channels` flag is hidden: it is absent from
    `--help` output while present in the bundle and fully functional. Claude Code
-   **2.1.241** is measured working with the private configuration overlay used
-   by the supported launcher.
+   **2.1.257** is measured working with the private configuration overlay used
+   by the supported launcher; 2.1.241 is the earlier Linux baseline.
    Checking `--help` will make you conclude the client lacks support and chase
    an upgrade that changes nothing. To check positively, grep the installed
    bundle instead of the help text:
@@ -187,6 +189,13 @@ conclude the lane is working when it is not. Check the adapter log for
 a `"retryable": false` record as terminal: the adapter has stopped and will not
 recover without a configuration change.
 
+On Windows, normal Claude Code exit can terminate the MCP child before Node
+receives a socket-disconnect event or `SIGINT`/`SIGTERM`. The adapter log can
+therefore end at `live adapter connected` even when the client, adapter, and
+remote peer all tear down correctly. Absence of a terminal disconnect record is
+not teardown evidence on that platform; use the native client exit timestamp,
+owned-process check, and remote peer disappearance required by steps 4 and 9.
+
 Each launch writes a new file and nothing prunes them. They are small, but the
 directory grows for the life of the host; delete files older than a retention
 window you choose as part of ordinary host maintenance. Records carry a `ts`
@@ -211,6 +220,14 @@ adapter waits for MCP initialization before registering with `/live`, and the
 overlay is deleted when Claude exits.
 Do not replace this with ambient local/user registration: every Claude session
 in that scope would spawn the adapter and create duplicate peers.
+
+Claude Code 2.1.257 on the measured Windows host treats the generated
+`.claude.json` as a first-run profile and repeats its onboarding prompts on each
+launch. The Channel adapter does not start until those prompts are completed.
+Account for that attended step when timing peer registration; do not interpret
+the pre-onboarding absence as an adapter failure. Safely carrying only the
+onboarding-complete state, without copying the real user config or credentials,
+remains open work.
 
 **Know what the overlay carries.** `CLAUDE_CONFIG_DIR` *replaces* the user
 config rather than layering over it, so the overlay's `.claude.json` contains
