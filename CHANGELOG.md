@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Windows live pair is certified on the v5.2.1 client bundle and Codex
+  CLI 0.151.0.** The complete attended gate passed on 2026-09-01, retiring the
+  temporary 0.149.x-only acceptance pin while keeping client certification tied
+  to measured versions rather than an open-ended `>=` range. The remaining
+  Windows findings are non-blocking: Claude's MCP child cannot record a graceful
+  disconnect when the client kills it directly, and the private overlay repeats
+  first-run onboarding.
+
 ## [5.2.1] — 2026-09-01
 
 ### Fixed
