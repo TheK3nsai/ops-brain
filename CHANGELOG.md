@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [5.2.1] — 2026-09-01
+
 ### Fixed
 
 - **Windows client bundles verify their pinned dependencies after ZIP
