@@ -34,15 +34,24 @@ status=$("$BUNDLE/scripts/install-live-adapters" --status --bin-dir "$TEST_DIR/b
 [[ -L $TEST_DIR/bin/ops-brain-claude ]]
 [[ -L $TEST_DIR/bin/ops-brain-codex ]]
 
-# Simulate Windows zip extraction, which materializes npm's .bin symlinks as
-# regular files. The manifest must verify those bytes and detect tampering.
-mkdir -p -- "$TEST_DIR/windows"
-unzip -q "$TEST_DIR/dist/ops-brain-client-9.9.9-test.zip" -d "$TEST_DIR/windows"
-WINDOWS_BUNDLE="$TEST_DIR/windows/ops-brain-client-9.9.9-test"
+# The ZIP itself must remain verifiable whether this unzip preserves symlinks
+# or follows them into regular files (both behaviors exist in CI environments).
+mkdir -p -- "$TEST_DIR/zip-extract"
+unzip -q "$TEST_DIR/dist/ops-brain-client-9.9.9-test.zip" -d "$TEST_DIR/zip-extract"
+ZIP_BUNDLE="$TEST_DIR/zip-extract/ops-brain-client-9.9.9-test"
+[[ $(node "$ZIP_BUNDLE/scripts/ops-brain-client" deps-status claude) == ready ]]
+[[ $(node "$ZIP_BUNDLE/scripts/ops-brain-client" deps-status codex) == ready ]]
+
+# Explicitly model the measured Windows shape: the symlink becomes a regular
+# file containing the resolved target bytes. Start from the tar extraction so
+# this does not depend on the local unzip implementation.
+mkdir -p -- "$TEST_DIR/windows-target-bytes"
+cp -a -- "$BUNDLE" "$TEST_DIR/windows-target-bytes/"
+WINDOWS_BUNDLE="$TEST_DIR/windows-target-bytes/ops-brain-client-9.9.9-test"
 WINDOWS_NODE_WHICH="$WINDOWS_BUNDLE/adapters/claude-channel/node_modules/.bin/node-which"
-WINDOWS_NODE_WHICH_TARGET=$(readlink -f -- "$WINDOWS_NODE_WHICH")
+cp -L -- "$WINDOWS_NODE_WHICH" "$WINDOWS_NODE_WHICH.materialized"
 rm -- "$WINDOWS_NODE_WHICH"
-cp -- "$WINDOWS_NODE_WHICH_TARGET" "$WINDOWS_NODE_WHICH"
+mv -- "$WINDOWS_NODE_WHICH.materialized" "$WINDOWS_NODE_WHICH"
 [[ -f $WINDOWS_NODE_WHICH && ! -L $WINDOWS_NODE_WHICH ]]
 [[ $(node "$WINDOWS_BUNDLE/scripts/ops-brain-client" deps-status claude) == ready ]]
 [[ $(node "$WINDOWS_BUNDLE/scripts/ops-brain-client" deps-status codex) == ready ]]
@@ -53,7 +62,7 @@ printf '%s\n' 'tampered' >>"$WINDOWS_NODE_WHICH"
 # Some ZIP extractors materialize the archive entry itself instead: a regular
 # file containing the symlink target text. Verify that exact shape separately.
 mkdir -p -- "$TEST_DIR/windows-link-payload"
-unzip -q "$TEST_DIR/dist/ops-brain-client-9.9.9-test.zip" -d "$TEST_DIR/windows-link-payload"
+cp -a -- "$BUNDLE" "$TEST_DIR/windows-link-payload/"
 PAYLOAD_BUNDLE="$TEST_DIR/windows-link-payload/ops-brain-client-9.9.9-test"
 PAYLOAD_NODE_WHICH="$PAYLOAD_BUNDLE/adapters/claude-channel/node_modules/.bin/node-which"
 NODE_WHICH_LINK_PAYLOAD=$(readlink -- "$PAYLOAD_NODE_WHICH")

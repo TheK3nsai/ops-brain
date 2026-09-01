@@ -295,7 +295,8 @@ catch {
     [IO.File]::WriteAllText($vendoredCodex, 'fixture', [Text.UTF8Encoding]::new($false))
     try {
         $pwshDirectory = Split-Path -Parent $pwsh
-        $env:PATH = "$fakeBin;$pwshDirectory;$env:SystemRoot\System32;$env:SystemRoot"
+        $nodeDirectory = Split-Path -Parent ((@(Get-Command node -CommandType Application -ErrorAction Stop) | Select-Object -First 1).Source)
+        $env:PATH = "$fakeBin;$pwshDirectory;$nodeDirectory;$env:SystemRoot\System32;$env:SystemRoot"
         $env:APPDATA = Join-Path $testDirectory 'appdata'
         $installerStatus = & "$PSScriptRoot\Install-OpsBrainLive.ps1" -Mode Status -BinDirectory $binDirectory
         Assert-True (($installerStatus -join "`n") -like "*codex (native required): $vendoredCodex*") 'installer status did not resolve the npm package vendored native Codex binary'
