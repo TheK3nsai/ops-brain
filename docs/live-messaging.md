@@ -121,9 +121,10 @@ and [channel reference](https://code.claude.com/docs/en/channels-reference).
 
 The implementation and setup guide are in
 [`adapters/claude-channel`](../adapters/claude-channel). It has been exercised
-against Claude Code 2.1.241 on Linux and 2.1.257 on Windows; custom Channels
-still require Anthropic's explicit development-channel opt-in and may be
-disabled by organization policy. The
+against Claude Code 2.1.257 in complete attended Linux and Windows gates;
+2.1.241 is the earlier measured Linux baseline. Custom Channels still require
+Anthropic's explicit development-channel opt-in and may be disabled by
+organization policy. The
 supported launcher uses a private per-launch Claude config overlay because
 Channel resolution ignores `--mcp-config` servers. The overlay is visible only
 to that foreground session and is deleted on exit. Use
@@ -147,9 +148,12 @@ bidirectional JSON-RPC API over stdio or WebSocket; see the official
 
 The implementation and shared-App-Server setup guide are in
 [`adapters/codex-app-server`](../adapters/codex-app-server). It has been
-exercised against Codex CLI 0.149.0 and 0.151.0 using a TUI connected through
-`--remote`; 0.151.0 passed the complete attended Windows pair gate with the
-v5.2.1 client bundle on 2026-09-01.
+exercised using a TUI connected through `--remote` against Codex CLI 0.149.0,
+0.151.0, and 0.152.0. The complete attended 2026-09-01 pair gates passed with
+0.151.0 and the published v5.2.1 client bundle (`02bd845`) on Windows, then
+0.152.0 and source checkout `279ba8c` against the v5.2.1 server on Linux. These
+are exact measured versions and revisions, not an open-ended compatibility
+range.
 `ops-brain-codex` owns the loopback App Server and adapter for one
 foreground TUI, cleans both up on exit, and provides `--status`/`--dry-run`.
 If the wrapper's pre-TUI App Server connection becomes stale, the adapter may
