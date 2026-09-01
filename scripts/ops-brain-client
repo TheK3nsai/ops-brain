@@ -246,7 +246,14 @@ function dependencyEntries(root, clients = CLIENTS) {
         const sha256 = createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')
         entries.push({ path: relative, type: 'file', sha256 })
       } else if (stat.isSymbolicLink()) {
-        entries.push({ path: relative, type: 'symlink', target: fs.readlinkSync(absolute) })
+        const entry = { path: relative, type: 'symlink', target: fs.readlinkSync(absolute) }
+        // Standard zip extraction on Windows materializes npm's node_modules/.bin
+        // symlinks as regular files. Record the resolved bytes so that shape is
+        // still verifiable without weakening the check for any other file.
+        if (fs.statSync(absolute).isFile()) {
+          entry.sha256 = createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')
+        }
+        entries.push(entry)
       } else {
         throw new Error(`unsupported dependency entry: ${relative}`)
       }
@@ -254,6 +261,39 @@ function dependencyEntries(root, clients = CLIENTS) {
   }
   for (const client of clients) visit(path.join(adapterDirectory(client), 'node_modules'))
   return entries
+}
+
+function validManifestEntry(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.path !== 'string') return false
+  const keys = Object.keys(entry).sort().join(',')
+  const validSha256 = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
+  if (entry.type === 'file') {
+    return keys === 'path,sha256,type' && validSha256(entry.sha256)
+  }
+  if (entry.type === 'symlink') {
+    const validKeys = keys === 'path,target,type' || keys === 'path,sha256,target,type'
+    return validKeys && typeof entry.target === 'string'
+      && (entry.sha256 === undefined || validSha256(entry.sha256))
+  }
+  return false
+}
+
+function dependencyEntryMatches(expected, actual) {
+  if (expected.path !== actual.path) return false
+  if (expected.type === 'file') {
+    return actual.type === 'file' && expected.sha256 === actual.sha256
+  }
+  if (actual.type === 'symlink') {
+    return expected.target === actual.target
+      && (expected.sha256 === undefined || expected.sha256 === actual.sha256)
+  }
+  if (actual.type !== 'file' || expected.sha256 === undefined) return false
+  // Windows extractors have two observed symlink materializations: the bytes
+  // of the resolved target (PowerShell Expand-Archive on the fleet host), or
+  // the ZIP entry's raw link-target text. Both remain bound to the manifest;
+  // any other regular-file bytes fail closed.
+  const linkPayloadSha256 = createHash('sha256').update(expected.target).digest('hex')
+  return expected.sha256 === actual.sha256 || linkPayloadSha256 === actual.sha256
 }
 
 function verifyDependencyManifest(file, client) {
@@ -267,11 +307,13 @@ function verifyDependencyManifest(file, client) {
   // manifest into unverifiable space: every entry still has to belong to some
   // adapter, or an appended entry would be invisible to every per-client check.
   const prefixes = [...CLIENTS].map(nodeModulesPrefix)
-  const claimed = entry => entry && typeof entry.path === 'string'
+  const claimed = entry => validManifestEntry(entry)
     && prefixes.some(candidate => entry.path.startsWith(`${candidate}/`))
   if (!manifest.entries.every(claimed)) return false
   const entries = manifest.entries.filter(entry => entry.path.startsWith(`${prefix}/`))
-  return JSON.stringify(dependencyEntries(root, [client])) === JSON.stringify(entries)
+  const actual = dependencyEntries(root, [client])
+  return entries.length === actual.length
+    && entries.every((entry, index) => dependencyEntryMatches(entry, actual[index]))
 }
 
 function writeDependencyManifest() {

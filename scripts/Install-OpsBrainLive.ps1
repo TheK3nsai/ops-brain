@@ -51,6 +51,34 @@ function Get-RequiredApplication {
     $command
 }
 
+function Get-NativeCodexPath {
+    $command = @(Get-Command 'codex.exe' -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($null -ne $command) { return $command.Source }
+
+    $npmRoots = [Collections.Generic.List[string]]::new()
+    $shim = @(Get-Command 'codex.cmd' -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($null -ne $shim) { [void]$npmRoots.Add((Split-Path -Parent $shim.Source)) }
+    if ($env:APPDATA) { [void]$npmRoots.Add((Join-Path $env:APPDATA 'npm')) }
+    $platforms = @(
+        @{ Package = 'codex-win32-x64'; Triple = 'x86_64-pc-windows-msvc' },
+        @{ Package = 'codex-win32-arm64'; Triple = 'aarch64-pc-windows-msvc' }
+    )
+    foreach ($root in @($npmRoots | Select-Object -Unique)) {
+        foreach ($platform in $platforms) {
+            foreach ($relative in @(
+                "node_modules\@openai\codex\node_modules\@openai\$($platform.Package)\vendor\$($platform.Triple)\bin\codex.exe",
+                "node_modules\@openai\$($platform.Package)\vendor\$($platform.Triple)\bin\codex.exe"
+            )) {
+                $candidate = Join-Path $root $relative
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                    return [IO.Path]::GetFullPath($candidate)
+                }
+            }
+        }
+    }
+    '<missing>'
+}
+
 function Get-AdapterDependencyStatus {
     param([Parameter(Mandatory)][ValidateSet('claude', 'codex')][string]$Client)
     $node = @(Get-Command node -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
@@ -66,7 +94,7 @@ if ($Mode -eq 'Status') {
     "node: $(Get-ApplicationPath 'node')"
     "npm: $(Get-ApplicationPath 'npm')"
     "claude: $(Get-ApplicationPath 'claude')"
-    "codex (native required): $(Get-ApplicationPath 'codex.exe')"
+    "codex (native required): $(Get-NativeCodexPath)"
     "claude adapter deps: $(Get-AdapterDependencyStatus 'claude')"
     "codex adapter deps: $(Get-AdapterDependencyStatus 'codex')"
     foreach ($name in $launchers) {

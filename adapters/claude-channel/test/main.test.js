@@ -127,6 +127,27 @@ test('records a successful bind, and never the bearer', async t => {
   assert.doesNotMatch(body, /fixture-token-not-a-secret/)
 })
 
+test('records an owned disconnect before a graceful shutdown closes the log', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'ops-brain-main-'))
+  const server = await liveServerBoundTo('CC-Stealth')
+  const child = startAdapter({ port: server.address().port, expectedAgent: 'CC-Stealth', stateDir })
+  t.after(async () => {
+    if (child.exitCode === null) child.kill('SIGKILL')
+    await new Promise(resolve => server.close(resolve))
+    rmSync(stateDir, { recursive: true, force: true })
+  })
+
+  await waitForLog(stateDir, /live adapter connected/)
+  child.kill('SIGTERM')
+  await once(child, 'exit')
+  const body = await waitForLog(stateDir, /live adapter disconnected/)
+  const disconnected = body.trim().split('\n').map(line => JSON.parse(line))
+    .find(record => record.message === 'live adapter disconnected')
+  assert.equal(disconnected.close_code, 1000)
+  assert.equal(disconnected.reason, 'adapter stopping')
+  assert.equal(disconnected.will_reconnect, false)
+})
+
 test('records a startup failure that aborts before the first connection', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'ops-brain-main-'))
   t.after(() => rmSync(stateDir, { recursive: true, force: true }))

@@ -50,15 +50,23 @@ export class LiveClient extends EventEmitter {
   }
 
   stop() {
+    const wasConnected = this.#peer !== null
     this.#stopped = true
     clearTimeout(this.#reconnectTimer)
     clearTimeout(this.#registerTimer)
     this.#reconnectTimer = null
     this.#registerTimer = null
     this.#rejectPending('ops-brain live connection stopped')
-    this.#socket?.close(1000, 'adapter stopping')
+    const socket = this.#socket
     this.#socket = null
     this.#peer = null
+    socket?.close(1000, 'adapter stopping')
+    // The close callback is intentionally ignored after the owned stop above,
+    // so publish the terminal transition synchronously while the launcher's
+    // file logger is still open.
+    if (wasConnected) {
+      this.emit('disconnected', { code: 1000, reason: 'adapter stopping', willReconnect: false })
+    }
   }
 
   async waitUntilReady(timeoutMs = 5_000) {
@@ -141,14 +149,18 @@ export class LiveClient extends EventEmitter {
     socket.on('error', () => {
       this.#logger('ops-brain live WebSocket error')
     })
-    socket.on('close', () => {
+    socket.on('close', (code, reason) => {
       if (this.#socket !== socket) return
       clearTimeout(this.#registerTimer)
       this.#registerTimer = null
       this.#socket = null
       this.#peer = null
       this.#rejectPending('ops-brain live peer disconnected; use a handoff for offline delivery')
-      this.emit('disconnected')
+      this.emit('disconnected', {
+        code: typeof code === 'number' ? code : null,
+        reason: Buffer.isBuffer(reason) ? reason.toString() : (reason || null),
+        willReconnect: !this.#stopped && this.#fatal === null,
+      })
       this.#scheduleReconnect()
     })
   }

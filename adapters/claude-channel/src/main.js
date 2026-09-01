@@ -28,9 +28,11 @@ async function main() {
   // A fatal closes the socket, so the disconnect record lands after the error.
   // Without will_reconnect it reads as an ordinary retryable drop and
   // contradicts the terminal line above it.
-  live.on('disconnected', () => logger.log('warn', 'live adapter disconnected', {
+  live.on('disconnected', ({ code = null, reason = null, willReconnect = false } = {}) => logger.log('warn', 'live adapter disconnected', {
     expected_agent: config.expectedAgent,
-    will_reconnect: live.fatal === null,
+    close_code: code,
+    reason,
+    will_reconnect: willReconnect,
   }))
   live.on('fatal', error => logger.log('error', error.message, {
     expected_agent: config.expectedAgent,

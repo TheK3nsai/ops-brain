@@ -203,6 +203,43 @@ function New-PrivateTemporaryDirectory {
     $directory
 }
 
+function Remove-OverlayEntry {
+    param([Parameter(Mandatory)][string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        if ($item.PSIsContainer) { [IO.Directory]::Delete($item.FullName, $false) }
+        else { [IO.File]::Delete($item.FullName) }
+    }
+    elseif ($item.PSIsContainer) {
+        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force) {
+            Remove-OverlayEntry $child.FullName
+        }
+        [IO.Directory]::Delete($item.FullName, $false)
+    }
+    else { [IO.File]::Delete($item.FullName) }
+}
+
+function Remove-PrivateTemporaryDirectory {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return }
+    $resolved = [IO.Path]::GetFullPath($Path)
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $item = Get-Item -LiteralPath $resolved -Force
+    if (-not $resolved.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        -not [IO.Path]::GetFileName($resolved).StartsWith('ops-brain-claude-', [StringComparison]::Ordinal) -or
+        ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing unsafe Claude config overlay cleanup: $resolved"
+    }
+
+    # Remove junctions as links instead of asking recursive deletion to traverse
+    # them. Claude may also create ordinary directories in this writable overlay,
+    # so recursively remove those without ever traversing a reparse point.
+    foreach ($child in Get-ChildItem -LiteralPath $resolved -Force) {
+        Remove-OverlayEntry $child.FullName
+    }
+    [IO.Directory]::Delete($resolved, $false)
+}
+
 if ($Mode -eq 'DryRun') {
     "would launch Claude with ops-brain online delivery through a private per-launch config overlay (credential path only; bearer redacted)"
     exit 0
@@ -210,6 +247,7 @@ if ($Mode -eq 'DryRun') {
 
 $configDirectory = New-PrivateTemporaryDirectory
 $previousConfigDirectory = $env:CLAUDE_CONFIG_DIR
+$claudeExitCode = 0
 try {
     & $nodeCommand.Source $OverlayHelper $configDirectory 'ops-brain-live' $serverDefinition
     if ($LASTEXITCODE -ne 0) { throw "Claude Channel overlay helper exited $LASTEXITCODE" }
@@ -226,7 +264,7 @@ try {
     }
     else { @() }
     & $claudeCommand.Source @ClaudeArgs @userMcpArguments --dangerously-load-development-channels server:ops-brain-live
-    exit $LASTEXITCODE
+    $claudeExitCode = $LASTEXITCODE
 }
 finally {
     if ($null -eq $previousConfigDirectory) {
@@ -235,12 +273,6 @@ finally {
     else {
         $env:CLAUDE_CONFIG_DIR = $previousConfigDirectory
     }
-    if (Test-Path -LiteralPath $configDirectory -PathType Container) {
-        $resolved = [IO.Path]::GetFullPath($configDirectory)
-        $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-        if ($resolved.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgnoreCase) -and
-            [IO.Path]::GetFileName($resolved).StartsWith('ops-brain-claude-', [StringComparison]::Ordinal)) {
-            [IO.Directory]::Delete($resolved, $true)
-        }
-    }
+    Remove-PrivateTemporaryDirectory $configDirectory
 }
+exit $claudeExitCode
