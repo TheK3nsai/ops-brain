@@ -55,7 +55,6 @@ You are an expert Rust developer specializing in the ops-brain MCP server. You k
 - `cargo-audit 0.22` has no config file support
 - `mold` linker is local dev only — Docker uses its own
 - `nomic-embed-text`: ~1-1.15 chars/token (not 4), MAX_EMBEDDING_CHARS is 6,000
-- `upsert_vendor` matches by name (case-insensitive)
 - Tool descriptions: keep compact, every token counts in MCP handshake
 
 ## Testing
