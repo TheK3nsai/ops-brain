@@ -56,7 +56,9 @@ The server-side binding is the source of peer identity.
    **2.1.257** passed the complete attended gate with the private configuration
    overlay on both Linux and Windows; 2.1.241 is the earlier Linux baseline.
    Checking `--help` will make you conclude the client lacks support and chase
-   an upgrade that changes nothing. To check positively, grep the installed
+   an upgrade that changes nothing. The integrated main-launcher path was
+   operator-confirmed on Linux 2026-09-03 with Claude Code **2.1.259** and
+   Codex **0.153.0**; same rule, that is a measured pair, not a `>=` claim. To check positively, grep the installed
    bundle instead of the help text:
 
    ```bash
@@ -200,10 +202,10 @@ remote peer all tear down correctly. Absence of a terminal disconnect record is
 not teardown evidence on that platform; use the native client exit timestamp,
 owned-process check, and remote peer disappearance required by steps 4 and 9.
 
-Each launch writes a new file and nothing prunes them. They are small, but the
-directory grows for the life of the host; delete files older than a retention
-window you choose as part of ordinary host maintenance. Records carry a `ts`
-field because separate randomly named files have no other ordering.
+Each launch writes a new file. Since #115 both Linux launchers delete their own
+adapter logs older than 30 days at launch; on Windows nothing prunes them, so
+delete old files there as part of ordinary host maintenance. Records carry a
+`ts` field because separate randomly named files have no other ordering.
 
 ### Claude Channel resolver isolation
 

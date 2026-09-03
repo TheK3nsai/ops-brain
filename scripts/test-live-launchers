@@ -38,6 +38,8 @@ assert_contains "$install_status" 'codex adapter deps:  ready'
 assert_contains "$install_status" 'ops-brain-client:'
 assert_contains "$install_status" 'ops-brain-claude:'
 
+# Every launch under test pins XDG_CONFIG_HOME so the developer's real
+# profile can never leak into a label, identity, or URL being asserted.
 UNCONFIGURED_XDG="$TEST_DIR/unconfigured-config"
 status=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" "$BIN_DIR/ops-brain-claude-live" --status)
 assert_contains "$status" "$REPO_DIR/adapters/claude-channel/src/main.js"
@@ -75,9 +77,9 @@ printf '%s\n' \
     'exit 0' >"$TEST_DIR/fake-bin/claude"
 chmod +x "$TEST_DIR/fake-bin/claude"
 
-claude_dry=$(PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth "$BIN_DIR/ops-brain-claude-live" --dry-run)
+claude_dry=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth "$BIN_DIR/ops-brain-claude-live" --dry-run)
 assert_contains "$claude_dry" 'CLAUDE_CONFIG_DIR=<private-overlay>'
-codex_dry=$(PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state" "$BIN_DIR/ops-brain-codex-live" --dry-run)
+codex_dry=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state" "$BIN_DIR/ops-brain-codex-live" --dry-run)
 assert_contains "$codex_dry" 'token redacted'
 
 CLAUDE_CAPTURE="$TEST_DIR/claude-overlay.json"
@@ -85,7 +87,7 @@ mkdir -m 700 -- "$TEST_DIR/runtime"
 mkdir -m 700 -- "$TEST_DIR/claude-launch-base"
 printf '%s\n' '{"mcpServers":{"existing":{"command":"/bin/true","env":{"API_KEY":"must-not-be-copied"}}}}' \
     >"$TEST_DIR/claude-launch-base/.claude.json"
-PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_AGENT_TOKEN='fixture-must-not-reach-claude' \
+XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_AGENT_TOKEN='fixture-must-not-reach-claude' \
     OPS_BRAIN_TEST_CAPTURE="$CLAUDE_CAPTURE" \
     CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
     XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
@@ -109,7 +111,7 @@ assert_contains "$(<"$CLAUDE_CAPTURE.args")" "$TEST_DIR/claude-launch-base/.clau
 
 # With no XDG runtime directory the overlay may safely use /tmp: it contains
 # only credential pointers, while the real MCP document is loaded in place.
-PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$TEST_DIR/fallback-overlay.json" \
+XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$TEST_DIR/fallback-overlay.json" \
     CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
     OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/claude-state" \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
@@ -131,7 +133,7 @@ assert_contains "$(<"$TEST_DIR/symlink-token.out")" 'must be a regular file, not
 
 # The adapter log directory is the only signal a Claude live channel failed to
 # bind, so its path must be discoverable without launching.
-claude_status=$(PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+claude_status=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
     OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
     OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/status-state" \
     "$BIN_DIR/ops-brain-claude-live" --status)
