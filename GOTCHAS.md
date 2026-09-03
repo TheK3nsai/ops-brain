@@ -101,6 +101,8 @@
 
 ## GitHub PR Workflow
 
+- **Every CC commits as the same GitHub account, so no CC can formally approve another CC's PR.** `gh pr review --approve` fails with `Review Can not approve your own pull request` (hit on PR #112, 2026-09-03). Post the findings-first pass as a PR comment (`gh pr comment`) and say so on the bus; the review-then-merge role split still holds, GitHub just can't record it as an approval. Don't add a required-reviewer branch rule for this repo — it would block every merge.
+
 - **Canceling a duplicate Actions run can make an otherwise green PR red.** Closing and reopening PR #106 to refresh a stale head association started a second check suite for the same commit. GitHub's PR rollup followed the newer check names, so canceling that duplicate left the latest `Security Audit` canceled even though the earlier suite was fully green; the audit had to be rerun before the PR was green again. If a refresh creates duplicate runs, let the newest required checks finish. An older green run is useful evidence, but it does not guarantee the current PR rollup stays green.
 
 - **Editing a PR body does not retract it — GitHub keeps the old revisions, and they stay world-readable.** Measured 2026-08-24 on PR #85. When a fleet-private string reaches a PR description, the reflex is to edit the body and force-push; the fleet has treated that as remediation. It isn't. GitHub retains every prior revision as a `userContentEdits` node with `deletedAt: null`, queryable over GraphQL by anyone with read access — which on a public repo is everyone:
