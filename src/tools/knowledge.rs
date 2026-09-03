@@ -157,6 +157,26 @@ fn insert_cross_client_withheld(
 const UNSCOPED_NOTE: &str =
     "unscoped query — cross-client withholding is not applied; pass client_slug to enable the safety gate";
 
+fn insert_page_metadata(
+    results: &mut serde_json::Map<String, serde_json::Value>,
+    page: crate::pagination::PageRequest,
+    has_more_by_table: serde_json::Map<String, serde_json::Value>,
+) {
+    let has_more = has_more_by_table
+        .values()
+        .any(|value| value.as_bool() == Some(true));
+    results.insert("limit".to_string(), serde_json::json!(page.limit));
+    results.insert(
+        "limit_clamped".to_string(),
+        serde_json::json!(page.limit_clamped),
+    );
+    results.insert("has_more".to_string(), serde_json::json!(has_more));
+    results.insert(
+        "has_more_by_table".to_string(),
+        serde_json::Value::Object(has_more_by_table),
+    );
+}
+
 /// v1.6: knowledge staleness threshold in days. An entry is considered stale
 /// if (now - last_verified_at.unwrap_or(created_at)) exceeds this. Computed
 /// at read time — no schema column, no background job.
@@ -227,7 +247,7 @@ pub struct SearchKnowledgeParams {
     pub client_slug: Option<String>,
     /// Release cross-client results withheld due to scope mismatch
     pub acknowledge_cross_client: Option<bool>,
-    /// Max results per table (default 20)
+    /// Max results per table (default 20, clamped to 1..=200)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
     /// Snippets instead of full bodies (67KB→~5KB). Default: true multi-table, false single-table.
@@ -516,13 +536,14 @@ pub async fn handle_search_knowledge(
 
     if browse_mode {
         let compact = p.compact.unwrap_or(true);
+        let page = crate::pagination::PageRequest::new(p.limit, 20);
         return browse_recent_entries(
             brain,
             &tables,
             p.category.as_deref(),
             p.client_slug.as_deref(),
             p.acknowledge_cross_client.unwrap_or(false),
-            p.limit.unwrap_or(20).clamp(1, 200),
+            page,
             compact,
         )
         .await;
@@ -547,7 +568,7 @@ pub async fn handle_search_knowledge(
         Err(r) => return r,
     };
     let acknowledge = p.acknowledge_cross_client.unwrap_or(false);
-    let limit = p.limit.unwrap_or(20).clamp(1, 200);
+    let page = crate::pagination::PageRequest::new(p.limit, 20);
 
     // Compact mode: default true for multi-table, false for single-table
     let compact = p.compact.unwrap_or(multi_table);
@@ -560,7 +581,7 @@ pub async fn handle_search_knowledge(
             mode,
             requesting_client_id,
             acknowledge,
-            limit,
+            page,
             compact,
         )
         .await;
@@ -576,6 +597,7 @@ pub async fn handle_search_knowledge(
     let emb_ref = query_embedding.as_deref();
 
     let mut results = serde_json::Map::new();
+    let mut has_more_by_table = serde_json::Map::new();
     let client_lookup = build_client_lookup(&brain.pool).await;
     let mut all_withheld: Vec<serde_json::Value> = Vec::new();
 
@@ -587,7 +609,7 @@ pub async fn handle_search_knowledge(
                         crate::repo::embedding_repo::vector_search_knowledge(
                             &brain.pool,
                             emb_ref.unwrap(),
-                            limit,
+                            page.fetch_limit(),
                         )
                         .await
                     }
@@ -596,7 +618,7 @@ pub async fn handle_search_knowledge(
                             &brain.pool,
                             &raw_query,
                             emb_ref,
-                            limit,
+                            page.fetch_limit(),
                         )
                         .await
                     }
@@ -604,13 +626,14 @@ pub async fn handle_search_knowledge(
                         crate::repo::knowledge_repo::search_knowledge(
                             &brain.pool,
                             &raw_query,
-                            limit,
+                            page.fetch_limit(),
                         )
                         .await
                     }
                 };
                 match search_result {
-                    Ok(items) => {
+                    Ok(mut items) => {
+                        let has_more = page.trim(&mut items);
                         let (final_items, withheld, audit) = process_knowledge_arm(
                             &items,
                             requesting_client_id,
@@ -622,6 +645,8 @@ pub async fn handle_search_knowledge(
                             "knowledge".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
                         );
+                        has_more_by_table
+                            .insert("knowledge".to_string(), serde_json::json!(has_more));
                         all_withheld.extend(withheld);
                         log_audit_entries(
                             &brain.pool,
@@ -647,7 +672,7 @@ pub async fn handle_search_knowledge(
                         crate::repo::embedding_repo::vector_search_handoffs(
                             &brain.pool,
                             emb_ref.unwrap(),
-                            limit,
+                            page.fetch_limit(),
                         )
                         .await
                     }
@@ -656,22 +681,29 @@ pub async fn handle_search_knowledge(
                             &brain.pool,
                             &raw_query,
                             emb_ref,
-                            limit,
+                            page.fetch_limit(),
                         )
                         .await
                     }
                     _ => {
-                        crate::repo::handoff_repo::search_handoffs(&brain.pool, &raw_query, limit)
-                            .await
+                        crate::repo::handoff_repo::search_handoffs(
+                            &brain.pool,
+                            &raw_query,
+                            page.fetch_limit(),
+                        )
+                        .await
                     }
                 };
                 match search_result {
-                    Ok(items) => {
+                    Ok(mut items) => {
+                        let has_more = page.trim(&mut items);
                         let final_items = process_handoff_arm(&items, compact);
                         results.insert(
                             "handoffs".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
                         );
+                        has_more_by_table
+                            .insert("handoffs".to_string(), serde_json::json!(has_more));
                     }
                     Err(e) => {
                         results.insert(
@@ -688,6 +720,7 @@ pub async fn handle_search_knowledge(
     if !all_withheld.is_empty() {
         insert_cross_client_withheld(&mut results, &all_withheld);
     }
+    insert_page_metadata(&mut results, page, has_more_by_table);
 
     // Inject notes about embedding availability
     if query_embedding.is_none() && brain.embedding_client.is_some() {
@@ -726,7 +759,7 @@ async fn browse_recent_entries(
     category: Option<&str>,
     client_slug: Option<&str>,
     acknowledge: bool,
-    limit: i64,
+    page: crate::pagination::PageRequest,
     compact: bool,
 ) -> CallToolResult {
     let requesting_client_id = match resolve_client_id(&brain.pool, client_slug).await {
@@ -735,6 +768,7 @@ async fn browse_recent_entries(
     };
     let client_lookup = build_client_lookup(&brain.pool).await;
     let mut results = serde_json::Map::new();
+    let mut has_more_by_table = serde_json::Map::new();
     let mut all_withheld: Vec<serde_json::Value> = Vec::new();
 
     for table in tables {
@@ -744,11 +778,12 @@ async fn browse_recent_entries(
                     &brain.pool,
                     category,
                     None,
-                    limit,
+                    page.fetch_limit(),
                 )
                 .await
                 {
-                    Ok(items) => {
+                    Ok(mut items) => {
+                        let has_more = page.trim(&mut items);
                         let (final_items, withheld, audit) = process_knowledge_arm(
                             &items,
                             requesting_client_id,
@@ -768,6 +803,8 @@ async fn browse_recent_entries(
                             "knowledge".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
                         );
+                        has_more_by_table
+                            .insert("knowledge".to_string(), serde_json::json!(has_more));
                         all_withheld.extend(withheld);
                     }
                     Err(e) => {
@@ -786,16 +823,19 @@ async fn browse_recent_entries(
                     None,
                     None,
                     false,
-                    limit,
+                    page.fetch_limit(),
                 )
                 .await
                 {
-                    Ok(items) => {
+                    Ok(mut items) => {
+                        let has_more = page.trim(&mut items);
                         let final_items = process_handoff_arm(&items, compact);
                         results.insert(
                             "handoffs".to_string(),
                             serde_json::to_value(&final_items).unwrap_or_default(),
                         );
+                        has_more_by_table
+                            .insert("handoffs".to_string(), serde_json::json!(has_more));
                     }
                     Err(e) => {
                         results.insert(
@@ -812,6 +852,7 @@ async fn browse_recent_entries(
     if !all_withheld.is_empty() {
         insert_cross_client_withheld(&mut results, &all_withheld);
     }
+    insert_page_metadata(&mut results, page, has_more_by_table);
     results.insert(
         "_browse_mode".to_string(),
         serde_json::Value::String(
@@ -836,7 +877,7 @@ async fn search_knowledge_single(
     mode: &str,
     requesting_client_id: Option<uuid::Uuid>,
     acknowledge: bool,
-    limit: i64,
+    page: crate::pagination::PageRequest,
     compact: bool,
 ) -> CallToolResult {
     let result = match mode {
@@ -846,7 +887,12 @@ async fn search_knowledge_single(
                     "Semantic search unavailable (embedding API not configured or failed)",
                 );
             };
-            crate::repo::embedding_repo::vector_search_knowledge(&brain.pool, &emb, limit).await
+            crate::repo::embedding_repo::vector_search_knowledge(
+                &brain.pool,
+                &emb,
+                page.fetch_limit(),
+            )
+            .await
         }
         "hybrid" => {
             let emb = get_query_embedding(&brain.embedding_client, query).await;
@@ -854,14 +900,18 @@ async fn search_knowledge_single(
                 &brain.pool,
                 query,
                 emb.as_deref(),
-                limit,
+                page.fetch_limit(),
             )
             .await
         }
-        _ => crate::repo::knowledge_repo::search_knowledge(&brain.pool, query, limit).await,
+        _ => {
+            crate::repo::knowledge_repo::search_knowledge(&brain.pool, query, page.fetch_limit())
+                .await
+        }
     };
     match result {
-        Ok(entries) => {
+        Ok(mut entries) => {
+            let has_more = page.trim(&mut entries);
             let client_lookup = build_client_lookup(&brain.pool).await;
             let (final_items, withheld, audit) = process_knowledge_arm(
                 &entries,
@@ -880,7 +930,13 @@ async fn search_knowledge_single(
             )
             .await;
 
-            let mut response = serde_json::json!({ "knowledge": final_items });
+            let mut response = serde_json::json!({
+                "knowledge": final_items,
+                "limit": page.limit,
+                "limit_clamped": page.limit_clamped,
+                "has_more": has_more,
+                "has_more_by_table": { "knowledge": has_more },
+            });
             if !withheld.is_empty() {
                 response["cross_client_withheld"] = serde_json::json!(withheld);
             }

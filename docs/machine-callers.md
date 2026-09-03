@@ -190,6 +190,9 @@ handoff predates it. `limit` defaults to 50 (max 200).
 ```json
 {
   "count": 1,
+  "limit": 50,
+  "limit_clamped": false,
+  "has_more": false,
   "items": [
     {
       "id": "0198...",
@@ -210,6 +213,9 @@ handoff predates it. `limit` defaults to 50 (max 200).
 
 Items are deliberately body-free so a short-interval poll stays a few hundred
 bytes; the woken agent fetches each exact full body with MCP `get_handoff`.
+`limit` is the effective page size, `limit_clamped` reports when a requested
+value was forced into the supported 1–200 range, and `has_more` is true when
+another matching row exists beyond the returned page.
 A typical wake shim: poll every 5 minutes with a persisted
 `since` cursor; when `count > 0`, kick off a local headless agent run and
 advance the cursor once the run has picked the work up.

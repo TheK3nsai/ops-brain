@@ -70,7 +70,7 @@ pub struct ListRepliesToMeParams {
     /// Optional ISO-8601 timestamp; only replies created after this time
     /// are returned.
     pub since: Option<String>,
-    /// Max results (default 20)
+    /// Max results (default 20, clamped to 1..=200)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
 }
@@ -100,7 +100,7 @@ pub struct ListHandoffsParams {
     /// Include notify-class handoffs alongside action ones (default: false).
     /// Ignored when `category` is set explicitly.
     pub include_notify: Option<bool>,
-    /// Max results (default 20)
+    /// Max results (default 20, clamped to 1..=200)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
     /// Truncate body to 200 chars (default: true). Set false for full bodies.
@@ -317,10 +317,25 @@ pub async fn handle_list_replies_to_me(
         },
         None => None,
     };
-    let limit = p.limit.unwrap_or(20).clamp(1, 200);
+    let page = crate::pagination::PageRequest::new(p.limit, 20);
 
-    match crate::repo::handoff_repo::list_replies_to_me(&brain.pool, &agent, since, limit).await {
-        Ok(replies) => json_result(&serde_json::json!({ "replies": replies })),
+    match crate::repo::handoff_repo::list_replies_to_me(
+        &brain.pool,
+        &agent,
+        since,
+        page.fetch_limit(),
+    )
+    .await
+    {
+        Ok(mut replies) => {
+            let has_more = page.trim(&mut replies);
+            json_result(&serde_json::json!({
+                "replies": replies,
+                "limit": page.limit,
+                "limit_clamped": page.limit_clamped,
+                "has_more": has_more,
+            }))
+        }
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -393,7 +408,7 @@ pub async fn handle_list_handoffs(
     brain: &super::OpsBrain,
     p: ListHandoffsParams,
 ) -> CallToolResult {
-    let limit = p.limit.unwrap_or(20).clamp(1, 200);
+    let page = crate::pagination::PageRequest::new(p.limit, 20);
     let compact = p.compact.unwrap_or(true);
     let include_notify = p.include_notify.unwrap_or(false);
 
@@ -436,11 +451,12 @@ pub async fn handle_list_handoffs(
         from_agent_filter.as_deref(),
         p.category.as_deref(),
         include_notify,
-        limit,
+        page.fetch_limit(),
     )
     .await
     {
-        Ok(handoffs) => {
+        Ok(mut handoffs) => {
+            let has_more = page.trim(&mut handoffs);
             if compact {
                 let compacted: Vec<serde_json::Value> = handoffs
                     .iter()
@@ -462,9 +478,19 @@ pub async fn handle_list_handoffs(
                         Some(val)
                     })
                     .collect();
-                json_result(&serde_json::json!({ "handoffs": compacted }))
+                json_result(&serde_json::json!({
+                    "handoffs": compacted,
+                    "limit": page.limit,
+                    "limit_clamped": page.limit_clamped,
+                    "has_more": has_more,
+                }))
             } else {
-                json_result(&serde_json::json!({ "handoffs": handoffs }))
+                json_result(&serde_json::json!({
+                    "handoffs": handoffs,
+                    "limit": page.limit,
+                    "limit_clamped": page.limit_clamped,
+                    "has_more": has_more,
+                }))
             }
         }
         Err(e) => error_result(&format!("Database error: {e}")),

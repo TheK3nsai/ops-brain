@@ -1983,6 +1983,360 @@ mod readiness_tests {
     }
 }
 
+// ===== Bounded-page completeness metadata =====
+
+mod pagination_surface_tests {
+    use super::*;
+    use axum::extract::{Extension, Query, State};
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use ops_brain::api::{ApiState, PendingQuery};
+    use ops_brain::auth::CallerClass;
+    use ops_brain::embeddings::EmbeddingClient;
+    use ops_brain::tools::coordination::{
+        handle_list_handoffs, handle_list_replies_to_me, ListHandoffsParams, ListRepliesToMeParams,
+    };
+    use ops_brain::tools::knowledge::{handle_search_knowledge, SearchKnowledgeParams};
+    use ops_brain::tools::OpsBrain;
+    use std::sync::Arc;
+
+    async fn embedding_response() -> Json<serde_json::Value> {
+        let mut embedding = vec![0.0; 768];
+        embedding[0] = 1.0;
+        Json(serde_json::json!({
+            "data": [{ "embedding": embedding, "index": 0 }]
+        }))
+    }
+
+    async fn start_embedding_server() -> (EmbeddingClient, tokio::task::JoinHandle<()>) {
+        let app = Router::new().route("/embeddings", post(embedding_response));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            EmbeddingClient::new(
+                format!("http://{addr}/embeddings"),
+                "test-embedding".to_string(),
+                None,
+            ),
+            server,
+        )
+    }
+
+    #[tokio::test]
+    async fn handoff_lists_report_probe_rows_and_limit_clamps() {
+        let pool = pool().await;
+        let brain = OpsBrain::new(pool.clone(), None);
+        let suffix = Uuid::now_v7().simple().to_string();
+        let sender = format!("pagination-sender-{suffix}");
+        let reply_sender = format!("pagination-replier-{suffix}");
+
+        let parent = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            &sender,
+            None,
+            "normal",
+            "action",
+            "pagination parent",
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        for n in 0..3 {
+            ops_brain::repo::handoff_repo::create_handoff(
+                &pool,
+                &reply_sender,
+                Some(&sender),
+                "normal",
+                "action",
+                &format!("pagination reply {n}"),
+                "body",
+                None,
+                Some(parent.id),
+            )
+            .await
+            .unwrap();
+        }
+
+        let listed = handle_list_handoffs(
+            &brain,
+            ListHandoffsParams {
+                status: None,
+                to_agent: None,
+                from_agent: Some(reply_sender.clone()),
+                category: None,
+                include_notify: None,
+                limit: Some(2),
+                compact: Some(false),
+            },
+        )
+        .await
+        .structured_content
+        .expect("structured list response");
+        assert_eq!(listed["handoffs"].as_array().unwrap().len(), 2);
+        assert_eq!(listed["limit"], 2);
+        assert_eq!(listed["limit_clamped"], false);
+        assert_eq!(listed["has_more"], true);
+
+        let replies = handle_list_replies_to_me(
+            &brain,
+            ListRepliesToMeParams {
+                agent_name: sender.clone(),
+                since: None,
+                limit: Some(500),
+            },
+            None,
+        )
+        .await
+        .structured_content
+        .expect("structured replies response");
+        assert_eq!(replies["replies"].as_array().unwrap().len(), 3);
+        assert_eq!(replies["limit"], 200);
+        assert_eq!(replies["limit_clamped"], true);
+        assert_eq!(replies["has_more"], false);
+
+        sqlx::query("DELETE FROM handoffs WHERE in_reply_to = $1")
+            .bind(parent.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(parent.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn pending_rest_reports_when_another_row_exists() {
+        let pool = pool().await;
+        let agent = format!("pagination-pending-{}", Uuid::now_v7().simple());
+        for n in 0..3 {
+            ops_brain::repo::handoff_repo::create_handoff(
+                &pool,
+                "Pagination-Producer",
+                Some(&agent),
+                "normal",
+                "action",
+                &format!("pending pagination {n}"),
+                "body",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+
+        let response = ops_brain::api::list_pending(
+            State(Arc::new(ApiState { pool: pool.clone() })),
+            Extension(CallerClass::Full),
+            Query(PendingQuery {
+                agent: agent.clone(),
+                since: None,
+                limit: Some(2),
+            }),
+        )
+        .await
+        .expect("pending response")
+        .0;
+        assert_eq!(response.count, 2);
+        assert_eq!(response.limit, 2);
+        assert!(!response.limit_clamped);
+        assert!(response.has_more);
+
+        sqlx::query("DELETE FROM handoffs WHERE to_agent = $1")
+            .bind(&agent)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn search_and_browse_report_per_table_completeness() {
+        let pool = pool().await;
+        let brain = OpsBrain::new(pool.clone(), None);
+        let suffix = Uuid::now_v7().simple().to_string();
+        let category = format!("pagination-category-{suffix}");
+        let term = format!("paginationterm{suffix}");
+        for n in 0..3 {
+            ops_brain::repo::knowledge_repo::add_knowledge(
+                &pool,
+                &format!("{term} entry {n}"),
+                "pagination body",
+                Some(&category),
+                &[],
+                None,
+                false,
+                Some("Codex-Stealth"),
+            )
+            .await
+            .unwrap();
+        }
+        let handoff = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            "Pagination-Search",
+            None,
+            "normal",
+            "action",
+            &format!("{term} handoff"),
+            "pagination body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        for query in ["*", term.as_str()] {
+            let response = handle_search_knowledge(
+                &brain,
+                SearchKnowledgeParams {
+                    query: Some(query.to_string()),
+                    mode: Some("fts".to_string()),
+                    tables: None,
+                    category: (query == "*").then(|| category.clone()),
+                    client_slug: None,
+                    acknowledge_cross_client: None,
+                    limit: Some(2),
+                    compact: Some(false),
+                },
+            )
+            .await
+            .structured_content
+            .expect("structured search response");
+            assert_eq!(response["knowledge"].as_array().unwrap().len(), 2);
+            assert_eq!(response["limit"], 2);
+            assert_eq!(response["limit_clamped"], false);
+            assert_eq!(response["has_more"], true);
+            assert_eq!(response["has_more_by_table"]["knowledge"], true);
+        }
+
+        let multi = handle_search_knowledge(
+            &brain,
+            SearchKnowledgeParams {
+                query: Some(term),
+                mode: Some("fts".to_string()),
+                tables: Some(vec!["knowledge".to_string(), "handoffs".to_string()]),
+                category: None,
+                client_slug: None,
+                acknowledge_cross_client: None,
+                limit: Some(2),
+                compact: Some(false),
+            },
+        )
+        .await
+        .structured_content
+        .expect("structured multi-table search response");
+        assert_eq!(multi["has_more"], true);
+        assert_eq!(multi["has_more_by_table"]["knowledge"], true);
+        assert_eq!(multi["has_more_by_table"]["handoffs"], false);
+
+        sqlx::query("DELETE FROM knowledge WHERE category = $1")
+            .bind(&category)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(handoff.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn hybrid_search_probes_beyond_fifty_candidates_per_table() {
+        let pool = pool().await;
+        let (embedding_client, server) = start_embedding_server().await;
+        let brain = OpsBrain::new(pool.clone(), Some(embedding_client));
+        let suffix = Uuid::now_v7().simple().to_string();
+        let category = format!("hybrid-pagination-{suffix}");
+        let sender = format!("hybrid-pagination-{suffix}");
+        let term = format!("hybridpaginationterm{suffix}");
+        let mut embedding = vec![0.0; 768];
+        embedding[0] = 1.0;
+
+        // Every row is present in both the FTS and vector candidate sets. A
+        // hard-coded 50-row CTE cannot return the 51st probe row and would
+        // therefore make this handler response incorrectly report complete.
+        for n in 0..51 {
+            let knowledge = ops_brain::repo::knowledge_repo::add_knowledge(
+                &pool,
+                &format!("{term} knowledge {n}"),
+                "hybrid pagination body",
+                Some(&category),
+                &[],
+                None,
+                false,
+                Some("Codex-Stealth"),
+            )
+            .await
+            .unwrap();
+            ops_brain::repo::embedding_repo::store_knowledge_embedding(
+                &pool,
+                knowledge.id,
+                &embedding,
+            )
+            .await
+            .unwrap();
+
+            let handoff = ops_brain::repo::handoff_repo::create_handoff(
+                &pool,
+                &sender,
+                None,
+                "normal",
+                "action",
+                &format!("{term} handoff {n}"),
+                "hybrid pagination body",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            ops_brain::repo::embedding_repo::store_handoff_embedding(&pool, handoff.id, &embedding)
+                .await
+                .unwrap();
+        }
+
+        let response = handle_search_knowledge(
+            &brain,
+            SearchKnowledgeParams {
+                query: Some(term),
+                mode: Some("hybrid".to_string()),
+                tables: Some(vec!["knowledge".to_string(), "handoffs".to_string()]),
+                category: None,
+                client_slug: None,
+                acknowledge_cross_client: None,
+                limit: Some(50),
+                compact: Some(false),
+            },
+        )
+        .await
+        .structured_content
+        .expect("structured hybrid search response");
+
+        assert_eq!(response["knowledge"].as_array().unwrap().len(), 50);
+        assert_eq!(response["handoffs"].as_array().unwrap().len(), 50);
+        assert_eq!(response["has_more"], true);
+        assert_eq!(response["has_more_by_table"]["knowledge"], true);
+        assert_eq!(response["has_more_by_table"]["handoffs"], true);
+
+        sqlx::query("DELETE FROM knowledge WHERE category = $1")
+            .bind(&category)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = $1")
+            .bind(&sender)
+            .execute(&pool)
+            .await
+            .unwrap();
+        server.abort();
+    }
+}
+
 // ===== Per-agent identity through the real HTTP MCP transport =====
 //
 // This locks the TypeId-sensitive path documented in GOTCHAS.md: axum auth

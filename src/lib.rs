@@ -7,6 +7,7 @@ pub mod db;
 pub mod embeddings;
 pub mod live;
 pub mod models;
+mod pagination;
 pub mod repo;
 pub mod tools;
 pub mod validation;
