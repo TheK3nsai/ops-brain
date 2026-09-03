@@ -285,6 +285,157 @@ assert_contains "$(<"$TEST_DIR/unsafe-link.out")" 'non-owned launcher symlink'
 [[ ! -e $TEST_DIR/unsafe-bin/ops-brain-codex-live ]] || fail 'installer partially created the second launcher before preflight failed'
 [[ ! -e $TEST_DIR/unsafe-bin/ops-brain-client ]] || fail 'installer partially created the client command before preflight failed'
 
+# --- main-launcher (--auto) mode ------------------------------------------
+# A plain recorder for the passthrough paths: it must run with no overlay,
+# no Channel flag, and no bearer, exactly as if the launcher were absent.
+mkdir -p -- "$TEST_DIR/plain-bin"
+# Fixture must expand at runtime.
+# shellcheck disable=SC2016
+printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    '[[ -z ${OPS_BRAIN_AGENT_TOKEN:-} ]] || exit 42' \
+    'printf "%s\n" "$@" >"$OPS_BRAIN_TEST_CAPTURE.args"' \
+    'printf "%s" "${CLAUDE_CONFIG_DIR:-<unset>}" >"$OPS_BRAIN_TEST_CAPTURE.dir"' \
+    'exit 0' >"$TEST_DIR/plain-bin/claude"
+cp -- "$TEST_DIR/plain-bin/claude" "$TEST_DIR/plain-bin/codex"
+chmod +x "$TEST_DIR/plain-bin/claude" "$TEST_DIR/plain-bin/codex"
+# XDG_CONFIG_HOME is pinned so the developer's real profile cannot leak into
+# the label or identity under test.
+LIVE_ENV=(OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE"
+    OPS_BRAIN_EXPECTED_AGENT=CC-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/auto-state"
+    CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" XDG_RUNTIME_DIR="$TEST_DIR/runtime"
+    XDG_CONFIG_HOME="$UNCONFIGURED_XDG")
+
+# This test process has no terminal, so --auto must pass through untouched
+# even when live is fully configured: a headless or piped session cannot
+# render a channel event and must never register a peer.
+capture="$TEST_DIR/auto-notty"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-claude" --auto --resume abc </dev/null >"$capture.out" 2>&1
+assert_contains "$(<"$capture.args")" '--resume'
+[[ $(<"$capture.args") != *'dangerously-load-development-channels'* ]] || fail '--auto opened a Channel without a terminal'
+[[ $(<"$capture.dir") == "$TEST_DIR/claude-launch-base" ]] || fail '--auto passthrough replaced CLAUDE_CONFIG_DIR'
+[[ ! -s $capture.out ]] || fail "--auto passthrough should be silent, got: $(<"$capture.out")"
+[[ ! -e "$TEST_DIR/auto-state" ]] || fail '--auto passthrough created the adapter state directory'
+
+# --no-live and OPS_BRAIN_LIVE=off are the announced, deliberate ordinary
+# launches; they must say so once and pass every argument through.
+capture="$TEST_DIR/no-live"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-claude" --no-live -p 'hello world' >"$capture.out" 2>&1
+assert_contains "$(<"$capture.out")" 'ops-brain live: off (requested)'
+assert_contains "$(<"$capture.args")" 'hello world'
+capture="$TEST_DIR/env-off"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" OPS_BRAIN_LIVE=off env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-codex" --auto >"$capture.out" 2>&1
+assert_contains "$(<"$capture.out")" 'ops-brain live: off (requested)'
+[[ -f $capture.args ]] || fail 'OPS_BRAIN_LIVE=off did not reach the real codex'
+
+# Without --auto the explicit command keeps failing closed: no terminal
+# prompt, no ordinary fallback, nonzero exit.
+if PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$TEST_DIR/explicit" \
+    XDG_CONFIG_HOME="$UNCONFIGURED_XDG" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
+    "$BIN_DIR/ops-brain-claude" >"$TEST_DIR/explicit.out" 2>&1; then
+    fail 'explicit launcher launched ordinary Claude on a failed preflight'
+fi
+[[ ! -e "$TEST_DIR/explicit.args" ]] || fail 'explicit launcher fell back to ordinary Claude'
+assert_contains "$(<"$TEST_DIR/explicit.out")" 'OPS_BRAIN_AGENT_TOKEN_FILE is required'
+
+# The label carries the working directory so sibling sessions of one identity
+# can be told apart; unsafe characters are folded and the length is bounded.
+mkdir -p -- "$TEST_DIR/work/ops brain (v2)"
+label_dry=$(cd "$TEST_DIR/work/ops brain (v2)" && env "${LIVE_ENV[@]}" "$BIN_DIR/ops-brain-claude" --dry-run)
+assert_contains "$label_dry" 'label: claude-code.ops-brain--v2-'
+long_dir="$TEST_DIR/work/$(printf 'd%.0s' {1..90})"
+mkdir -p -- "$long_dir"
+long_label=$(cd "$long_dir" && env "${LIVE_ENV[@]}" "$BIN_DIR/ops-brain-claude" --dry-run | sed -n 's/^label: //p')
+((${#long_label} == 80)) || fail "label was not bounded to 80 bytes: ${#long_label}"
+
+# The terminal paths need a pty with the child as its session leader, so the
+# launcher's `-t` checks and its /dev/tty prompt see a real terminal. Python's
+# pty module does exactly that; util-linux `script` does not allocate one when
+# its own stdin is a pipe.
+PTY_RUNNER='
+import os, pty, sys
+out, cmd = sys.argv[1], sys.argv[2:]
+with open(out, "wb") as sink:
+    def read(fd):
+        data = os.read(fd, 1024)
+        sink.write(data)
+        return data
+    status = pty.spawn(cmd, read)
+sys.exit(os.waitstatus_to_exitcode(status))
+'
+if python3 -c 'import pty' 2>/dev/null; then
+    # usage: pty_launch INPUT OUTFILE [VAR=value ...] -- command args...
+    pty_launch() {
+        local input=$1 out=$2; shift 2
+        local assigns=()
+        while (($#)) && [[ $1 != -- ]]; do assigns+=("$1"); shift; done
+        shift
+        (
+            ((${#assigns[@]} == 0)) || export "${assigns[@]}"
+            printf '%s' "$input" | python3 -c "$PTY_RUNNER" "$out" "$@" >/dev/null 2>&1
+        )
+    }
+    # Attended, configured: --auto goes live through the overlay exactly like
+    # the explicit command, and announces the identity and label.
+    capture="$TEST_DIR/auto-tty"
+    pty_launch '' "$capture.pty" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" "${LIVE_ENV[@]}" \
+        -- "$BIN_DIR/ops-brain-claude" --auto || fail 'attended --auto launch failed'
+    assert_contains "$(<"$capture.args")" '--dangerously-load-development-channels'
+    assert_contains "$(<"$capture")" '"ops-brain-live"'
+    assert_contains "$(<"$capture.pty")" 'ops-brain live: connecting as CC-Stealth'
+    [[ ! -e $(<"$capture.dir") ]] || fail 'attended --auto left its overlay behind'
+    # A subcommand on a terminal still passes through.
+    capture="$TEST_DIR/auto-tty-sub"
+    pty_launch '' "$capture.pty" PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" "${LIVE_ENV[@]}" \
+        -- "$BIN_DIR/ops-brain-claude" --auto mcp list || fail 'subcommand passthrough failed'
+    assert_contains "$(<"$capture.args")" 'mcp'
+    [[ $(<"$capture.args") != *'dangerously'* ]] || fail 'a subcommand opened a Channel'
+    # Attended, unconfigured: the operator is asked; "n" (and an empty answer)
+    # exits nonzero without launching, "y" launches ordinary and says so.
+    capture="$TEST_DIR/auto-tty-decline"
+    if pty_launch $'n\n' "$capture.pty" PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" XDG_CONFIG_HOME="$UNCONFIGURED_XDG" \
+        -- "$BIN_DIR/ops-brain-claude" --auto; then
+        fail 'declined fallback still exited zero'
+    fi
+    [[ ! -e "$capture.args" ]] || fail 'declined fallback launched Claude anyway'
+    assert_contains "$(<"$capture.pty")" 'ops-brain live: NOT available'
+    assert_contains "$(<"$capture.pty")" 'Continue without live delivery? [y/N]'
+    assert_contains "$(<"$capture.pty")" 'declined ordinary fallback'
+    capture="$TEST_DIR/auto-tty-accept"
+    pty_launch $'y\n' "$capture.pty" PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" XDG_CONFIG_HOME="$UNCONFIGURED_XDG" \
+        -- "$BIN_DIR/ops-brain-claude" --auto --resume || fail 'accepted fallback failed'
+    assert_contains "$(<"$capture.args")" '--resume'
+    assert_contains "$(<"$capture.pty")" 'ops-brain live: off (operator choice)'
+    # Codex: same contract on its own launcher.
+    capture="$TEST_DIR/codex-tty-decline"
+    if pty_launch $'\n' "$capture.pty" PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" XDG_CONFIG_HOME="$UNCONFIGURED_XDG" \
+        -- "$BIN_DIR/ops-brain-codex" --auto; then
+        fail 'Codex empty answer still exited zero'
+    fi
+    [[ ! -e "$capture.args" ]] || fail 'Codex declined fallback launched anyway'
+    capture="$TEST_DIR/codex-tty-sub"
+    pty_launch '' "$capture.pty" PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" "${LIVE_ENV[@]}" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth \
+        -- "$BIN_DIR/ops-brain-codex" --auto exec 'do the thing' || fail 'codex exec passthrough failed'
+    assert_contains "$(<"$capture.args")" 'do the thing'
+    [[ $(<"$capture.args") != *'--remote'* ]] || fail 'codex exec was routed through the App Server'
+else
+    echo 'note: python3 pty module not available; attended --auto paths not exercised' >&2
+fi
+
+# The shell integration defines functions only in interactive shells and
+# carries no credential material.
+[[ -f $SCRIPT_DIR/ops-brain-shell-init.sh ]] || fail 'shell init file missing'
+shell_fns=$(bash -ic ". '$SCRIPT_DIR/ops-brain-shell-init.sh'; declare -F claude codex" 2>/dev/null)
+assert_contains "$shell_fns" 'claude'
+assert_contains "$shell_fns" 'codex'
+non_interactive=$(bash -c ". '$SCRIPT_DIR/ops-brain-shell-init.sh'; declare -F claude codex; echo end")
+[[ $non_interactive == 'end' ]] || fail 'shell init defined functions in a non-interactive shell'
+! grep -Eq 'OPS_BRAIN_AGENT_TOKEN|Authorization|export ' "$SCRIPT_DIR/ops-brain-shell-init.sh" || fail 'shell init touches credentials or the environment'
+assert_contains "$("$SCRIPT_DIR/install-live-adapters" --status --bin-dir "$BIN_DIR")" 'shell init:'
+
 for file in \
     "$SCRIPT_DIR/Install-OpsBrain.ps1" \
     "$SCRIPT_DIR/read-ops-brain-agent-token.ps1" \

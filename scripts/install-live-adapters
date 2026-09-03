@@ -71,6 +71,7 @@ if [[ $MODE == status ]]; then
     printf 'codex:   %s\n' "$(command -v codex || echo '<missing>')"
     printf 'claude adapter deps: %s\n' "$(adapter_deps_status claude-channel)"
     printf 'codex adapter deps:  %s\n' "$(adapter_deps_status codex-app-server)"
+    printf 'shell init: %s\n' "$REPO_DIR/scripts/ops-brain-shell-init.sh"
     for name in ops-brain-client ops-brain-claude ops-brain-codex ops-brain-claude-live ops-brain-codex-live; do
         target="$BIN_DIR/$name"
         if [[ -L $target ]]; then
@@ -142,3 +143,4 @@ done
 
 printf 'installed ops-brain client commands in %s\n' "$BIN_DIR"
 printf '%s\n' 'configure profiles with ops-brain-client configure claude|codex, then run ops-brain-claude or ops-brain-codex'
+printf 'to make plain claude and codex launches go live from an interactive shell, add to ~/.bashrc or ~/.zshrc:\n  . %q\n' "$REPO_DIR/scripts/ops-brain-shell-init.sh"

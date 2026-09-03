@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Plain `claude` and `codex` can be the live launchers on Linux.** Both
+  launchers gained `--auto`, the main-launcher mode: an attended foreground
+  TUI goes live through the existing overlay/App Server path, while headless
+  (`-p`, `codex exec`), piped, subcommand, `--version` and `--help`
+  invocations pass straight through to the real binary with no adapter and no
+  peer. A failed preflight asks on the terminal and only an explicit `y`
+  launches an ordinary session, announced; anything else exits nonzero.
+  `--no-live` / `OPS_BRAIN_LIVE=off` is the announced deliberate opt-out. The
+  explicit commands keep failing closed without a prompt and remain the
+  rollout boundary. `scripts/ops-brain-shell-init.sh` defines the `claude` and
+  `codex` shell functions for interactive shells; it carries no credential and
+  is invisible to scripts, timers and wake shims. Labels now carry the working
+  directory basename so sibling sessions under one identity are tellable
+  apart, the Claude channel's `list_live_peers` reports the session's own peer
+  under `self`, a lane lost after connect is announced inside the session as a
+  `lane_status` channel event, a second attended Codex session takes a free
+  App Server port, and adapter logs older than 30 days are pruned at launch.
+  Windows launchers are unchanged; the mirror is tracked in `TODO.md`.
+
 ### Changed
 
 - **The Windows and Linux live pairs have complete attended certifications.**

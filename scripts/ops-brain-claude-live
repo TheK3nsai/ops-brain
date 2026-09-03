@@ -16,16 +16,30 @@ LABEL="${OPS_BRAIN_LIVE_LABEL:-}"
 PROFILE_FILE="${OPS_BRAIN_CLAUDE_PROFILE:-}"
 STATE_DIR="${OPS_BRAIN_LIVE_STATE_DIR:-$HOME/.local/state/ops-brain-live}"
 PROFILE_ERROR=''
+PROFILE_ERROR_DEFERRED=false
 CHANNEL_SERVER=ops-brain-live
 unset OPS_BRAIN_AGENT_TOKEN
 
 usage() {
     cat <<'EOF'
-Usage: ops-brain-claude [--status|--dry-run] [--profile FILE] [-- CLAUDE_ARGS...]
+Usage: ops-brain-claude [--status|--dry-run] [--auto] [--no-live] [--profile FILE] [-- CLAUDE_ARGS...]
 
 Launch Claude Code with ops-brain online delivery enabled for this foreground
 session. The launcher uses a private, per-launch Claude config overlay so the
 Channel registration cannot affect sibling or wake sessions.
+
+Modes:
+  (default)   live is required: any preflight failure exits nonzero
+  --auto      main-launcher mode for an interactive shell function. Attended
+              TTY launches go live; headless (-p/--print), piped, subcommand,
+              --version and --help invocations pass straight through to Claude
+              Code untouched. A preflight failure asks the operator on the
+              terminal before continuing without live; it never falls back
+              silently.
+  --no-live   ordinary Claude Code, announced once on stderr
+  OPS_BRAIN_LIVE=off in the environment is the same as --no-live.
+Any other argument is passed to Claude Code; run `command claude --help` for
+its options.
 
 Environment:
   OPS_BRAIN_LIVE_URL          required wss://host/live endpoint
@@ -70,10 +84,14 @@ validate_live_url() {
 }
 
 mode=run
+auto=false
+live_requested=true
 while (($#)); do
     case "$1" in
         --status) mode=status; shift ;;
         --dry-run) mode=dry; shift ;;
+        --auto) auto=true; shift ;;
+        --no-live) live_requested=false; shift ;;
         --profile)
             (($# >= 2)) || { echo '--profile requires a path' >&2; exit 2; }
             PROFILE_FILE=$2
@@ -84,6 +102,49 @@ while (($#)); do
         *) break ;;
     esac
 done
+case "${OPS_BRAIN_LIVE:-}" in
+    off|0|false) live_requested=false ;;
+esac
+
+# Ordinary Claude Code, exactly as if the launcher were not installed. Used
+# for every path that must not open a live peer.
+run_ordinary() {
+    exec claude "$@"
+}
+
+# --auto only ever goes live for an attended foreground TUI. Everything a
+# script, a wake shim, a pipe, or a subcommand could be doing passes through
+# untouched: a headless session cannot render a channel event, and a peer
+# without a sink is the "healthy session, absent lane" defect.
+# Returns 0 when the launch must stay ordinary.
+# Deliberately not run inside $(...): a command substitution makes stdout a
+# pipe and would report every launch as unattended.
+auto_passthrough_reason() {
+    [[ -t 0 && -t 1 ]] || return 0
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -p|--print) return 0 ;;
+            -v|--version|-h|--help) return 0 ;;
+            --) break ;;
+        esac
+    done
+    if (($#)) && [[ $1 != -* ]]; then
+        case "$1" in
+            mcp|auth|login|logout|doctor|update|install|plugin|plugins|agents|config|setup-token|migrate-installer|remote-control|rc)
+                return 0 ;;
+        esac
+    fi
+    return 1
+}
+
+if [[ $mode == run && $live_requested == false ]]; then
+    echo 'ops-brain live: off (requested); ordinary Claude Code session' >&2
+    run_ordinary "$@"
+fi
+if [[ $mode == run && $auto == true ]] && auto_passthrough_reason "$@"; then
+    run_ordinary "$@"
+fi
 
 if [[ -f $PROFILE_HELPER ]]; then
     if [[ -z $PROFILE_FILE ]]; then
@@ -111,6 +172,8 @@ if [[ -f $PROFILE_HELPER ]]; then
             [[ -n $TOKEN_FILE ]] || TOKEN_FILE=$profile_token_file
             [[ -n $EXPECTED_AGENT ]] || EXPECTED_AGENT=$profile_agent
             [[ -n $LABEL ]] || LABEL=$profile_label
+        elif [[ $mode == run ]]; then
+            PROFILE_ERROR_DEFERRED=true
         elif [[ $mode != status ]]; then
             printf '%s\n' "$PROFILE_ERROR" >&2
             exit 2
@@ -118,6 +181,21 @@ if [[ -f $PROFILE_HELPER ]]; then
     fi
 fi
 LABEL="${LABEL:-claude-code}"
+# With several attended sessions under one identity, the working directory is
+# what tells them apart for a remote sender. The label stays self-reported,
+# non-sensitive metadata; peer_id remains the only routing key.
+label_with_cwd() {
+    local base=$1 dir suffix
+    dir=$(basename -- "$PWD")
+    suffix=${dir//[^A-Za-z0-9._-]/-}
+    suffix=${suffix#.}
+    [[ -n $suffix ]] || { printf '%s' "$base"; return; }
+    local combined="$base.$suffix"
+    printf '%s' "${combined:0:80}"
+}
+if [[ $mode == run || $mode == dry ]]; then
+    LABEL=$(label_with_cwd "$LABEL")
+fi
 
 token_status='unset'
 if [[ -n $TOKEN_FILE && -f $TOKEN_FILE ]]; then
@@ -155,32 +233,47 @@ if [[ $mode == status ]]; then
     exit 0
 fi
 
-validate_live_url || { echo 'OPS_BRAIN_LIVE_URL is required and must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment' >&2; exit 2; }
-[[ -n $TOKEN_FILE ]] || { echo 'OPS_BRAIN_AGENT_TOKEN_FILE is required' >&2; exit 2; }
-[[ $EXPECTED_AGENT =~ ^[A-Za-z0-9._-]{1,80}$ ]] || { echo 'OPS_BRAIN_EXPECTED_AGENT is required and must be a valid agent slug' >&2; exit 2; }
-[[ -f $ADAPTER ]] || { echo "adapter missing: $ADAPTER" >&2; exit 2; }
-[[ -f $OVERLAY_HELPER ]] || { echo "Claude Channel overlay helper missing: $OVERLAY_HELPER" >&2; exit 2; }
-[[ -f $TOKEN_FILE ]] || {
-    echo "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path" >&2
+# A failed preflight in --auto asks the operator on the terminal; the answer
+# is the affirmative choice the rollout contract requires before an ordinary
+# session replaces a requested live one. Anything but an explicit yes exits
+# nonzero. Outside --auto (the explicit command) the failure is final.
+preflight_fail() {
+    local reason=$1
+    if [[ $auto == true && $mode == run && -t 0 && -t 1 ]]; then
+        printf 'ops-brain live: NOT available — %s\n' "$reason" >&2
+        local answer=''
+        read -r -p 'Continue without live delivery? [y/N] ' answer </dev/tty || answer=''
+        case "$answer" in
+            y|Y|yes|YES|Yes)
+                echo 'ops-brain live: off (operator choice); ordinary Claude Code session' >&2
+                run_ordinary "${CLAUDE_ARGS[@]}"
+                ;;
+        esac
+        echo 'ops-brain live: declined ordinary fallback; not launching' >&2
+        exit 2
+    fi
+    printf '%s\n' "$reason" >&2
     exit 2
 }
-[[ -L $TOKEN_FILE ]] && {
-    echo "token file must be a regular file, not a symlink: $TOKEN_FILE" >&2
-    exit 2
-}
+CLAUDE_ARGS=("$@")
+if [[ $PROFILE_ERROR_DEFERRED == true ]]; then
+    preflight_fail "$PROFILE_ERROR"
+fi
+
+validate_live_url || preflight_fail 'OPS_BRAIN_LIVE_URL is required and must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment'
+[[ -n $TOKEN_FILE ]] || preflight_fail 'OPS_BRAIN_AGENT_TOKEN_FILE is required'
+[[ $EXPECTED_AGENT =~ ^[A-Za-z0-9._-]{1,80}$ ]] || preflight_fail 'OPS_BRAIN_EXPECTED_AGENT is required and must be a valid agent slug'
+[[ -f $ADAPTER ]] || preflight_fail "adapter missing: $ADAPTER"
+[[ -f $OVERLAY_HELPER ]] || preflight_fail "Claude Channel overlay helper missing: $OVERLAY_HELPER"
+[[ -f $TOKEN_FILE ]] || preflight_fail "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path"
+[[ -L $TOKEN_FILE ]] && preflight_fail "token file must be a regular file, not a symlink: $TOKEN_FILE"
 token_mode=$(stat -c '%a' "$TOKEN_FILE")
-[[ $token_mode == 600 || $token_mode == 400 ]] || {
-    echo "$TOKEN_FILE has mode $token_mode; require 600 or 400" >&2
-    exit 2
-}
-command -v node >/dev/null || { echo 'node is required' >&2; exit 2; }
+[[ $token_mode == 600 || $token_mode == 400 ]] || preflight_fail "$TOKEN_FILE has mode $token_mode; require 600 or 400"
+command -v node >/dev/null || preflight_fail 'node is required'
 command -v claude >/dev/null || { echo 'claude is required' >&2; exit 2; }
 
 token_check=$(<"$TOKEN_FILE")
-[[ -n $token_check && $token_check != *$'\n'* && $token_check != *$'\r'* ]] || {
-    echo 'token file must contain exactly one non-empty line' >&2
-    exit 2
-}
+[[ -n $token_check && $token_check != *$'\n'* && $token_check != *$'\r'* ]] || preflight_fail 'token file must contain exactly one non-empty line'
 unset token_check
 
 # Only the state directory path is added here; like the token file, it is a
@@ -202,6 +295,7 @@ server_definition=$(node -e '
 
 if [[ $mode == dry ]]; then
     echo "would launch: CLAUDE_CONFIG_DIR=<private-overlay> claude [--mcp-config <existing-user-config>] --dangerously-load-development-channels server:$CHANNEL_SERVER $*"
+    echo "label: $LABEL"
     exit 0
 fi
 
@@ -248,6 +342,14 @@ else
     user_mcp_config="$HOME/.claude.json"
 fi
 [[ -f $user_mcp_config ]] && user_mcp_args=(--mcp-config "$user_mcp_config")
+
+# Each launch writes a new adapter log and nothing else prunes them; keep a
+# month so a failed bind stays diagnosable without the directory growing for
+# the life of the host.
+find "$STATE_DIR" -maxdepth 1 -type f -name 'claude-adapter.*.log' -mtime +30 -delete 2>/dev/null || true
+
+printf 'ops-brain live: connecting as %s (label %s); adapter log: %s/claude-adapter.*.log\n' \
+    "$EXPECTED_AGENT" "$LABEL" "$STATE_DIR" >&2
 
 set +e
 CLAUDE_CONFIG_DIR="$overlay_dir" claude "$@" \

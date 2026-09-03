@@ -94,9 +94,23 @@ test('records a terminal identity mismatch in the adapter log', async t => {
 
   // Claude Code discards this process's stderr, so this file is the only place
   // an operator can learn the channel never bound.
+  let stdout = ''
+  child.stdout.on('data', chunk => { stdout += chunk })
   const body = await waitForLog(stateDir, /"retryable":false/)
   assert.match(body, /bound identity does not match/)
   assert.match(body, /CC-Stealth/)
+  // The session itself hears that its lane is gone, as a channel event that is
+  // marked adapter status rather than peer input.
+  const deadline = Date.now() + 5_000
+  while (!/lane_status/.test(stdout) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50))
+  const lost = stdout.split('\n').filter(Boolean).map(line => JSON.parse(line))
+    .find(frame => frame.method === 'notifications/claude/channel' && frame.params?.meta?.kind === 'lane_status')
+  assert.ok(lost, 'lane-lost channel event was not emitted')
+  assert.equal(lost.params.meta.state, 'lost')
+  assert.equal(lost.params.meta.trust, 'adapter_status')
+  assert.match(lost.params.content, /LANE LOST/)
+  assert.match(lost.params.content, /bound identity does not match/)
+  assert.doesNotMatch(lost.params.content, /fixture-token-not-a-secret/)
   const fatal = body.trim().split('\n').map(line => JSON.parse(line)).find(r => r.retryable === false)
   assert.equal(fatal.level, 'error')
   assert.equal(typeof fatal.ts, 'string')
