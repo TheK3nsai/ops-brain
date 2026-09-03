@@ -2,7 +2,7 @@
 
 Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18 via sqlx, stdio/HTTP transport.
 
-**v5.0.0 — smaller team bus.** Inventory, incidents, monitoring, and Zammad ticketing remain retired. The MCP surface is handoffs, bounded knowledge, and check-in; machine ingestion, wake polling, and stateless briefings use narrow REST endpoints.
+**Scope: a small team bus.** The MCP surface is handoffs, bounded knowledge, and check-in; machine ingestion, wake polling, and stateless briefings use narrow REST endpoints. Inventory, incidents, monitoring, and ticketing are out of scope by design (`ROADMAP.md`).
 
 For roadmap philosophy + hard stops (what we will/won't build, and why), see `ROADMAP.md`. For shipped history, see `CHANGELOG.md`.
 
@@ -86,11 +86,7 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 
 ## What NOT to Do
 
-- **Don't modify existing migrations** — checksum mismatch will break deployments
 - **Don't use compile-time sqlx macros** — we use runtime queries for flexibility
-- **Don't add tool stubs outside the `#[tool_router]` impl block** — rmcp requires them all in one place
-- **Don't write to stdout** — it's the MCP stdio transport. Use `tracing::info!()` (stderr)
-- **Don't add fictional/placeholder data to seed.sql**
 - **Don't merge without CI green**
 - **Don't add ops-brain features that duplicate local truth or create startup/session ceremony**
-- **Don't reintroduce inventory, incidents, monitoring, or ticketing tables** — inventory is owned by config management, monitoring by Uptime Kuma, and tickets/incidents by each client's own systems (Zammad was retired in v4.0.0)
+- **Don't reintroduce inventory, incidents, monitoring, or ticketing tables** — inventory is owned by config management, monitoring by Uptime Kuma, and tickets/incidents by each client's own systems
