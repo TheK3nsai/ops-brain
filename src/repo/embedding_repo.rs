@@ -39,6 +39,8 @@ pub async fn store_handoff_embedding(
 
 // ===== HYBRID RRF SEARCH =====
 
+const MIN_HYBRID_CANDIDATES: i64 = 50;
+
 pub async fn hybrid_search_knowledge(
     pool: &PgPool,
     query_text: &str,
@@ -48,32 +50,37 @@ pub async fn hybrid_search_knowledge(
     match query_embedding {
         Some(emb) => {
             let vec = Vector::from(emb.to_vec());
+            // Each source must be deep enough to supply the outer page plus
+            // its has-more probe row. Keep the historical 50-candidate floor
+            // for smaller requests so their ranking quality is unchanged.
+            let candidate_limit = limit.max(MIN_HYBRID_CANDIDATES);
             sqlx::query_as::<_, Knowledge>(&format!(
                 "WITH fts AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM knowledge
                     WHERE search_vector @@ websearch_to_tsquery('english', $1)
-                    LIMIT 50
+                    LIMIT $3
                 ),
                 vec AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $2) AS rank
                     FROM knowledge
                     WHERE embedding IS NOT NULL
                     ORDER BY embedding <=> $2
-                    LIMIT 50
+                    LIMIT $3
                 ),
                 rrf AS (
                     SELECT COALESCE(f.id, v.id) AS id,
                         COALESCE(1.0 / (60 + f.rank), 0) + COALESCE(1.0 / (60 + v.rank), 0) AS score
                     FROM fts f FULL OUTER JOIN vec v ON f.id = v.id
                     ORDER BY COALESCE(1.0 / (60 + f.rank), 0) + COALESCE(1.0 / (60 + v.rank), 0) DESC
-                    LIMIT $3
+                    LIMIT $4
                 )
                 SELECT {} FROM knowledge k JOIN rrf ON k.id = rrf.id ORDER BY rrf.score DESC",
                 super::aliased_cols(KNOWLEDGE_COLS, "k")
             ))
             .bind(query_text)
             .bind(vec)
+            .bind(candidate_limit)
             .bind(limit)
             .fetch_all(pool)
             .await
@@ -119,32 +126,34 @@ pub async fn hybrid_search_handoffs(
     match query_embedding {
         Some(emb) => {
             let vec = Vector::from(emb.to_vec());
+            let candidate_limit = limit.max(MIN_HYBRID_CANDIDATES);
             sqlx::query_as::<_, Handoff>(&format!(
                 "WITH fts AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM handoffs
                     WHERE search_vector @@ websearch_to_tsquery('english', $1)
-                    LIMIT 50
+                    LIMIT $3
                 ),
                 vec AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $2) AS rank
                     FROM handoffs
                     WHERE embedding IS NOT NULL
                     ORDER BY embedding <=> $2
-                    LIMIT 50
+                    LIMIT $3
                 ),
                 rrf AS (
                     SELECT COALESCE(f.id, v.id) AS id,
                         COALESCE(1.0 / (60 + f.rank), 0) + COALESCE(1.0 / (60 + v.rank), 0) AS score
                     FROM fts f FULL OUTER JOIN vec v ON f.id = v.id
                     ORDER BY COALESCE(1.0 / (60 + f.rank), 0) + COALESCE(1.0 / (60 + v.rank), 0) DESC
-                    LIMIT $3
+                    LIMIT $4
                 )
                 SELECT {} FROM handoffs h JOIN rrf ON h.id = rrf.id ORDER BY rrf.score DESC",
                 super::aliased_cols(HANDOFF_COLS, "h")
             ))
             .bind(query_text)
             .bind(vec)
+            .bind(candidate_limit)
             .bind(limit)
             .fetch_all(pool)
             .await

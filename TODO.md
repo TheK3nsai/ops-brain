@@ -6,7 +6,6 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
 
 ## Open
 
-- **Every list/search tool silently clamps `limit` to 200 with no truncation signal (reported by CC-HSR 2026-08-31, `01a0597e`; recorded 2026-09-02).** `list_handoffs`, `search_bus`, and the REST list all `clamp(1, 200)` and expose no offset or cursor, so a larger `limit` is ignored without a word. Pages are newest-first, so what drops is the old end, which reads exactly like "nothing older exists": HSR reported 65 unflipped handoffs when the real number was 123. Workaround today: slice by `from_agent` and union on `id`. Cheapest honest fix is a `truncated`/`has_more` field whenever the clamp or the page boundary bit; a cursor is the real fix and is one change on five call sites (`src/api.rs:416`, `src/tools/coordination.rs:320` and `:396`, `src/tools/knowledge.rs:525` and `:550`). A coordination tool that silently lies about completeness is a defect, not a feature request.
 - **Codex thread selection disqualifies on *any* RPC rejection, not just a missing rollout (PR #103, 2026-08-26).** `#resolveThread` probes every process-wide loaded thread with `thread/resume` and `continue`s past any `RpcError`. That is what unblocked the 0.150.0 gate — a clean TUI launch exposes a second, rollout-less in-memory thread — but it also means that with two genuinely persisted threads loaded, a transient or unrelated rejection on one makes the adapter latch the *other*, which may be a different session's thread. The previous count-based code stayed offline there. Narrowing the skip to a no-rollout-shaped rejection buys fail-closed behaviour at the cost of matching Codex's error wording, which is exactly the churn this fix is reacting to — so it was deliberately not done in #103. Revisit when the Codex error shape is pinned (a stable code, not a message), or if a wrong-thread injection is ever observed.
 - **Integrate live mode into each host's main Claude/Codex launcher — Linux shipped (#115) and operator-confirmed on stealth; cloud gate and Windows open.** The Linux integration landed as `--auto` mode on both launchers plus `scripts/ops-brain-shell-init.sh` (shell functions, no credential, interactive shells only): attended TTY launches go live, headless/piped/subcommand shapes pass through untouched, a failed preflight asks on the terminal and exits nonzero on anything but `y`, `--no-live` is the announced opt-out, labels carry the working directory, a second Codex session takes a free App Server port, and a lane lost after connect is announced inside the session as a `lane_status` channel event. Hostless coverage is in `scripts/test-live-launchers` (pty-driven). **Stealth: passed 2026-09-03**, Eduardo at console, launched from plain `claude` and `codex`: both peers appeared with cwd-suffixed labels, markers rendered both ways, peers disappeared on exit. Operator-confirmed, not a step-by-step receipt; the `delivery_unconfirmed` branch and the idle window were not exercised. **Still owed:** the same gate on the cloud host (handoff `01a06918-4f1c`). The explicit commands stay the rollout boundary until then. **Windows:** the PowerShell launchers have no `--auto`; a mirror needs the same passthrough list, a `Read-Host` prompt on failed preflight, the cwd label, and a free-port pick for a second Codex session, plus a profile snippet defining `claude`/`codex` functions over the `.cmd` shims — handed to a Windows host CC to build and gate there, since it cannot be tested from Linux.
 - **Every live launch shows Claude's red "WARNING: Loading development channels" dialog and needs one keypress ("I am using this for local development"). Not fixable in the overlay; the plugin-channel path is the way out (spike, 2026-09-03).** Read from the 2.1.259 binary: the dialog is shown for every `--dangerously-load-development-channels` entry whenever channels are enabled, the provider is first-party, and policy does not block them; the accept only sets in-memory `hasDevChannels` state and is never persisted, so there is no key the overlay could carry. The dialog is specific to dev entries. `--channels plugin:<name>@<marketplace>` entries have no dialog; they are gated by the Anthropic allowlist, which managed settings `allowedChannelPlugins: [{marketplace, plugin}]` replaces outright (`/etc/claude-code/managed-settings.json` on Linux, root-owned; the ProgramData equivalent on Windows), alongside `channelsEnabled: true`. **Candidate design:** ship `adapters/claude-channel` as a Claude Code plugin with the channel MCP server in its manifest, register the repo (or bundle) as a local marketplace on each host, allow it in managed settings, and have `ops-brain-claude` launch with `--channels plugin:ops-brain-live@ops-brain`. Two things to measure before committing: whether a plugin-provided channel still needs the private `CLAUDE_CONFIG_DIR` overlay (the resolver limitation was about `--mcp-config` servers, and a plugin's server is neither that nor user scope), and how a plugin server that is installed but *not* named in `--channels` behaves in an ordinary or `-p` session, since it would still be spawned as a plain MCP server and must not register a peer (the adapter can stay dormant when the launcher's `OPS_BRAIN_LIVE_URL` is absent, but that has to be built and tested). Cost is a managed-settings edit on every host; benefit is no dialog, no red banner, and possibly no overlay. Eduardo rated the dialog minor; do this when it is the next most annoying thing, not before the cloud and Windows integrated gates.
@@ -24,51 +23,6 @@ Open work only. Shipped history lives in `CHANGELOG.md`, doctrine and hard stops
   - **Standing conditions of the waiver.** (1) The allowlist entry keeps warning on every run with its occurrence count — if it ever degrades to a silent entry, the ruling is void. (2) The count is **16** and is expected to stay 16; a run reporting a different number means someone extended the pattern and is worth a look. (3) The whole argument rests on these values being *disclosed* (public `main` since 2026-04-26). If that premise is ever revisited, this decision does not survive it.
 - **Guard gap, unchanged and now measured on both ends: it scans one surface of three.** The CI job greps added lines of `git diff BASE HEAD`; the local pre-commit hook greps `git diff --cached`. Neither ever reads a commit message or a PR body — which is precisely where two of the three PR #85 leaks landed, and why only the `GOTCHAS.md` line was caught. Also note the CI half runs *after* the push that publishes the string. If this recurs, extend the local hook to `COMMIT_EDITMSG` rather than leaning on CI.
   **Recurred 2026-08-26 on PR #103** — a fleet-private host name went into the PR *body* at creation. Caught within minutes and edited out, but per the measurement above GitHub keeps `userContentEdits` revisions with `deletedAt: null`, so the original body stays queryable over GraphQL; the edit is cosmetic, not a redaction. Nothing scans a PR body before it is posted, and the tree guard cannot: the body never touches the tree. Cheapest real fix is to run the guard over any body text before `gh pr create`/`gh pr edit`.
-
-### PR #84 — JSON error envelope for the REST surface — deployed, awaiting HSR re-probe
-
-Merged to `main` as `922b329`, **deployed and live on ops.kensai.cloud
-2026-08-24** (CC-Cloud, handoff `01a03461`; rebuild only, `serverInfo.version`
-5.0.0, container healthy). Production now returns `application/json` on every
-`/api` rejection as `{"error": "...", "field": "..."}`, with `field` present
-only when the rejection is attributable to one input field.
-
-CC-Cloud probed seven cases on the deployed surface — both 401 paths paired
-with a 200 positive control on the same URL, plus `400 field=agent`,
-`400 field=since`, `403 field=agent`, and a scope 403. Envelope behaves as
-specified throughout.
-
-**The re-probe ping CC-Stealth owed CC-HSR was sent 2026-08-24** (`01a03463`,
-on thread `01a0206b`): full byte-boundary table re-run against production,
-200 OK positive control included, response bodies for the failing rows.
-Non-mutating — validation rejects ahead of any insert.
-
-**Only open item: HSR's re-probe results.** Close this section when they land.
-A `text/plain`, bodyless, or wrong-`field` result is a real regression and goes
-back to CC-Cloud immediately.
-
-**The oversized-title path is the one case not live-probed from kensai-cloud,
-and that is the scope control working, not a coverage hole.** Scope is enforced
-in `required_machine_scope` middleware ahead of the handler, and the only
-machine token on that host is `read` scope — so `POST /api/handoff` 403s before
-it ever reaches `validate_bounded_text`. HSR-HVFS0 holds `create` scope and is
-the actual bitten caller, which is why their probe is the real end-to-end check.
-**Decided 2026-08-24: do not spend the break-glass bearer to close this from the
-cloud side** — every use of `CallerClass::Full` is an exposure event, reaching
-for a stronger credential to cross a scope boundary is the instinct to distrust,
-and a `Full`-class probe would be weaker evidence than HSR's real-caller probe
-anyway. Test coverage exists regardless
-(`oversized_title_names_the_field_and_the_byte_count`, CI green on `922b329`).
-
-Worth keeping: the reported symptom (*bodyless 400 on an oversized title*) was
-**not reproducible** — production has always returned `title too large (N bytes,
-max 200)`. The real defects were the *content-type* (`text/plain` on a JSON API,
-so a JSON-parsing producer drops the body) and `bearer_auth`'s bare
-`StatusCode`, which was genuinely bodyless. Client side, CC-HSR's producer lib
-logged `$_.Exception.Message`, which on PowerShell never carries the response
-body — fixed 2026-08-20 with 4 mutation-proven regression tests. The durable
-lesson: **the wire fix cannot reach a client that isn't reading the right
-property.**
 
 ## Don't re-propose without new evidence
 

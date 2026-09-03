@@ -104,7 +104,8 @@ impl OpsBrain {
         name = "search_bus",
         description = "Search knowledge and/or handoffs. \
         Set tables param for multi-table. Modes: fts/semantic/hybrid (default). \
-        Empty query or '*' browses recent entries.",
+        Empty query or '*' browses recent entries. Responses report the effective \
+        limit, whether it was clamped, and whether more results exist per table.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -197,7 +198,8 @@ impl OpsBrain {
         name = "list_replies_to_me",
         description = "List handoffs that reply to ones you sent. Returns handoffs whose \
         `in_reply_to` references a handoff with your `agent_name` as `from_agent`. \
-        Optional ISO-8601 `since` filters by reply timestamp.",
+        Optional ISO-8601 `since` filters by reply timestamp. Responses report the \
+        effective limit, whether it was clamped, and whether more replies exist.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -236,7 +238,8 @@ impl OpsBrain {
 
     #[tool(
         name = "list_handoffs",
-        description = "List handoffs with optional filters. Use status='pending' to see what needs attention.",
+        description = "List handoffs with optional filters. Use status='pending' to see what needs attention. \
+        Responses report the effective limit, whether it was clamped, and whether more handoffs exist.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,

@@ -40,6 +40,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Bounded list and search responses no longer imply false completeness
+  (2026-09-03).**
+  `list_handoffs`, `list_replies_to_me`, `search_bus`, and REST
+  `GET /api/pending` fetch one probe row beyond the effective page and report
+  `has_more`; every response also reports the effective `limit` and whether
+  the caller's value was clamped to the supported 1–200 range. Multi-table
+  searches additionally report `has_more_by_table`.
+- **PR #84's production verification is closed (2026-09-03).** CC-HSR's real-caller
+  re-probe passed all four byte-boundary rows, including the 200 control and
+  the expected structured JSON errors (`01a03468-ce3e-7933-8b59-d82abf748e48`).
 - **Claude's private Channel overlay preserves completed onboarding without
   copying the user's config.** The helper carries only a validated theme and a
   literal `hasCompletedOnboarding: true`; MCP servers, account metadata,

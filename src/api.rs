@@ -382,6 +382,12 @@ pub struct PendingItem {
 #[derive(Debug, serde::Serialize)]
 pub struct PendingResponse {
     pub count: usize,
+    /// Effective page size after enforcing the supported 1..=200 range.
+    pub limit: i64,
+    /// True when the caller's requested limit was outside 1..=200.
+    pub limit_clamped: bool,
+    /// True when at least one matching row exists beyond this page.
+    pub has_more: bool,
     pub items: Vec<PendingItem>,
 }
 
@@ -413,12 +419,17 @@ pub async fn list_pending(
         ),
         None => None,
     };
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let page = crate::pagination::PageRequest::new(q.limit, 50);
 
-    let handoffs =
-        crate::repo::handoff_repo::list_pending_for_agent(&state.pool, agent, since, limit)
-            .await
-            .map_err(|e| ApiError::internal(format!("DB error: {e}")))?;
+    let mut handoffs = crate::repo::handoff_repo::list_pending_for_agent(
+        &state.pool,
+        agent,
+        since,
+        page.fetch_limit(),
+    )
+    .await
+    .map_err(|e| ApiError::internal(format!("DB error: {e}")))?;
+    let has_more = page.trim(&mut handoffs);
 
     let items: Vec<PendingItem> = handoffs
         .into_iter()
@@ -439,6 +450,9 @@ pub async fn list_pending(
 
     Ok(Json(PendingResponse {
         count: items.len(),
+        limit: page.limit,
+        limit_clamped: page.limit_clamped,
+        has_more,
         items,
     }))
 }
