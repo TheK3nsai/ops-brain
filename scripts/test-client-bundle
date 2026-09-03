@@ -25,7 +25,9 @@ grep -Fq 'const BUNDLE_BUILD = true' "$BUNDLE/scripts/ops-brain-client"
 mkdir -p -- "$TEST_DIR/fake-bin"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$TEST_DIR/fake-bin/npm"
 chmod +x "$TEST_DIR/fake-bin/npm"
+[[ -f $BUNDLE/scripts/ops-brain-shell-init.sh ]] || { echo 'bundle is missing the shell integration' >&2; exit 1; }
 install_output=$(PATH="$TEST_DIR/fake-bin:$PATH" "$BUNDLE/scripts/install-ops-brain-client" --bin-dir "$TEST_DIR/bin")
+[[ $install_output == *"$BUNDLE/scripts/ops-brain-shell-init.sh"* ]] || { echo 'bundle installer does not point at its own shell integration' >&2; exit 1; }
 [[ $install_output == *'using ready lockfile-pinned adapter dependencies'* ]]
 status=$("$BUNDLE/scripts/install-live-adapters" --status --bin-dir "$TEST_DIR/bin")
 [[ $status == *'claude adapter deps: ready'* ]]

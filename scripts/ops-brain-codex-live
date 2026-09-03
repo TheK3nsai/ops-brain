@@ -16,17 +16,33 @@ LABEL="${OPS_BRAIN_CODEX_LABEL:-}"
 APP_PORT="${OPS_BRAIN_CODEX_APP_SERVER_PORT:-}"
 PROFILE_FILE="${OPS_BRAIN_CODEX_PROFILE:-}"
 PROFILE_ERROR=''
+PROFILE_ERROR_DEFERRED=false
 STATE_DIR="${OPS_BRAIN_LIVE_STATE_DIR:-$HOME/.local/state/ops-brain-live}"
 LOG_FILE=''
 unset OPS_BRAIN_AGENT_TOKEN
 
 usage() {
     cat <<'EOF'
-Usage: ops-brain-codex [--status|--dry-run] [--profile FILE] [-- CODEX_ARGS...]
+Usage: ops-brain-codex [--status|--dry-run] [--auto] [--no-live] [--profile FILE] [-- CODEX_ARGS...]
 
 Launch one Codex TUI connected to a loopback App Server and the ops-brain live
 adapter. The wrapper owns and cleans up both helper processes. Run one wrapper
 per App Server port.
+
+Modes:
+  (default)   live is required: any preflight failure exits nonzero
+  --auto      main-launcher mode for an interactive shell function. Attended
+              TTY launches go live; `codex exec`, other subcommands, piped,
+              --version and --help invocations pass straight through to Codex
+              untouched. When the profile's App Server port is already in use
+              by an earlier live session, a free loopback port is chosen so a
+              second attended session gets its own App Server and adapter. A
+              preflight failure asks the operator on the terminal before
+              continuing without live; it never falls back silently.
+  --no-live   ordinary Codex, announced once on stderr
+  OPS_BRAIN_LIVE=off in the environment is the same as --no-live.
+Any other argument is passed to Codex; run `command codex --help` for its
+options.
 
 Environment:
   OPS_BRAIN_LIVE_URL                 required wss://host/live endpoint
@@ -68,10 +84,14 @@ validate_live_url() {
 }
 
 mode=run
+auto=false
+live_requested=true
 while (($#)); do
     case "$1" in
         --status) mode=status; shift ;;
         --dry-run) mode=dry; shift ;;
+        --auto) auto=true; shift ;;
+        --no-live) live_requested=false; shift ;;
         --profile)
             (($# >= 2)) || { echo '--profile requires a path' >&2; exit 2; }
             PROFILE_FILE=$2
@@ -82,6 +102,42 @@ while (($#)); do
         *) break ;;
     esac
 done
+case "${OPS_BRAIN_LIVE:-}" in
+    off|0|false) live_requested=false ;;
+esac
+
+run_ordinary() {
+    exec codex "$@"
+}
+
+# --auto only goes live for an attended foreground TUI. A subcommand (exec,
+# mcp, login, app-server, ...) is never a TUI, and a non-terminal stdin makes
+# `codex --remote` exit before the adapter could ever bind a thread.
+# Returns 0 when the launch must stay ordinary.
+# Deliberately not run inside $(...): a command substitution makes stdout a
+# pipe and would report every launch as unattended.
+auto_passthrough_reason() {
+    [[ -t 0 && -t 1 ]] || return 0
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -V|--version|-h|--help) return 0 ;;
+            --) break ;;
+        esac
+    done
+    if (($#)) && [[ $1 != -* ]]; then
+        return 0
+    fi
+    return 1
+}
+
+if [[ $mode == run && $live_requested == false ]]; then
+    echo 'ops-brain live: off (requested); ordinary Codex session' >&2
+    run_ordinary "$@"
+fi
+if [[ $mode == run && $auto == true ]] && auto_passthrough_reason "$@"; then
+    run_ordinary "$@"
+fi
 
 if [[ -f $PROFILE_HELPER ]]; then
     if [[ -z $PROFILE_FILE ]]; then
@@ -112,6 +168,8 @@ if [[ -f $PROFILE_HELPER ]]; then
             [[ -n $EXPECTED_AGENT ]] || EXPECTED_AGENT=$profile_agent
             [[ -n $LABEL ]] || LABEL=$profile_label
             [[ -n $APP_PORT ]] || APP_PORT=$profile_app_port
+        elif [[ $mode == run ]]; then
+            PROFILE_ERROR_DEFERRED=true
         elif [[ $mode != status ]]; then
             printf '%s\n' "$PROFILE_ERROR" >&2
             exit 2
@@ -119,6 +177,21 @@ if [[ -f $PROFILE_HELPER ]]; then
     fi
 fi
 LABEL="${LABEL:-codex-live}"
+# See the Claude launcher: the working directory tells sibling sessions apart.
+label_with_cwd() {
+    local base=$1 dir suffix
+    dir=$(basename -- "$PWD")
+    suffix=${dir//[^A-Za-z0-9._-]/-}
+    suffix=${suffix#.}
+    [[ -n $suffix ]] || { printf '%s' "$base"; return; }
+    local combined="$base.$suffix"
+    printf '%s' "${combined:0:80}"
+}
+if [[ $mode == run || $mode == dry ]]; then
+    LABEL=$(label_with_cwd "$LABEL")
+fi
+port_explicit=false
+[[ -n ${OPS_BRAIN_CODEX_APP_SERVER_PORT:-} ]] && port_explicit=true
 APP_PORT="${APP_PORT:-4500}"
 APP_URL="ws://127.0.0.1:$APP_PORT"
 
@@ -149,35 +222,52 @@ if [[ $mode == status ]]; then
     exit 0
 fi
 
-validate_live_url || { echo 'OPS_BRAIN_LIVE_URL is required and must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment' >&2; exit 2; }
-[[ -n $TOKEN_FILE ]] || { echo 'OPS_BRAIN_AGENT_TOKEN_FILE is required' >&2; exit 2; }
-[[ $EXPECTED_AGENT =~ ^[A-Za-z0-9._-]{1,80}$ ]] || { echo 'OPS_BRAIN_EXPECTED_AGENT is required and must be a valid agent slug' >&2; exit 2; }
-[[ -f $ADAPTER ]] || { echo "adapter missing: $ADAPTER" >&2; exit 2; }
-[[ -f $TOKEN_FILE ]] || {
-    echo "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path" >&2
+# See the Claude launcher: in --auto on a terminal a failed preflight asks
+# before an ordinary session replaces the requested live one; the explicit
+# command fails closed.
+preflight_fail() {
+    local reason=$1
+    if [[ $auto == true && $mode == run && -t 0 && -t 1 ]]; then
+        printf 'ops-brain live: NOT available — %s\n' "$reason" >&2
+        local answer=''
+        read -r -p 'Continue without live delivery? [y/N] ' answer </dev/tty || answer=''
+        case "$answer" in
+            y|Y|yes|YES|Yes)
+                echo 'ops-brain live: off (operator choice); ordinary Codex session' >&2
+                run_ordinary "${CODEX_ARGS[@]}"
+                ;;
+        esac
+        echo 'ops-brain live: declined ordinary fallback; not launching' >&2
+        exit 2
+    fi
+    printf '%s\n' "$reason" >&2
     exit 2
 }
-[[ -L $TOKEN_FILE ]] && {
-    echo "token file must be a regular file, not a symlink: $TOKEN_FILE" >&2
-    exit 2
-}
+CODEX_ARGS=("$@")
+if [[ $PROFILE_ERROR_DEFERRED == true ]]; then
+    preflight_fail "$PROFILE_ERROR"
+fi
+
+validate_live_url || preflight_fail 'OPS_BRAIN_LIVE_URL is required and must be exact wss://host/live (ws:// only on loopback), without credentials, query, or fragment'
+[[ -n $TOKEN_FILE ]] || preflight_fail 'OPS_BRAIN_AGENT_TOKEN_FILE is required'
+[[ $EXPECTED_AGENT =~ ^[A-Za-z0-9._-]{1,80}$ ]] || preflight_fail 'OPS_BRAIN_EXPECTED_AGENT is required and must be a valid agent slug'
+[[ -f $ADAPTER ]] || preflight_fail "adapter missing: $ADAPTER"
+[[ -f $TOKEN_FILE ]] || preflight_fail "token file missing: $TOKEN_FILE; set OPS_BRAIN_AGENT_TOKEN_FILE to the protected per-agent bearer path"
+[[ -L $TOKEN_FILE ]] && preflight_fail "token file must be a regular file, not a symlink: $TOKEN_FILE"
 if [[ ! $APP_PORT =~ ^[0-9]+$ ]] || ((APP_PORT < 1024 || APP_PORT > 65535)); then
-    echo 'OPS_BRAIN_CODEX_APP_SERVER_PORT must be 1024-65535' >&2
-    exit 2
+    preflight_fail 'OPS_BRAIN_CODEX_APP_SERVER_PORT must be 1024-65535'
 fi
 token_mode=$(stat -c '%a' "$TOKEN_FILE")
-[[ $token_mode == 600 || $token_mode == 400 ]] || {
-    echo "$TOKEN_FILE has mode $token_mode; require 600 or 400" >&2
-    exit 2
-}
-command -v node >/dev/null || { echo 'node is required' >&2; exit 2; }
+[[ $token_mode == 600 || $token_mode == 400 ]] || preflight_fail "$TOKEN_FILE has mode $token_mode; require 600 or 400"
+command -v node >/dev/null || preflight_fail 'node is required'
 command -v codex >/dev/null || { echo 'codex is required' >&2; exit 2; }
-command -v curl >/dev/null || { echo 'curl is required' >&2; exit 2; }
+command -v curl >/dev/null || preflight_fail 'curl is required'
 
 if [[ $mode == dry ]]; then
     echo "would launch App Server at $APP_URL"
     echo "would launch Codex live adapter for ${LIVE_URL} (token redacted)"
     echo "would launch: codex --remote $APP_URL $*"
+    echo "label: $LABEL"
     exit 0
 fi
 
@@ -215,9 +305,24 @@ stop_child() {
 trap cleanup EXIT INT TERM
 
 if curl -sf --max-time 1 "http://127.0.0.1:$APP_PORT/readyz" >/dev/null 2>&1; then
-    echo "port $APP_PORT already hosts an App Server; choose another OPS_BRAIN_CODEX_APP_SERVER_PORT" >&2
-    exit 2
+    if [[ $auto == true && $port_explicit == false ]]; then
+        # An earlier attended session owns the profile port. Each live TUI
+        # needs its own App Server so the adapter's exactly-one-thread
+        # invariant holds per session; pick a free loopback port instead.
+        chosen=$(node -e '
+          const server = require("node:net").createServer();
+          server.listen(0, "127.0.0.1", () => { process.stdout.write(String(server.address().port)); server.close(); });
+        ')
+        [[ $chosen =~ ^[0-9]+$ ]] || { echo 'could not choose a free App Server port' >&2; exit 1; }
+        echo "ops-brain live: port $APP_PORT already hosts an App Server; using $chosen for this session" >&2
+        APP_PORT=$chosen
+        APP_URL="ws://127.0.0.1:$APP_PORT"
+    else
+        echo "port $APP_PORT already hosts an App Server; choose another OPS_BRAIN_CODEX_APP_SERVER_PORT" >&2
+        exit 2
+    fi
 fi
+find "$STATE_DIR" -maxdepth 1 -type f -name 'codex-adapter.*.log' -mtime +30 -delete 2>/dev/null || true
 
 codex app-server --listen "$APP_URL" >>"$LOG_FILE" 2>&1 &
 app_pid=$!
@@ -239,4 +344,5 @@ done
 ) &
 adapter_pid=$!
 
+printf 'ops-brain live: connecting as %s (label %s); adapter log: %s\n' "$EXPECTED_AGENT" "$LABEL" "$LOG_FILE" >&2
 codex --remote "$APP_URL" "$@"

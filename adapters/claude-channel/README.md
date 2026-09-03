@@ -75,10 +75,20 @@ allowlist; it does not bypass organization policy or tool permissions.
 
 ## Claude-facing tools
 
-- `list_live_peers` lists only currently connected opaque peer IDs.
+- `list_live_peers` lists only currently connected opaque peer IDs, plus this
+  session's own registration under `self` so a session can tell itself apart
+  from sibling sessions under the same agent identity.
 - `send_live_message` sends to a connected peer. For a reply, copy the inbound
   channel event's `reply_peer_id` to `to_peer_id` and `message_id` to
-  `in_reply_to`.
+  `in_reply_to`. Prefer these connection-bound tools over the same-named tools
+  on the remote `ops-brain` MCP server, which refuse to guess when one agent
+  has several adapters.
+
+If the live connection ends for good (bound identity mismatch, terminal
+server rejection), the adapter emits one channel event whose metadata carries
+`kind: lane_status`, `state: lost`, `trust: adapter_status`. It is adapter
+status, not peer input; the server instructions tell Claude to relay it in one
+line and not to retry.
 
 The adapter acknowledges an inbound message only after the Channel notification
 has been written to Claude Code's stdio transport. Per Claude's preview

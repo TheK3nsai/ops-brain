@@ -34,11 +34,17 @@ async function main() {
     reason,
     will_reconnect: willReconnect,
   }))
-  live.on('fatal', error => logger.log('error', error.message, {
-    expected_agent: config.expectedAgent,
-    live_url: config.url,
-    retryable: false,
-  }))
+  live.on('fatal', error => {
+    logger.log('error', error.message, {
+      expected_agent: config.expectedAgent,
+      live_url: config.url,
+      retryable: false,
+    })
+    // The log is the operator's record; this event is the session's. Without
+    // it a session that lost its lane keeps looking healthy from the inside,
+    // which is the defect the main-launcher integration must not reintroduce.
+    void announceLaneLost(mcp, config, error.message)
+  })
   const stopLive = bindLiveLifecycle(mcp, live, { warn: logger })
 
   await mcp.connect(new StdioServerTransport())
@@ -55,6 +61,30 @@ async function main() {
   }
   process.once('SIGINT', () => void stop())
   process.once('SIGTERM', () => void stop())
+}
+
+async function announceLaneLost(mcp, config, reason) {
+  try {
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: [
+          `ops-brain live: LANE LOST for this session (${config.expectedAgent}, label ${config.label}).`,
+          `Reason: ${reason}.`,
+          'The adapter has stopped and will not reconnect; live sends and receives are unavailable here until the session is relaunched. Handoffs still work.',
+        ].join(' '),
+        meta: {
+          kind: 'lane_status',
+          state: 'lost',
+          agent_name: config.expectedAgent,
+          label: config.label,
+          trust: 'adapter_status',
+        },
+      },
+    })
+  } catch {
+    // The MCP transport may already be gone; the log record above stands.
+  }
 }
 
 main().catch(error => {

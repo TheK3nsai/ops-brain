@@ -175,9 +175,15 @@ should join the online lane. A normal launcher-owned exit removes its peer
 promptly; an abrupt kill remains visible until transport failure is detected.
 
 This explicit choice is the rollout boundary, not a permanent requirement.
-Any future integration into a host's main launcher must keep adapter ownership
-foreground-only and make connected, degraded, and ordinary/no-live startup
-visibly distinct. If live was requested and preflight fails, do not silently or
-automatically continue ordinary: require affirmative operator choice or exit
-nonzero. Never treat tool discovery or a successful client start as proof of
-live delivery; use the per-host acceptance gate.
+On Linux hosts whose explicit gate is clean, `scripts/ops-brain-shell-init.sh`
+turns plain `claude` and `codex` into the live launchers for interactive
+shells by routing them through `--auto` mode: attended TUI launches go live,
+every headless, piped, or subcommand shape passes through untouched, and a
+failed preflight asks the operator before an ordinary session may replace the
+requested live one. Connected, operator-chosen ordinary, and deliberately
+ordinary (`--no-live`) startups each announce themselves; a lane that dies
+after connecting is announced inside the session as a `lane_status` channel
+event. Adapter ownership stays foreground-only. Never treat tool discovery or
+a successful client start as proof of live delivery; use the per-host
+acceptance gate, run from the plain commands, before calling a host live on
+the integrated path (`live-fleet-rollout.md` § Main-launcher integration).

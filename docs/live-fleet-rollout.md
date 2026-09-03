@@ -252,6 +252,72 @@ fallback that could silently bind a sibling identity, and registration fails
 closed if the server reports another slug. Linux token files must be mode 600
 or 400.
 
+## Main-launcher integration (Linux)
+
+Once the explicit-launcher gate above is clean on a host, plain `claude` and
+`codex` can become the live launchers for that host's interactive shells. The
+mechanism is two shell functions, sourced from the shell's rc file:
+
+```bash
+. "<client-root>/scripts/ops-brain-shell-init.sh"
+```
+
+The installer prints the exact line for its checkout or bundle. Each function
+runs the matching launcher in `--auto` mode and carries no credential: the
+launcher still reads the protected token file itself, and nothing is exported.
+Shell functions are not inherited by child processes, so scripts, systemd
+timers, wake shims and anything else that execs `claude` or `codex` by name
+reach the real binaries untouched.
+
+`--auto` is the main-launcher contract. It goes live only for an attended
+foreground TUI, and it treats every other shape as ordinary without a word:
+a non-terminal stdin or stdout, `claude -p`/`--print`, `codex exec` and every
+other subcommand, `--version` and `--help`. Those sessions cannot render a
+channel event, and a peer with no sink is the "healthy session, absent lane"
+defect the gate exists to catch. When live is wanted and preflight fails (no
+profile, missing or badly-moded token, adapter absent), `--auto` prints the
+reason on the terminal and asks:
+
+```
+ops-brain live: NOT available — <reason>
+Continue without live delivery? [y/N]
+```
+
+Only an explicit `y` launches an ordinary session, and that launch is
+announced. Anything else exits nonzero without launching. There is no silent
+fallback in either direction, and the explicit `ops-brain-claude` /
+`ops-brain-codex` commands keep failing closed with no prompt, so they remain
+the rollout boundary. A deliberate ordinary launch is `claude --no-live` (or
+`OPS_BRAIN_LIVE=off claude`), announced once on stderr; `command claude ...`
+bypasses the function entirely.
+
+A live launch prints one line before the client takes the terminal:
+
+```
+ops-brain live: connecting as CC-Example (label claude-example.<cwd>); adapter log: ...
+```
+
+The label now carries the working directory's basename, folded to the
+label alphabet and bounded to 80 bytes. Several attended sessions may run
+under one identity; each is its own peer, and the label is what a remote
+sender uses to choose between them. Inside a session, the channel's
+`list_live_peers` reports the session's own peer under `self`. If the adapter
+later stops for good (identity mismatch, terminal server rejection), it emits
+one channel event marked `kind=lane_status` so the session itself learns the
+lane is gone rather than only the log; the instructions tell Claude to relay
+it in one line and not retry. On the Codex side, a second attended session
+finds the profile's App Server port already owned by the first and takes a
+free loopback port for its own App Server and adapter, so the adapter's
+exactly-one-thread invariant holds per session.
+
+Everything in the per-host acceptance gate applies unchanged to the
+integrated path, and a host is not certified on it until the same
+two-identity, rendered-marker, idle, and teardown checks pass launched from
+the plain `claude` and `codex` commands. Windows PowerShell profiles do not
+yet ship an equivalent; the `.cmd` shims and `-Mode` launchers stay explicit
+there until a `--auto` mode with the same passthrough and prompt contract
+lands in the PowerShell launchers.
+
 ## Windows credential preparation
 
 The Windows launchers require an existing agent token in a DPAPI-protected

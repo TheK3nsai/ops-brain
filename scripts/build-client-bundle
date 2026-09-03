@@ -72,6 +72,7 @@ for script in \
     ops-brain-claude-live.ps1 \
     ops-brain-codex-live \
     ops-brain-codex-live.ps1 \
+    ops-brain-shell-init.sh \
     read-ops-brain-agent-token.ps1 \
     start-ops-brain-live-adapter.ps1 \
     test-live-launchers; do
