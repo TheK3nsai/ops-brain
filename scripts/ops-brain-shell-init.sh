@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # ops-brain main-launcher integration for interactive POSIX shells.
 #
 # Source this file from ~/.bashrc or ~/.zshrc:

@@ -344,11 +344,11 @@ assert_contains "$(<"$TEST_DIR/explicit.out")" 'OPS_BRAIN_AGENT_TOKEN_FILE is re
 # The label carries the working directory so sibling sessions of one identity
 # can be told apart; unsafe characters are folded and the length is bounded.
 mkdir -p -- "$TEST_DIR/work/ops brain (v2)"
-label_dry=$(cd "$TEST_DIR/work/ops brain (v2)" && env "${LIVE_ENV[@]}" "$BIN_DIR/ops-brain-claude" --dry-run)
+label_dry=$(cd "$TEST_DIR/work/ops brain (v2)" && PATH="$TEST_DIR/plain-bin:$PATH" env "${LIVE_ENV[@]}" "$BIN_DIR/ops-brain-claude" --dry-run)
 assert_contains "$label_dry" 'label: claude-code.ops-brain--v2-'
 long_dir="$TEST_DIR/work/$(printf 'd%.0s' {1..90})"
 mkdir -p -- "$long_dir"
-long_label=$(cd "$long_dir" && env "${LIVE_ENV[@]}" "$BIN_DIR/ops-brain-claude" --dry-run | sed -n 's/^label: //p')
+long_label=$(cd "$long_dir" && PATH="$TEST_DIR/plain-bin:$PATH" env "${LIVE_ENV[@]}" "$BIN_DIR/ops-brain-claude" --dry-run | sed -n 's/^label: //p')
 ((${#long_label} == 80)) || fail "label was not bounded to 80 bytes: ${#long_label}"
 
 # The terminal paths need a pty with the child as its session leader, so the
