@@ -33,6 +33,18 @@ chmod 600 "$TOKEN_FILE"
 [[ -L $BIN_DIR/ops-brain-codex-live ]] || fail 'Codex launcher symlink missing'
 
 install_status=$("$SCRIPT_DIR/install-live-adapters" --status --bin-dir "$BIN_DIR")
+# A fresh worktree has no adapters/*/node_modules (gitignored), and the bare
+# assertion below then fails on 'claude adapter deps: ready' — which reads as a
+# launcher regression rather than a missing install. CI runs `npm ci` first and
+# never sees it, so it only ever bites locally; it cost two agents a detour in
+# one week (PR #118 review, PR #119). Say the remedy instead of the symptom.
+if [[ $install_status != *'claude adapter deps: ready'* \
+   || $install_status != *'codex adapter deps:  ready'* ]]; then
+    fail 'adapter dependencies are not installed. This is not a launcher failure.
+Run these first (the same two commands CI runs):
+  npm --prefix adapters/claude-channel ci --ignore-scripts
+  npm --prefix adapters/codex-app-server ci --ignore-scripts'
+fi
 assert_contains "$install_status" 'claude adapter deps: ready'
 assert_contains "$install_status" 'codex adapter deps:  ready'
 assert_contains "$install_status" 'ops-brain-client:'
