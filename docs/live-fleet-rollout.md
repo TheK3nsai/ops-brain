@@ -253,7 +253,22 @@ only switches it still reads there, and every other argument — including
 untouched. Choose the ops-brain profile in `--auto` with
 `OPS_BRAIN_CLAUDE_PROFILE` / `OPS_BRAIN_CODEX_PROFILE`. The
 PowerShell launchers use `-Mode Status`, `-Mode DryRun`, and `-ProfileFile`
-instead. The token path and exact expected server-bound identity are required
+instead.
+
+`--` is the one place where the two platforms cannot be made to agree, and the
+difference is worth stating because the symptom is identical. On Linux the
+launcher used to consume a leading `--` in its own option loop, which is what
+the change above fixes: `claude -- --not-a-flag` now reaches the client intact.
+On Windows the same invocation still loses it, from a cause no launcher can
+reach — PowerShell's parser strips the first unquoted `--` in argument mode
+before `$args` is ever populated, so the token is gone before the profile
+function runs and no parameter declaration (including
+`ValueFromRemainingArguments`) gets it back. Quoting survives on both:
+**`claude '--' --not-a-flag` is the portable spelling.** Measured, and pinned by
+assertion on each side — `scripts/test-live-launchers` on Linux, the `112`
+probe in `scripts/Test-OpsBrainLiveWindows.ps1` on Windows.
+
+The token path and exact expected server-bound identity are required
 deliberately. There is no generic
 fallback that could silently bind a sibling identity, and registration fails
 closed if the server reports another slug. Linux token files must be mode 600
