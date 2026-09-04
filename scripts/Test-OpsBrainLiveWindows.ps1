@@ -499,6 +499,24 @@ fs.writeFileSync(`${capture}.dir`, process.env.CLAUDE_CONFIG_DIR ?? '<unset>');
         Assert-True ($result.ExitCode -eq 0 -and $result.StdOut.Trim() -eq '0') "profile integration defined functions in a non-interactive shell ($($switches -join ' ')): $($result.StdOut)$($result.StdErr)"
     }
 
+    # PowerShell's own parser consumes the first unquoted `--` in argument mode
+    # before $args is ever populated, so an operator's `claude -- --literal`
+    # reaches the launcher as `--literal` and the end-of-options guard is lost.
+    # This is not recoverable inside the function: the token is gone before any
+    # binding runs, and a ValueFromRemainingArguments parameter does not get it
+    # back either. Quoting does (`claude '--' --literal`), which is what the
+    # header documents. Note this cannot be asserted through the console probe
+    # below -- that splats an array, and splatting preserves `--` -- so it is
+    # pinned here against the real shell. A future PowerShell that stops eating
+    # `--` should be a loud failure here, not a silent behaviour change.
+    $dashDashProbe = @'
+function f { $args.Count }
+function g { param([Parameter(ValueFromRemainingArguments = $true)]$Rest) @($Rest).Count }
+"$(f -- a)$(g -- a)$(f '--' a)"
+'@
+    $result = Invoke-PwshChild -Arguments @('-Command', $dashDashProbe)
+    Assert-True ($result.ExitCode -eq 0 -and $result.StdOut.Trim() -eq '112') "PowerShell `--` handling changed; the profile functions and their documented quoting workaround assume eaten/unrecoverable/quotable, got '$($result.StdOut.Trim())' (expected '112'): $($result.StdErr)"
+
     # The attended paths need a real console: a hidden child console whose
     # input buffer is fed through WriteConsoleInput, so the launcher's
     # redirection checks and Read-Host see exactly what an operator's terminal
@@ -582,8 +600,14 @@ finally {
     # passthrough to the plain recorder.
     $capture = Join-Path $testDirectory 'console-function'
     $probe = Invoke-ConsoleProbe 'console-function' @{ shellInit = $shellInit; command = 'claude'; arguments = @('--version'); env = @{ OPS_BRAIN_TEST_CAPTURE = $capture } }
+    # A bare warning here would make the attended coverage a property of the
+    # runner image rather than of the repo: the day a console stops being
+    # allocatable, every case below evaporates into a warning nobody reads and
+    # CI stays green -- a test that asserts nothing. Fail by default; only a
+    # genuinely console-less environment opts out, and CI sets nothing.
     if (-not $probe.attended) {
-        Write-Warning 'note: no attended console could be allocated here; the Auto prompt and attended passthrough paths were not exercised'
+        Assert-True ($env:OPS_BRAIN_TEST_ALLOW_NO_CONSOLE -eq '1') 'no attended console could be allocated, so the attended cases (Auto prompt, overlay launch, shell functions, decline/accept) did not run. Set OPS_BRAIN_TEST_ALLOW_NO_CONSOLE=1 to allow a console-less run.'
+        Write-Warning 'note: no attended console could be allocated and OPS_BRAIN_TEST_ALLOW_NO_CONSOLE=1; the Auto prompt and attended passthrough paths were not exercised'
     }
     else {
         Assert-True ($probe.functions -eq 2) "profile integration defined $($probe.functions) functions in an attended console"

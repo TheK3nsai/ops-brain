@@ -23,6 +23,15 @@
 #
 # Opt out for one launch:  claude --no-live      (or OPS_BRAIN_LIVE=off in the environment)
 # Bypass the function:     & (Get-Command claude -CommandType Application) ...
+# Guard a dash argument:   claude '--' --literal-value
+#
+# That last one is a PowerShell parser rule, not a launcher choice: the parser
+# consumes the first unquoted `--` in argument mode before $args is populated,
+# so an unquoted `claude -- --literal-value` arrives here as `--literal-value`
+# and the end-of-options guard is silently lost. Nothing inside the function
+# can recover it (a ValueFromRemainingArguments parameter does not help; the
+# token is gone before binding). Quoting it preserves it. Pinned by the `112`
+# assertion in Test-OpsBrainLiveWindows.ps1.
 
 # Interactive console sessions only. A redirected handle, a non-console host,
 # or pwsh -NonInteractive means a script or a scheduled task is dot-sourcing

@@ -113,9 +113,9 @@ function Import-ClientProfile {
     if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { return $null }
     $item = Get-Item -LiteralPath $fullPath -Force
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing profile reparse point: $fullPath" }
-    $profile = Get-Content -LiteralPath $fullPath -Raw | ConvertFrom-Json
-    if ($profile.schema -ne 1 -or $profile.client -ne $Client) { throw "Profile schema/client mismatch: $fullPath" }
-    $profile
+    $clientProfile = Get-Content -LiteralPath $fullPath -Raw | ConvertFrom-Json
+    if ($clientProfile.schema -ne 1 -or $clientProfile.client -ne $Client) { throw "Profile schema/client mismatch: $fullPath" }
+    $clientProfile
 }
 
 # With several attended sessions under one identity, the working directory is
@@ -199,19 +199,19 @@ if ($Mode -eq 'Auto' -and (Test-AutoPassthrough $ClaudeArgs)) {
 }
 
 $ProfileFile = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($ProfileFile))
-$profile = $null
+$clientProfile = $null
 $profileError = $null
 try {
-    $profile = Import-ClientProfile $ProfileFile 'claude'
+    $clientProfile = Import-ClientProfile $ProfileFile 'claude'
 }
 catch {
     $profileError = $_.Exception.Message
 }
-if ($null -ne $profile) {
-    if ($null -eq $LiveUrl) { $LiveUrl = [uri]$profile.live_url }
-    if (-not $AgentName) { $AgentName = [string]$profile.agent_name }
-    if (-not $AgentCredentialFile) { $AgentCredentialFile = [string]$profile.credential_file }
-    if (-not $Label) { $Label = [string]$profile.label }
+if ($null -ne $clientProfile) {
+    if ($null -eq $LiveUrl) { $LiveUrl = [uri]$clientProfile.live_url }
+    if (-not $AgentName) { $AgentName = [string]$clientProfile.agent_name }
+    if (-not $AgentCredentialFile) { $AgentCredentialFile = [string]$clientProfile.credential_file }
+    if (-not $Label) { $Label = [string]$clientProfile.label }
 }
 if (-not $Label) { $Label = 'claude-code' }
 if ($Mode -ne 'Status') { $Label = Get-LabelWithWorkingDirectory $Label }
@@ -229,7 +229,7 @@ $credentialStatus = if ($AgentCredentialFile -and (Test-Path -LiteralPath $Agent
 if ($Mode -eq 'Status') {
     if ($null -ne $LiveUrl) { Assert-LiveUrl $LiveUrl }
     "adapter: $Adapter"
-    "profile: $ProfileFile $(if ($profileError) { '(not ready - {0})' -f $profileError } elseif ($null -ne $profile) { '(loaded)' } else { '(missing)' })"
+    "profile: $ProfileFile $(if ($profileError) { '(not ready - {0})' -f $profileError } elseif ($null -ne $clientProfile) { '(loaded)' } else { '(missing)' })"
     "live URL: $(if ($null -ne $LiveUrl) { $LiveUrl.AbsoluteUri } else { '<unset>' })"
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"
