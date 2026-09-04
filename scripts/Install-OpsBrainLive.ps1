@@ -97,6 +97,7 @@ if ($Mode -eq 'Status') {
     "codex (native required): $(Get-NativeCodexPath)"
     "claude adapter deps: $(Get-AdapterDependencyStatus 'claude')"
     "codex adapter deps: $(Get-AdapterDependencyStatus 'codex')"
+    "shell init: $(Join-Path $PSScriptRoot 'OpsBrain-Shell.ps1')"
     foreach ($name in $launchers) {
         $shim = Join-Path $BinDirectory "$name.cmd"
         "$name`: $(if (Test-Path -LiteralPath $shim -PathType Leaf) { $shim } else { '<missing>' })"
@@ -171,3 +172,4 @@ if (-not (($env:PATH -split ';') -contains $BinDirectory)) {
     'add that directory to the user PATH before invoking the shims by name'
 }
 'configure profiles with ops-brain-client configure claude|codex, then run ops-brain-claude or ops-brain-codex'
+"to make plain claude and codex launches go live from an interactive console, add to `$PROFILE:`n  . `"$(Join-Path $PSScriptRoot 'OpsBrain-Shell.ps1')`""

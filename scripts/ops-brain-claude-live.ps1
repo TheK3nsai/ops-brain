@@ -1,13 +1,26 @@
 #requires -Version 7.4
 # Launch Claude Code with the local ops-brain Channel adapter on Windows.
+#
+# Modes:
+#   Run     (default) live is required: any preflight failure fails closed
+#   Auto    main-launcher mode for the OpsBrain-Shell.ps1 profile functions.
+#           Attended console launches go live; redirected stdin/stdout,
+#           -p/--print, subcommands, --version and --help pass straight
+#           through to Claude Code untouched. A preflight failure asks the
+#           operator on the console before continuing without live; it never
+#           falls back silently.
+#   Status  credential-safe report; DryRun validates preflight without launching
+#   -NoLive (or a leading `--no-live` client argument, or OPS_BRAIN_LIVE=off)
+#           launches ordinary Claude Code, announced once on stderr.
 
 # PositionalBinding must stay off: with it on, the first trailing Claude argument
 # binds to $LiveUrl by position instead of falling through to $ClaudeArgs, so
 # `ops-brain-claude-live resume` dies in Assert-LiveUrl on a relative URI.
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [ValidateSet('Run', 'Status', 'DryRun')]
+    [ValidateSet('Run', 'Auto', 'Status', 'DryRun')]
     [string]$Mode = 'Run',
+    [switch]$NoLive,
     [uri]$LiveUrl = $(if ($env:OPS_BRAIN_LIVE_URL) { $env:OPS_BRAIN_LIVE_URL } else { $null }),
     [string]$AgentCredentialFile = $env:OPS_BRAIN_AGENT_CREDENTIAL_FILE,
     [string]$ProfileFile = $(if ($env:OPS_BRAIN_CLAUDE_PROFILE) { $env:OPS_BRAIN_CLAUDE_PROFILE } else { Join-Path $env:LOCALAPPDATA 'ops-brain\claude.json' }),
@@ -16,6 +29,9 @@ param(
     [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')]
     [string]$Label = $env:OPS_BRAIN_LIVE_LABEL,
     [string]$StateDirectory = $(if ($env:OPS_BRAIN_LIVE_STATE_DIR) { $env:OPS_BRAIN_LIVE_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'ops-brain-live' }),
+    # The profile function passes the client's arguments as one array through
+    # this parameter: splatted or trailing tokens such as -p bind to launcher
+    # parameters by prefix (-ProfileFile) and never reach Claude.
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ClaudeArgs
 )
@@ -97,28 +113,108 @@ function Import-ClientProfile {
     if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { return $null }
     $item = Get-Item -LiteralPath $fullPath -Force
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing profile reparse point: $fullPath" }
-    $profile = Get-Content -LiteralPath $fullPath -Raw | ConvertFrom-Json
-    if ($profile.schema -ne 1 -or $profile.client -ne $Client) { throw "Profile schema/client mismatch: $fullPath" }
-    $profile
+    $clientProfile = Get-Content -LiteralPath $fullPath -Raw | ConvertFrom-Json
+    if ($clientProfile.schema -ne 1 -or $clientProfile.client -ne $Client) { throw "Profile schema/client mismatch: $fullPath" }
+    $clientProfile
+}
+
+# With several attended sessions under one identity, the working directory is
+# what tells them apart for a remote sender. The label stays self-reported,
+# non-sensitive metadata; peer_id remains the only routing key.
+function Get-LabelWithWorkingDirectory {
+    param([Parameter(Mandatory)][string]$Base)
+    $leaf = Split-Path -Leaf (Get-Location).Path
+    $suffix = ($leaf -replace '[^A-Za-z0-9._-]', '-') -replace '^\.', ''
+    if (-not $suffix) { return $Base }
+    $combined = "$Base.$suffix"
+    if ($combined.Length -gt 80) { $combined = $combined.Substring(0, 80) }
+    $combined
+}
+
+# Ordinary Claude Code, exactly as if the launcher were not installed. Used
+# for every path that must not open a live peer.
+function Invoke-OrdinaryClient {
+    param([string[]]$Arguments)
+    $client = Get-RequiredApplication 'claude'
+    & $client.Source @Arguments
+    exit $LASTEXITCODE
+}
+
+# Auto only ever goes live for an attended foreground TUI. Everything a
+# script, a wake shim, a redirected session, or a subcommand could be doing
+# passes through untouched: a headless session cannot render a channel event,
+# and a peer without a sink is the "healthy session, absent lane" defect.
+function Test-AutoPassthrough {
+    param([string[]]$Arguments)
+    if (-not $script:attended) { return $true }
+    foreach ($argument in $Arguments) {
+        if ($argument -ceq '--') { break }
+        if ($argument -cin @('-p', '--print', '-v', '--version', '-h', '--help')) { return $true }
+    }
+    if ($Arguments.Count -gt 0 -and -not $Arguments[0].StartsWith('-') -and $Arguments[0] -cin @(
+            'mcp', 'auth', 'login', 'logout', 'doctor', 'update', 'install', 'plugin', 'plugins',
+            'agents', 'config', 'setup-token', 'migrate-installer', 'remote-control', 'rc')) {
+        return $true
+    }
+    $false
+}
+
+# A failed preflight in Auto asks the operator on the console; the answer is
+# the affirmative choice the rollout contract requires before an ordinary
+# session replaces a requested live one. Anything but an explicit yes exits
+# nonzero. Outside Auto (the explicit command) the failure is final.
+function Invoke-PreflightFailure {
+    param([Parameter(Mandatory)][string]$Reason)
+    if ($Mode -eq 'Auto' -and $script:attended) {
+        [Console]::Error.WriteLine("ops-brain live: NOT available — $Reason")
+        $answer = Read-Host 'Continue without live delivery? [y/N]'
+        if ($answer -in @('y', 'yes')) {
+            [Console]::Error.WriteLine('ops-brain live: off (operator choice); ordinary Claude Code session')
+            Invoke-OrdinaryClient $ClaudeArgs
+        }
+        [Console]::Error.WriteLine('ops-brain live: declined ordinary fallback; not launching')
+        exit 2
+    }
+    throw $Reason
+}
+
+if ($null -eq $ClaudeArgs) { $ClaudeArgs = @() }
+# `claude --no-live` is the fleet-wide spelling. The profile function hands
+# every client argument through -ClaudeArgs, so the opt-out arrives there.
+if ($ClaudeArgs.Count -gt 0 -and $ClaudeArgs[0] -in @('--no-live', '-NoLive')) {
+    $NoLive = $true
+    $ClaudeArgs = @($ClaudeArgs | Select-Object -Skip 1)
+}
+if ($env:OPS_BRAIN_LIVE -and $env:OPS_BRAIN_LIVE.ToLowerInvariant() -in @('off', '0', 'false')) {
+    $NoLive = $true
+}
+$script:attended = -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected
+
+if ($Mode -in @('Run', 'Auto') -and $NoLive) {
+    [Console]::Error.WriteLine('ops-brain live: off (requested); ordinary Claude Code session')
+    Invoke-OrdinaryClient $ClaudeArgs
+}
+if ($Mode -eq 'Auto' -and (Test-AutoPassthrough $ClaudeArgs)) {
+    Invoke-OrdinaryClient $ClaudeArgs
 }
 
 $ProfileFile = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($ProfileFile))
-$profile = $null
+$clientProfile = $null
 $profileError = $null
 try {
-    $profile = Import-ClientProfile $ProfileFile 'claude'
+    $clientProfile = Import-ClientProfile $ProfileFile 'claude'
 }
 catch {
-    if ($Mode -ne 'Status') { throw }
     $profileError = $_.Exception.Message
 }
-if ($null -ne $profile) {
-    if ($null -eq $LiveUrl) { $LiveUrl = [uri]$profile.live_url }
-    if (-not $AgentName) { $AgentName = [string]$profile.agent_name }
-    if (-not $AgentCredentialFile) { $AgentCredentialFile = [string]$profile.credential_file }
-    if (-not $Label) { $Label = [string]$profile.label }
+if ($null -ne $clientProfile) {
+    if ($null -eq $LiveUrl) { $LiveUrl = [uri]$clientProfile.live_url }
+    if (-not $AgentName) { $AgentName = [string]$clientProfile.agent_name }
+    if (-not $AgentCredentialFile) { $AgentCredentialFile = [string]$clientProfile.credential_file }
+    if (-not $Label) { $Label = [string]$clientProfile.label }
 }
 if (-not $Label) { $Label = 'claude-code' }
+if ($Mode -ne 'Status') { $Label = Get-LabelWithWorkingDirectory $Label }
 
 $RepoDirectory = Split-Path -Parent $PSScriptRoot
 $Adapter = Join-Path $RepoDirectory 'adapters\claude-channel\src\main.js'
@@ -130,10 +226,10 @@ if ($AgentCredentialFile) {
 }
 
 $credentialStatus = if ($AgentCredentialFile -and (Test-Path -LiteralPath $AgentCredentialFile -PathType Leaf)) { 'present' } else { 'missing' }
-if ($null -ne $LiveUrl) { Assert-LiveUrl $LiveUrl }
 if ($Mode -eq 'Status') {
+    if ($null -ne $LiveUrl) { Assert-LiveUrl $LiveUrl }
     "adapter: $Adapter"
-    "profile: $ProfileFile $(if ($profileError) { '(not ready - {0})' -f $profileError } elseif ($null -ne $profile) { '(loaded)' } else { '(missing)' })"
+    "profile: $ProfileFile $(if ($profileError) { '(not ready - {0})' -f $profileError } elseif ($null -ne $clientProfile) { '(loaded)' } else { '(missing)' })"
     "live URL: $(if ($null -ne $LiveUrl) { $LiveUrl.AbsoluteUri } else { '<unset>' })"
     "label: $Label"
     "agent: $(if ($AgentName) { $AgentName } else { '<unset>' })"
@@ -145,24 +241,40 @@ if ($Mode -eq 'Status') {
     exit 0
 }
 
-if ($null -eq $LiveUrl) { throw 'LiveUrl is required' }
-if (-not $AgentName) { throw 'AgentName is required; select the exact Claude identity' }
-if (-not $AgentCredentialFile) { throw 'AgentCredentialFile is required; select the exact Claude identity credential' }
-if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $AgentCredentialFile" }
-if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
-if (-not (Test-Path -LiteralPath $OverlayHelper -PathType Leaf)) { throw "Claude Channel overlay helper is missing: $OverlayHelper" }
-if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
-if (-not (Test-Path -LiteralPath $TokenHelper -PathType Leaf)) { throw "Agent token helper is missing: $TokenHelper" }
-$pwshCommand = Get-RequiredApplication 'pwsh.exe'
+$pwshCommand = $null
+$claudeCommand = $null
+$nodeCommand = $null
+try {
+    if ($profileError) { throw $profileError }
+    if ($null -eq $LiveUrl) { throw 'LiveUrl is required' }
+    Assert-LiveUrl $LiveUrl
+    if (-not $AgentName) { throw 'AgentName is required; select the exact Claude identity' }
+    if (-not $AgentCredentialFile) { throw 'AgentCredentialFile is required; select the exact Claude identity credential' }
+    if ($credentialStatus -ne 'present') { throw "Agent credential is missing: $AgentCredentialFile" }
+    if (-not (Test-Path -LiteralPath $Adapter -PathType Leaf)) { throw "Adapter is missing: $Adapter" }
+    if (-not (Test-Path -LiteralPath $OverlayHelper -PathType Leaf)) { throw "Claude Channel overlay helper is missing: $OverlayHelper" }
+    if (-not (Test-Path -LiteralPath $CredentialLauncher -PathType Leaf)) { throw "Credential launcher is missing: $CredentialLauncher" }
+    if (-not (Test-Path -LiteralPath $TokenHelper -PathType Leaf)) { throw "Agent token helper is missing: $TokenHelper" }
+    $pwshCommand = Get-RequiredApplication 'pwsh.exe'
 
-# Reject a crossed identity before creating an overlay or spawning Claude. The
-# helper's validation-only path checks DPAPI metadata without reading the bearer.
-Assert-AgentCredentialIdentity $pwshCommand $TokenHelper $AgentCredentialFile $AgentName
-$claudeCommand = Get-RequiredApplication 'claude'
-$nodeCommand = Get-RequiredApplication 'node'
+    # Reject a crossed identity before creating an overlay or spawning Claude. The
+    # helper's validation-only path checks DPAPI metadata without reading the bearer.
+    Assert-AgentCredentialIdentity $pwshCommand $TokenHelper $AgentCredentialFile $AgentName
+    $claudeCommand = Get-RequiredApplication 'claude'
+    $nodeCommand = Get-RequiredApplication 'node'
+}
+catch {
+    Invoke-PreflightFailure $_.Exception.Message
+}
 
-# Created only on a real launch, so Status stays free of side effects. A
-# reparse point is refused for the same reason the Codex launcher refuses one:
+if ($Mode -eq 'DryRun') {
+    "would launch Claude with ops-brain online delivery through a private per-launch config overlay (credential path only; bearer redacted)"
+    "label: $Label"
+    exit 0
+}
+
+# Created only on a real launch, so Status and DryRun stay free of side effects.
+# A reparse point is refused for the same reason the Codex launcher refuses one:
 # it would redirect adapter output to an attacker-chosen path written under the
 # operator's own credentials.
 $StateDirectory = Assert-RealDirectory $StateDirectory
@@ -240,9 +352,16 @@ function Remove-PrivateTemporaryDirectory {
     [IO.Directory]::Delete($resolved, $false)
 }
 
-if ($Mode -eq 'DryRun') {
-    "would launch Claude with ops-brain online delivery through a private per-launch config overlay (credential path only; bearer redacted)"
-    exit 0
+# Each launch writes a new adapter log and nothing else prunes them; keep a
+# month so a failed bind stays diagnosable without the directory growing for
+# the life of the host.
+function Remove-StaleAdapterLog {
+    try {
+        Get-ChildItem -LiteralPath $StateDirectory -File -Filter 'claude-adapter.*.log' -ErrorAction SilentlyContinue |
+            Where-Object LastWriteTime -lt (Get-Date).AddDays(-30) |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    catch { }
 }
 
 $configDirectory = New-PrivateTemporaryDirectory
@@ -263,6 +382,8 @@ try {
         @('--mcp-config', $userMcpConfig)
     }
     else { @() }
+    Remove-StaleAdapterLog
+    [Console]::Error.WriteLine("ops-brain live: connecting as $AgentName (label $Label); adapter log: $(Join-Path $StateDirectory 'claude-adapter.*.log')")
     & $claudeCommand.Source @ClaudeArgs @userMcpArguments --dangerously-load-development-channels server:ops-brain-live
     $claudeExitCode = $LASTEXITCODE
 }

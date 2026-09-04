@@ -23,7 +23,20 @@ All notable changes to this project will be documented in this file.
   under `self`, a lane lost after connect is announced inside the session as a
   `lane_status` channel event, a second attended Codex session takes a free
   App Server port, and adapter logs older than 30 days are pruned at launch.
-  Windows launchers are unchanged; the mirror is tracked in `TODO.md`.
+- **Plain `claude` and `codex` can be the live launchers on Windows too.**
+  Both PowerShell launchers gained `-Mode Auto` with the Linux contract:
+  attended console launches go live, redirected handles, `-p`, `codex exec`,
+  subcommands, `--version` and `--help` pass straight through, a failed
+  preflight asks through `Read-Host` and exits 2 on anything but `y`, and
+  `--no-live` / `-NoLive` / `OPS_BRAIN_LIVE=off` is the announced opt-out.
+  `scripts/OpsBrain-Shell.ps1` defines the `claude` and `codex` functions for
+  attended console sessions only and carries no credential; it runs the
+  launchers in-process with the client arguments as one array, because
+  `pwsh -File` binds `-p` to `-ProfileFile` by prefix and `cmd.exe` splits
+  `%*` on an unquoted `&`. Labels carry the working-directory leaf, a second
+  attended Codex session takes a free App Server port, the live banner names
+  the adapter log, and stale helper logs are pruned. The Windows tests drive
+  the prompt paths through a hidden child console fed by `WriteConsoleInput`.
 
 ### Changed
 

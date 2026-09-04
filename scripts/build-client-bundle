@@ -63,6 +63,7 @@ done
 for script in \
     Install-OpsBrainLive.ps1 \
     Install-OpsBrain.ps1 \
+    OpsBrain-Shell.ps1 \
     Test-OpsBrainLiveWindows.ps1 \
     create-claude-channel-overlay.mjs \
     install-ops-brain-client \

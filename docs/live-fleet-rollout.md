@@ -315,10 +315,8 @@ exactly-one-thread invariant holds per session.
 Everything in the per-host acceptance gate applies unchanged to the
 integrated path, and a host is not certified on it until the same
 two-identity, rendered-marker, idle, and teardown checks pass launched from
-the plain `claude` and `codex` commands. Windows PowerShell profiles do not
-yet ship an equivalent; the `.cmd` shims and `-Mode` launchers stay explicit
-there until a `--auto` mode with the same passthrough and prompt contract
-lands in the PowerShell launchers.
+the plain `claude` and `codex` commands. The Windows equivalent is
+[below](#main-launcher-integration-windows).
 
 ## Windows credential preparation
 
@@ -400,6 +398,75 @@ closed. The adapter captures that pipe without putting the bearer in its
 environment, on disk, or on the command line, and independently verifies the
 server-returned binding. Claude, Codex, command arguments, generated MCP
 configuration, and logs receive only the credential-file path.
+
+## Main-launcher integration (Windows)
+
+The PowerShell launchers carry the Linux contract as `-Mode Auto`, and the
+profile integration is one dot-source line in `$PROFILE`:
+
+```powershell
+. "<client-root>\scripts\OpsBrain-Shell.ps1"
+```
+
+The installer prints the exact line for its checkout or bundle, and
+`Install-OpsBrain.ps1 -Mode Status` reports it as `shell init:`. The file
+defines `claude` and `codex` functions only when the session is an attended
+console: `ConsoleHost`, stdin and stdout not redirected, and pwsh not started
+with `-NonInteractive`. A scheduled task, a wake shim, or any script that
+dot-sources the profile gets no functions and reaches the real executables by
+name. The functions carry no credential; the launchers still read the DPAPI
+credential themselves. Bypass the function with
+`& (Get-Command claude -CommandType Application) ...`.
+
+Two measured Windows facts shape the mechanism, and they are why the functions
+do not simply call the `.cmd` shims:
+
+- `pwsh -File` binds a client's `-p` to the launcher's `-ProfileFile` by
+  parameter-name prefix and eats `-v` as `-Verbose`; `--` is rejected in
+  `-File` mode, and a splatted array after `--` is bound again. The one shape
+  that carries every client argument intact is a single explicit array, so
+  the functions run the launcher in-process as
+  `ops-brain-claude-live.ps1 -Mode Auto -ClaudeArgs $args` (and `-CodexArgs`).
+- `cmd.exe` re-parses `%*`: an unquoted `&` or `|` in a client argument splits
+  the command line at the shim. In-process invocation has no shim in the path.
+
+`-Mode Auto` goes live only for an attended console and treats every other
+shape as ordinary without a word: redirected stdin or stdout, `-p`/`--print`,
+`codex exec` and every other subcommand, the same Claude subcommand list as
+the Linux launcher, `--version`/`-v`/`-V`, `--help`/`-h`. A failed preflight
+on a console prints `ops-brain live: NOT available — <reason>` on stderr and
+asks `Continue without live delivery? [y/N]` through `Read-Host`; only `y` (or
+`yes`) launches an ordinary session, announced as `off (operator choice)`, and
+anything else exits 2 with `declined ordinary fallback`. `-Mode Run` — the
+explicit `ops-brain-claude`/`ops-brain-codex` commands — keeps failing closed
+with no prompt. The deliberate opt-out is `claude --no-live` (a leading
+`--no-live` client argument, the `-NoLive` switch, or `OPS_BRAIN_LIVE=off`),
+announced once on stderr.
+
+Labels carry the working-directory leaf (`<profile label>.<leaf>`, folded to
+`[A-Za-z0-9._-]`, leading `.` stripped, bounded to 80 bytes) in Run, Auto and
+DryRun; `-Mode DryRun` prints the resulting `label:` line. A second attended
+Codex session that finds the profile port already answering `readyz` takes a
+free loopback port for its own App Server and adapter and says so on stderr;
+an explicit `-AppServerPort` or `OPS_BRAIN_CODEX_APP_SERVER_PORT` still fails
+closed on a busy port. A live launch prints
+`ops-brain live: connecting as <agent> (label <label>); adapter log: <path>`
+before the client takes the console; for Codex the path is the adapter's
+stderr log, where its structured lines go. Adapter and App Server logs older
+than 30 days are pruned at launch.
+
+`Test-OpsBrainLiveWindows.ps1` drives the headless shapes through a child
+pwsh with piped handles, and the attended shapes — the live overlay launch,
+subcommand passthrough, the decline/accept/empty-answer prompts, and the
+profile functions — through a hidden child console fed by `WriteConsoleInput`.
+When no console can be allocated it prints a warning that the attended paths
+were not exercised instead of passing silently.
+
+The per-host gate applies unchanged: a Windows host is not certified on the
+integrated path until the two-identity, rendered-marker, idle, and teardown
+checks pass launched from plain `claude` and `codex`, plus `claude -p` and
+`codex exec` from the same session creating no peer, and a deliberately broken
+preflight prompting and exiting 2 on `n`.
 
 ## Capturing launcher output
 
