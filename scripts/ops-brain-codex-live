@@ -89,24 +89,22 @@ mode=run
 auto=false
 live_requested=true
 while (($#)); do
+    # In --auto the launcher stands in for the plain client, so every
+    # argument other than its own two switches belongs to the client.
+    # Recognising anything else here re-creates the -h/--help and Codex
+    # --profile collisions one flag at a time; break on the whole class.
+    if [[ $auto == true && $1 != --auto && $1 != --no-live ]]; then break; fi
     case "$1" in
         --status) mode=status; shift ;;
         --dry-run) mode=dry; shift ;;
         --auto) auto=true; shift ;;
         --no-live) live_requested=false; shift ;;
         --profile)
-            # Codex has its own -p/--profile; in --auto it is Codex's. Pick
-            # the ops-brain profile with OPS_BRAIN_CODEX_PROFILE there.
-            if [[ $auto == true ]]; then break; fi
             (($# >= 2)) || { echo '--profile requires a path' >&2; exit 2; }
             PROFILE_FILE=$2
             shift 2
             ;;
-        -h|--help)
-            # In --auto these belong to the client; the launcher's own
-            # usage is only for the explicit command.
-            if [[ $auto == true ]]; then break; fi
-            usage; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
         --) shift; break ;;
         *) break ;;
     esac

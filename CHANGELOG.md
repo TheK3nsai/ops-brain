@@ -46,6 +46,14 @@ All notable changes to this project will be documented in this file.
   became a missing-profile preflight. In `--auto` those spellings now reach
   the client; the ops-brain profile is chosen with `OPS_BRAIN_*_PROFILE`.
   Measured on kensai-cloud (`01a06933-8311`).
+- **`--auto` hands the client every argument but its own two switches.** The
+  fix above was per-flag; the same collision was still live for `--` (a
+  leading end-of-options marker was consumed, so a prompt starting with a
+  dash reached the client's parser unprotected) and latent for `--status`
+  and `--dry-run`. In `--auto` only `--auto` and `--no-live` are the
+  launcher's now, and everything else breaks out of the option loop, so a
+  new launcher switch cannot silently shadow a client one. The explicit
+  `ops-brain-claude` / `ops-brain-codex` commands are unchanged.
 
 ### Changed
 
