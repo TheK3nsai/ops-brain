@@ -334,6 +334,31 @@ assert_contains "$(<"$capture.args")" $'--profile\nwork\n-h'
 [[ ! -s $capture.out ]] || fail "--auto --profile was consumed by the launcher: $(<"$capture.out")"
 assert_contains "$("$BIN_DIR/ops-brain-codex" --help)" 'Usage: ops-brain-codex'
 
+# Every other launcher switch is the client's in --auto too, not just the
+# two spellings that were reported. `--` is the live case: without it a
+# prompt beginning with a dash cannot be protected from the client's own
+# parser. `--dry-run` is latent today and must stay that way.
+capture="$TEST_DIR/auto-endopts"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-claude" --auto -- --not-a-flag </dev/null >"$capture.out" 2>&1
+assert_contains "$(<"$capture.args")" $'--\n--not-a-flag'
+[[ ! -s $capture.out ]] || fail "--auto swallowed the end-of-options marker: $(<"$capture.out")"
+capture="$TEST_DIR/auto-dryrun"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-claude" --auto --dry-run </dev/null >"$capture.out" 2>&1
+assert_contains "$(<"$capture.args")" '--dry-run'
+[[ ! -s $capture.out ]] || fail "--auto ran the launcher's own dry-run: $(<"$capture.out")"
+
+# The explicit command keeps every switch: --auto is the only mode that
+# hands them over, so breaking the class must not disarm ops-brain-claude.
+assert_contains "$("$BIN_DIR/ops-brain-claude" --dry-run)" 'would launch:'
+assert_contains "$("$BIN_DIR/ops-brain-claude" --help)" 'Usage: ops-brain-claude'
+capture="$TEST_DIR/auto-nolive-still-mine"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-claude" --auto --no-live --resume abc </dev/null >"$capture.out" 2>&1
+assert_contains "$(<"$capture.out")" 'off (requested)'
+[[ $(<"$capture.args") == $'--resume\nabc' ]] || fail "--no-live must stay the launcher's in --auto, got: $(<"$capture.args")"
+
 # --no-live and OPS_BRAIN_LIVE=off are the announced, deliberate ordinary
 # launches; they must say so once and pass every argument through.
 capture="$TEST_DIR/no-live"
