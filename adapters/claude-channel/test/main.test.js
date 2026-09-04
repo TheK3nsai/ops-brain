@@ -82,16 +82,24 @@ async function waitForLog(stateDir, pattern, timeoutMs = 10_000) {
   throw new Error(`log never matched ${pattern} within ${timeoutMs}ms`)
 }
 
-// Same shape as waitForLog, for the frames the adapter writes to stdout. A
-// bare `Date.now() + N` loop around an assert reports a slow runner as a
-// missing emission, which is a fail-closed guarantee and stops a reader cold.
-async function waitForStdout(read, pattern, timeoutMs = 10_000) {
+// Wait on a *parsed* stdout frame, never on a substring of the raw stream.
+// The channel server's own instructions text contains the words
+// `kind=lane_status` (channel-server.js), so a /lane_status/ test on raw
+// stdout matches the instructions frame and returns before the notification
+// it was waiting for exists. The assert that followed then blamed the adapter
+// for not emitting a fail-closed lane event it was still about to emit.
+// The trailing line may also be a half-written frame, so parse leniently.
+async function waitForFrame(read, predicate, description, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (pattern.test(read())) return read()
+    const frames = read().split('\n').filter(Boolean).flatMap(line => {
+      try { return [JSON.parse(line)] } catch { return [] }
+    })
+    const found = frames.find(predicate)
+    if (found) return found
     await new Promise(resolve => setTimeout(resolve, 50))
   }
-  throw new Error(`stdout never matched ${pattern} within ${timeoutMs}ms`)
+  throw new Error(`no stdout frame matched ${description} within ${timeoutMs}ms`)
 }
 
 test('records a terminal identity mismatch in the adapter log', async t => {
@@ -113,10 +121,11 @@ test('records a terminal identity mismatch in the adapter log', async t => {
   assert.match(body, /CC-Stealth/)
   // The session itself hears that its lane is gone, as a channel event that is
   // marked adapter status rather than peer input.
-  await waitForStdout(() => stdout, /lane_status/)
-  const lost = stdout.split('\n').filter(Boolean).map(line => JSON.parse(line))
-    .find(frame => frame.method === 'notifications/claude/channel' && frame.params?.meta?.kind === 'lane_status')
-  assert.ok(lost, 'lane-lost channel event was not emitted')
+  const lost = await waitForFrame(
+    () => stdout,
+    frame => frame.method === 'notifications/claude/channel' && frame.params?.meta?.kind === 'lane_status',
+    'a lane-lost channel event',
+  )
   assert.equal(lost.params.meta.state, 'lost')
   assert.equal(lost.params.meta.trust, 'adapter_status')
   assert.match(lost.params.content, /LANE LOST/)
