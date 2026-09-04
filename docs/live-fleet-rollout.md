@@ -40,9 +40,11 @@ The server-side binding is the source of peer identity.
 2. Install Node.js 22 or newer, current Claude Code with Channels support, and
    Codex CLI with App Server/`--remote` support. The complete attended
    rendered-delivery gates passed with Codex **0.151.0 on Windows** using the
-   published v5.2.1 client bundle (`02bd845`), then **0.152.0 on Linux** using
-   source checkout `279ba8c` against the v5.2.1 server. Versions 0.149.0 and
-   0.149.1 are earlier measured working versions.
+   published v5.2.1 client bundle (`02bd845`), **0.152.0 on Linux** using
+   source checkout `279ba8c` against the v5.2.1 server, and **0.153.2 on
+   Windows** using source checkout `194bea2` against the production server on
+   2026-09-04. Versions 0.149.0 and 0.149.1 are earlier measured working
+   versions.
    The adapter's resumable-thread selection handles the process-wide extra
    loaded ID first observed in 0.150.0, but 0.150.0 itself has not run the
    complete gate. Do not downgrade a current acceptance host merely to prove
@@ -54,7 +56,8 @@ The server-side binding is the source of peer identity.
    `--dangerously-load-development-channels` flag is hidden: it is absent from
    `--help` output while present in the bundle and fully functional. Claude Code
    **2.1.257** passed the complete attended gate with the private configuration
-   overlay on both Linux and Windows; 2.1.241 is the earlier Linux baseline.
+   overlay on both Linux and Windows; **2.1.260** passed the 2026-09-04 Windows
+   gate with client checkout `194bea2`; 2.1.241 is the earlier Linux baseline.
    Checking `--help` will make you conclude the client lacks support and chase
    an upgrade that changes nothing. The integrated main-launcher path was
    operator-confirmed on Linux 2026-09-03 with Claude Code **2.1.259** and
@@ -184,6 +187,11 @@ Both adapters write JSON lines to `OPS_BRAIN_LIVE_STATE_DIR`, default
 `~/.local/state/ops-brain-live/`: `codex-adapter.*.log` and
 `claude-adapter.*.log`. On Linux, each launcher's `--status` prints the path;
 on Windows, use `-Mode Status`.
+
+These files record connection, reconnection, disconnect, and terminal adapter
+failures; they do not record per-message injection or rendering. Log silence
+is therefore not delivery evidence in either direction. A successful receipt
+plus visible rendering in the receiving client remains the gate.
 
 **On Claude this file is the only signal.** Claude Code spawns the adapter and
 discards its stderr, so a live channel that never binds produces no terminal
@@ -388,6 +396,12 @@ An additional in-memory thread without a rollout is ignored; multiple persisted
 candidates remain an ambiguity and keep the adapter offline. App Server readiness
 alone is not peer readiness.
 
+Here, "process-wide" means the App Server instance owned by that launcher, not
+every `codex.exe` on the host. A co-resident standalone Codex TUI did not change
+the launcher's thread count across three measured starts in the 2026-09-04
+Windows gate. It is not a thread-selection confound unless it shares that App
+Server.
+
 Substitute the host's exact identities and labels. `-Mode Status` and
 `-Mode DryRun` are credential-safe. Before either client is spawned, a
 validation-only helper invocation checks that the DPAPI credential username
@@ -538,6 +552,23 @@ Do not call a host live until all applicable checks pass:
    text, not that the model read or followed it. Confirm that both markers
    actually render in their target sessions; this is the delivered-marker
    control for both adapters, not merely a receipt check.
+
+   In Claude, invoke `send_live_message` on the session-local
+   **`ops-brain-live` overlay**, not the same-named tool on the ordinary remote
+   `ops-brain` MCP server. Both can be visible in one session and both can
+   return success, but only the overlay is bound to the adapter path this gate
+   certifies. Codex exposes the adapter-bound path without that same-name
+   ambiguity.
+
+   Keep markers inert and make any later consumer idempotent. End-to-end live
+   delivery is best-effort, not exactly-once: one logical marker in the
+   2026-09-04 Windows gate rendered twice under distinct server message IDs.
+   The server's idempotency tracking suppresses only requests that reach it
+   with the same effective key; a repeated tool invocation or a switch between
+   tool surfaces can create a new request and key. Never use a live message as
+   a non-idempotent automation trigger. If a duplicate appears during a gate,
+   retain the sanitized message IDs and exact tool-server path for diagnosis;
+   do not count the duplicate as an additional successful control.
 7. Run both halves of the identity negative control. They exercise different
    enforcement points, so passing one does not imply the other:
    - **7a, rendered provenance:** send harmless text that claims the sibling's
