@@ -357,9 +357,16 @@ printf 'ops-brain live: connecting as %s (label %s); adapter log: %s/claude-adap
     "$EXPECTED_AGENT" "$LABEL" "$STATE_DIR" >&2
 
 set +e
-CLAUDE_CONFIG_DIR="$overlay_dir" claude "$@" \
+# The launcher's own flags go FIRST. They used to trail "$@", which was
+# safe only while the option loop ate a leading `--`; now that the marker
+# is the client's (see the --auto passthrough above), anything after it is
+# prompt text — so a trailing channel flag would silently not load, while
+# this script had already announced a live session. Codex orders it this
+# way too, and the --dry-run line above renders this order.
+CLAUDE_CONFIG_DIR="$overlay_dir" claude \
     "${user_mcp_args[@]}" \
-    --dangerously-load-development-channels "server:$CHANNEL_SERVER"
+    --dangerously-load-development-channels "server:$CHANNEL_SERVER" \
+    "$@"
 exit_status=$?
 set -e
 exit "$exit_status"

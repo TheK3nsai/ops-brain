@@ -343,6 +343,14 @@ PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_E
     "$BIN_DIR/ops-brain-claude" --auto -- --not-a-flag </dev/null >"$capture.out" 2>&1
 assert_contains "$(<"$capture.args")" $'--\n--not-a-flag'
 [[ ! -s $capture.out ]] || fail "--auto swallowed the end-of-options marker: $(<"$capture.out")"
+# Same class on the Codex side, which the reported spellings covered only
+# through --profile: the marker is the client's there too. Codex's exec
+# already puts --remote first, so this is coverage, not a fix.
+capture="$TEST_DIR/auto-codex-endopts"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth \
+    "$BIN_DIR/ops-brain-codex" --auto -- --not-a-flag </dev/null >"$capture.out" 2>&1
+assert_contains "$(<"$capture.args")" $'--\n--not-a-flag'
+[[ ! -s $capture.out ]] || fail "--auto swallowed the end-of-options marker on codex: $(<"$capture.out")"
 capture="$TEST_DIR/auto-dryrun"
 PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" \
     "$BIN_DIR/ops-brain-claude" --auto --dry-run </dev/null >"$capture.out" 2>&1
@@ -433,6 +441,29 @@ if python3 -c 'import pty' 2>/dev/null; then
     assert_contains "$(<"$capture")" '"ops-brain-live"'
     assert_contains "$(<"$capture.pty")" 'ops-brain live: connecting as CC-Stealth'
     [[ ! -e $(<"$capture.dir") ]] || fail 'attended --auto left its overlay behind'
+
+    # Ordering, not presence. The assertion above passes whether the channel
+    # flag is a flag or prompt text, so it cannot see this bug: `--` reaches
+    # the client now, and anything the launcher appends after it stops being
+    # an option. That yields a session that announced itself live with no
+    # Channel loaded and no MCP servers, which is the one failure this
+    # launcher exists to prevent. Found by CC-Cloud reviewing #119.
+    capture="$TEST_DIR/auto-tty-endopts"
+    pty_launch '' "$capture.pty" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" "${LIVE_ENV[@]}" \
+        -- "$BIN_DIR/ops-brain-claude" --auto -- --not-a-flag || fail 'attended --auto -- launch failed'
+    mapfile -t launched <"$capture.args"
+    channel_at=-1 endopts_at=-1
+    for i in "${!launched[@]}"; do
+        if [[ ${launched[i]} == '--dangerously-load-development-channels' && $channel_at -lt 0 ]]; then
+            channel_at=$i
+        fi
+        if [[ ${launched[i]} == '--' && $endopts_at -lt 0 ]]; then
+            endopts_at=$i
+        fi
+    done
+    ((channel_at >= 0)) || fail "no channel flag reached the client: $(<"$capture.args")"
+    ((endopts_at >= 0)) || fail "the end-of-options marker did not reach the client: $(<"$capture.args")"
+    ((channel_at < endopts_at)) || fail "the channel flag lands after --, so it is prompt text, not a flag: $(<"$capture.args")"
     # A subcommand on a terminal still passes through.
     capture="$TEST_DIR/auto-tty-sub"
     pty_launch '' "$capture.pty" PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" "${LIVE_ENV[@]}" \
