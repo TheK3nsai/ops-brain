@@ -97,7 +97,11 @@ while (($#)); do
             PROFILE_FILE=$2
             shift 2
             ;;
-        -h|--help) usage; exit 0 ;;
+        -h|--help)
+            # In --auto these belong to the client; the launcher's own
+            # usage is only for the explicit command.
+            if [[ $auto == true ]]; then break; fi
+            usage; exit 0 ;;
         --) shift; break ;;
         *) break ;;
     esac

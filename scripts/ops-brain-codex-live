@@ -39,6 +39,8 @@ Modes:
               second attended session gets its own App Server and adapter. A
               preflight failure asks the operator on the terminal before
               continuing without live; it never falls back silently.
+              --help and --profile are Codex's own flags in this mode;
+              choose the ops-brain profile with OPS_BRAIN_CODEX_PROFILE.
   --no-live   ordinary Codex, announced once on stderr
   OPS_BRAIN_LIVE=off in the environment is the same as --no-live.
 Any other argument is passed to Codex; run `command codex --help` for its
@@ -93,11 +95,18 @@ while (($#)); do
         --auto) auto=true; shift ;;
         --no-live) live_requested=false; shift ;;
         --profile)
+            # Codex has its own -p/--profile; in --auto it is Codex's. Pick
+            # the ops-brain profile with OPS_BRAIN_CODEX_PROFILE there.
+            if [[ $auto == true ]]; then break; fi
             (($# >= 2)) || { echo '--profile requires a path' >&2; exit 2; }
             PROFILE_FILE=$2
             shift 2
             ;;
-        -h|--help) usage; exit 0 ;;
+        -h|--help)
+            # In --auto these belong to the client; the launcher's own
+            # usage is only for the explicit command.
+            if [[ $auto == true ]]; then break; fi
+            usage; exit 0 ;;
         --) shift; break ;;
         *) break ;;
     esac

@@ -246,7 +246,10 @@ argument. On Linux the temporary overlay uses
 `XDG_RUNTIME_DIR` when available and a private mode-700 `/tmp` directory
 otherwise. Same-user processes remain outside this boundary.
 
-On Linux, both launchers accept `--status`, `--dry-run`, and `--profile`. The
+On Linux, both launchers accept `--status`, `--dry-run`, and `--profile`. In
+`--auto`, `-h`/`--help` reach the client, and `--profile` is Codex's own flag;
+choose the ops-brain profile there with `OPS_BRAIN_CLAUDE_PROFILE` /
+`OPS_BRAIN_CODEX_PROFILE`. The
 PowerShell launchers use `-Mode Status`, `-Mode DryRun`, and `-ProfileFile`
 instead. The token path and exact expected server-bound identity are required
 deliberately. There is no generic

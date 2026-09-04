@@ -320,6 +320,20 @@ assert_contains "$(<"$capture.args")" '--resume'
 [[ ! -s $capture.out ]] || fail "--auto passthrough should be silent, got: $(<"$capture.out")"
 [[ ! -e "$TEST_DIR/auto-state" ]] || fail '--auto passthrough created the adapter state directory'
 
+# -h/--help belong to the client in --auto: the launcher's own usage is
+# only for the explicit command. Codex's own -p/--profile is Codex's too.
+capture="$TEST_DIR/auto-help"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-claude" --auto --help </dev/null >"$capture.out" 2>&1
+assert_contains "$(<"$capture.args")" '--help'
+[[ ! -s $capture.out ]] || fail "--auto --help printed the launcher usage: $(<"$capture.out")"
+capture="$TEST_DIR/auto-codex-profile"
+PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth \
+    "$BIN_DIR/ops-brain-codex" --auto --profile work -h </dev/null >"$capture.out" 2>&1
+assert_contains "$(<"$capture.args")" $'--profile\nwork\n-h'
+[[ ! -s $capture.out ]] || fail "--auto --profile was consumed by the launcher: $(<"$capture.out")"
+assert_contains "$("$BIN_DIR/ops-brain-codex" --help)" 'Usage: ops-brain-codex'
+
 # --no-live and OPS_BRAIN_LIVE=off are the announced, deliberate ordinary
 # launches; they must say so once and pass every argument through.
 capture="$TEST_DIR/no-live"
