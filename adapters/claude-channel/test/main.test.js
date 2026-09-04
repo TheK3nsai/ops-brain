@@ -82,6 +82,18 @@ async function waitForLog(stateDir, pattern, timeoutMs = 10_000) {
   throw new Error(`log never matched ${pattern} within ${timeoutMs}ms`)
 }
 
+// Same shape as waitForLog, for the frames the adapter writes to stdout. A
+// bare `Date.now() + N` loop around an assert reports a slow runner as a
+// missing emission, which is a fail-closed guarantee and stops a reader cold.
+async function waitForStdout(read, pattern, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (pattern.test(read())) return read()
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`stdout never matched ${pattern} within ${timeoutMs}ms`)
+}
+
 test('records a terminal identity mismatch in the adapter log', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'ops-brain-main-'))
   const server = await liveServerBoundTo('CC-Somebody-Else')
@@ -101,8 +113,7 @@ test('records a terminal identity mismatch in the adapter log', async t => {
   assert.match(body, /CC-Stealth/)
   // The session itself hears that its lane is gone, as a channel event that is
   // marked adapter status rather than peer input.
-  const deadline = Date.now() + 5_000
-  while (!/lane_status/.test(stdout) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50))
+  await waitForStdout(() => stdout, /lane_status/)
   const lost = stdout.split('\n').filter(Boolean).map(line => JSON.parse(line))
     .find(frame => frame.method === 'notifications/claude/channel' && frame.params?.meta?.kind === 'lane_status')
   assert.ok(lost, 'lane-lost channel event was not emitted')
