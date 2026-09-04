@@ -101,6 +101,11 @@ text, an optional reply message ID, and a caller-generated UUID idempotency key.
 Keys are scoped to the token-bound agent and retained in memory for up to ten
 minutes, subject to the global 4,096-entry bound. They survive adapter
 reconnects but not process restarts.
+This suppresses repeated requests that reach the MCP send path with the same
+key; it is not an end-to-end exactly-once guarantee. A caller that invokes a
+tool twice with newly generated keys, or switches between the session-local
+adapter tool and this remote MCP tool, can still produce two server message
+IDs. Treat live text as best-effort and make any downstream action idempotent.
 The server selects the token-bound agent's sole connected adapter as the reply
 route and marks the message `source_binding: agent_bound_unique_adapter`; it
 does not claim the MCP request originated on that WebSocket. If that agent
@@ -122,6 +127,7 @@ and [channel reference](https://code.claude.com/docs/en/channels-reference).
 The implementation and setup guide are in
 [`adapters/claude-channel`](../adapters/claude-channel). It has been exercised
 against Claude Code 2.1.257 in complete attended Linux and Windows gates;
+2.1.260 passed the 2026-09-04 Windows gate with client checkout `194bea2`, and
 2.1.241 is the earlier measured Linux baseline. Custom Channels still require
 Anthropic's explicit development-channel opt-in and may be disabled by
 organization policy. The
@@ -149,11 +155,12 @@ bidirectional JSON-RPC API over stdio or WebSocket; see the official
 The implementation and shared-App-Server setup guide are in
 [`adapters/codex-app-server`](../adapters/codex-app-server). It has been
 exercised using a TUI connected through `--remote` against Codex CLI 0.149.0,
-0.151.0, and 0.152.0. The complete attended 2026-09-01 pair gates passed with
-0.151.0 and the published v5.2.1 client bundle (`02bd845`) on Windows, then
-0.152.0 and source checkout `279ba8c` against the v5.2.1 server on Linux. These
-are exact measured versions and revisions, not an open-ended compatibility
-range.
+0.151.0, 0.152.0, and 0.153.2. The complete attended 2026-09-01 pair gates
+passed with 0.151.0 and the published v5.2.1 client bundle (`02bd845`) on
+Windows, then 0.152.0 and source checkout `279ba8c` against the v5.2.1 server
+on Linux. These were followed by the 2026-09-04 Windows gate with 0.153.2 and
+source checkout `194bea2` against the production server. These are exact
+measured versions and revisions, not an open-ended compatibility range.
 `ops-brain-codex` owns the loopback App Server and adapter for one
 foreground TUI, cleans both up on exit, and provides `--status`/`--dry-run`.
 If the wrapper's pre-TUI App Server connection becomes stale, the adapter may
