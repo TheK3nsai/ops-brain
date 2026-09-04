@@ -351,8 +351,13 @@ assert_contains "$(<"$capture.args")" '--dry-run'
 
 # The explicit command keeps every switch: --auto is the only mode that
 # hands them over, so breaking the class must not disarm ops-brain-claude.
-assert_contains "$("$BIN_DIR/ops-brain-claude" --dry-run)" 'would launch:'
-assert_contains "$("$BIN_DIR/ops-brain-claude" --help)" 'Usage: ops-brain-claude'
+# Both go through LIVE_ENV like every other launch here: it pins
+# XDG_CONFIG_HOME, and without it --dry-run reads the developer's real
+# profile and passes on a configured host while failing anywhere else.
+assert_contains "$(PATH="$TEST_DIR/plain-bin:$PATH" env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-claude" --dry-run)" 'would launch:'
+assert_contains "$(PATH="$TEST_DIR/plain-bin:$PATH" env "${LIVE_ENV[@]}" \
+    "$BIN_DIR/ops-brain-claude" --help)" 'Usage: ops-brain-claude'
 capture="$TEST_DIR/auto-nolive-still-mine"
 PATH="$TEST_DIR/plain-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" env "${LIVE_ENV[@]}" \
     "$BIN_DIR/ops-brain-claude" --auto --no-live --resume abc </dev/null >"$capture.out" 2>&1
