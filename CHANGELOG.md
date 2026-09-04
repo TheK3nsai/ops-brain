@@ -25,6 +25,15 @@ All notable changes to this project will be documented in this file.
   App Server port, and adapter logs older than 30 days are pruned at launch.
   Windows launchers are unchanged; the mirror is tracked in `TODO.md`.
 
+### Fixed
+
+- **`--auto` no longer hijacks `-h`/`--help`, or Codex's `--profile`.** The
+  launcher option loop handled both before the passthrough check, so plain
+  `claude --help` printed the launcher's usage and `codex --profile work`
+  became a missing-profile preflight. In `--auto` those spellings now reach
+  the client; the ops-brain profile is chosen with `OPS_BRAIN_*_PROFILE`.
+  Measured on kensai-cloud (`01a06933-8311`).
+
 ### Changed
 
 - **The Windows and Linux live pairs have complete attended certifications.**
