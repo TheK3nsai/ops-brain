@@ -514,16 +514,35 @@ else
     echo 'note: python3 pty module not available; attended --auto paths not exercised' >&2
 fi
 
-# The shell integration defines functions only in interactive shells and
-# carries no credential material.
+# Existing source lines are harmless in interactive and non-interactive shells:
+# plain commands retain their PATH resolution and user functions survive.
 [[ -f $SCRIPT_DIR/ops-brain-shell-init.sh ]] || fail 'shell init file missing'
-shell_fns=$(bash -ic ". '$SCRIPT_DIR/ops-brain-shell-init.sh'; declare -F claude codex" 2>/dev/null)
-assert_contains "$shell_fns" 'claude'
-assert_contains "$shell_fns" 'codex'
-non_interactive=$(bash -c ". '$SCRIPT_DIR/ops-brain-shell-init.sh'; declare -F claude codex; echo end")
-[[ $non_interactive == 'end' ]] || fail 'shell init defined functions in a non-interactive shell'
+for shell_mode in -ic -c; do
+    for client in claude codex; do
+        capture="$TEST_DIR/shell-$shell_mode-$client"
+        PATH="$TEST_DIR/plain-bin:$BIN_DIR:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" \
+            bash --noprofile --norc "$shell_mode" '
+                . "$1"
+                [[ $(type -t "$2") == file ]] || exit 43
+                "$2" --resume "session with spaces"
+            ' _ "$SCRIPT_DIR/ops-brain-shell-init.sh" "$client" 2>/dev/null \
+            || fail "shell init changed plain $client resolution ($shell_mode)"
+        [[ $(<"$capture.args") == $'--resume\nsession with spaces' ]] || fail 'shell init changed client arguments'
+    done
+    preserved=$(bash --noprofile --norc "$shell_mode" '
+        claude() { echo user-claude; }
+        codex() { echo user-codex; }
+        . "$1"
+        claude
+        codex
+    ' _ "$SCRIPT_DIR/ops-brain-shell-init.sh" 2>/dev/null)
+    [[ $preserved == $'user-claude\nuser-codex' ]] || fail 'shell init replaced user functions'
+done
 ! grep -Eq 'OPS_BRAIN_AGENT_TOKEN|Authorization|export ' "$SCRIPT_DIR/ops-brain-shell-init.sh" || fail 'shell init touches credentials or the environment'
-assert_contains "$("$SCRIPT_DIR/install-live-adapters" --status --bin-dir "$BIN_DIR")" 'shell init:'
+assert_contains "$("$SCRIPT_DIR/install-live-adapters" --status --bin-dir "$BIN_DIR")" 'live launch commands: ops-brain-claude, ops-brain-codex'
+! grep -Eq '^function (Global:)?(claude|codex) ' "$SCRIPT_DIR/OpsBrain-Shell.ps1" || fail 'PowerShell integration overrides plain clients'
+grep -Fq 'function Global:ops-brain-claude {' "$SCRIPT_DIR/OpsBrain-Shell.ps1" || fail 'explicit PowerShell Claude function missing'
+grep -Fq 'function Global:ops-brain-codex {' "$SCRIPT_DIR/OpsBrain-Shell.ps1" || fail 'explicit PowerShell Codex function missing'
 
 for file in \
     "$SCRIPT_DIR/Install-OpsBrain.ps1" \

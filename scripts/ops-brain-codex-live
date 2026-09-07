@@ -31,7 +31,7 @@ per App Server port.
 
 Modes:
   (default)   live is required: any preflight failure exits nonzero
-  --auto      main-launcher mode for an interactive shell function. Attended
+  --auto      legacy opt-in automatic mode. Attended
               TTY launches go live; `codex exec`, other subcommands, piped,
               --version and --help invocations pass straight through to Codex
               untouched. When the profile's App Server port is already in use

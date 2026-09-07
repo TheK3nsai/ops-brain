@@ -493,7 +493,7 @@ fs.writeFileSync(`${capture}.dir`, process.env.CLAUDE_CONFIG_DIR ?? '<unset>');
     Assert-True (Test-Path -LiteralPath $shellInit -PathType Leaf) 'profile integration file missing'
     $shellCode = @(Get-Content -LiteralPath $shellInit) | Where-Object { $_ -notmatch '^\s*#' }
     Assert-True (-not ($shellCode -match 'OPS_BRAIN_AGENT_TOKEN|Authorization|\$env:')) 'profile integration touches credentials or the environment'
-    $functionCount = ". '$shellInit'; @(Get-Command claude, codex -CommandType Function -ErrorAction SilentlyContinue).Count"
+    $functionCount = ". '$shellInit'; @(Get-Command claude, codex, ops-brain-claude, ops-brain-codex -CommandType Function -ErrorAction SilentlyContinue).Count"
     foreach ($switches in @(@('-NonInteractive'), @())) {
         $result = Invoke-PwshChild -Arguments ($switches + @('-Command', $functionCount))
         Assert-True ($result.ExitCode -eq 0 -and $result.StdOut.Trim() -eq '0') "profile integration defined functions in a non-interactive shell ($($switches -join ' ')): $($result.StdOut)$($result.StdErr)"
@@ -526,7 +526,7 @@ function g { param([Parameter(ValueFromRemainingArguments = $true)]$Rest) @($Res
     [IO.File]::WriteAllText($consoleProbe, @'
 param([Parameter(Mandatory)][string]$CaseFile)
 $case = Get-Content -LiteralPath $CaseFile -Raw | ConvertFrom-Json -AsHashtable
-$result = @{ attended = (-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected); exit = $null; stderr = ''; error = ''; functions = -1 }
+$result = @{ attended = (-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected); exit = $null; stderr = ''; error = ''; functions = -1; plainFunctions = -1 }
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -560,7 +560,8 @@ try {
     [Console]::SetError($writer)
     if ($case.shellInit) {
         . $case.shellInit
-        $result.functions = @(Get-Command claude, codex -CommandType Function -ErrorAction SilentlyContinue).Count
+        $result.functions = @(Get-Command ops-brain-claude, ops-brain-codex -CommandType Function -ErrorAction SilentlyContinue).Count
+        $result.plainFunctions = @(Get-Command claude, codex -CommandType Function -ErrorAction SilentlyContinue).Count
         $arguments = @($case.arguments)
         & $case.command @arguments
     }
@@ -596,8 +597,8 @@ finally {
     }
 
     # Capability check doubles as the shell-function test: a real console
-    # defines claude/codex, and the function's `claude --version` is a silent
-    # passthrough to the plain recorder.
+    # defines only the explicit live commands; plain `claude --version` reaches
+    # the original executable silently.
     $capture = Join-Path $testDirectory 'console-function'
     $probe = Invoke-ConsoleProbe 'console-function' @{ shellInit = $shellInit; command = 'claude'; arguments = @('--version'); env = @{ OPS_BRAIN_TEST_CAPTURE = $capture } }
     # A bare warning here would make the attended coverage a property of the
@@ -610,10 +611,46 @@ finally {
         Write-Warning 'note: no attended console could be allocated and OPS_BRAIN_TEST_ALLOW_NO_CONSOLE=1; the Auto prompt and attended passthrough paths were not exercised'
     }
     else {
-        Assert-True ($probe.functions -eq 2) "profile integration defined $($probe.functions) functions in an attended console"
+        Assert-True ($probe.functions -eq 2) "profile integration defined $($probe.functions) explicit functions in an attended console"
+        Assert-True ($probe.plainFunctions -eq 0) 'profile integration defined a plain claude/codex function'
         Assert-True ($probe.exit -eq 0 -and $probe.error -eq '') "shell function launch failed: $($probe.error)"
         Assert-True ([IO.File]::ReadAllText("$capture.args") -eq '--version') 'shell function did not pass --version through'
         Assert-True ($probe.stderr.Trim().Length -eq 0) "attended --version passthrough was not silent: $($probe.stderr)"
+
+        $capture = Join-Path $testDirectory 'console-plain-codex'
+        $probe = Invoke-ConsoleProbe 'console-plain-codex' @{ shellInit = $shellInit; command = 'codex'; arguments = @('--version'); env = @{ OPS_BRAIN_TEST_CAPTURE = $capture } }
+        Assert-True ($probe.exit -eq 0 -and $probe.plainFunctions -eq 0) 'profile integration changed plain Codex'
+        Assert-True ([IO.File]::ReadAllText("$capture.args") -eq '--version' -and $probe.stderr.Trim().Length -eq 0) 'plain Codex did not reach its original executable silently'
+
+        # Explicit functions preserve argument arrays and keep Run mode's
+        # fail-closed behavior, even when an Auto fallback would be accepted.
+        foreach ($client in @('claude', 'codex')) {
+            $capture = Join-Path $testDirectory "console-explicit-$client"
+            $probe = Invoke-ConsoleProbe "console-explicit-$client" @{
+                shellInit = $shellInit; command = "ops-brain-$client"
+                arguments = @('--no-live', '-p', 'hello world', '--', '--literal')
+                env = @{ OPS_BRAIN_TEST_CAPTURE = $capture }
+            }
+            Assert-True ($probe.exit -eq 0 -and $probe.error -eq '') "explicit $client function failed: $($probe.error)"
+            Assert-True ([IO.File]::ReadAllText("$capture.args") -eq "-p`nhello world`n--`n--literal") "explicit $client function changed client arguments"
+            $capture = Join-Path $testDirectory "console-explicit-fail-$client"
+            $probe = Invoke-ConsoleProbe "console-explicit-fail-$client" @{
+                typed = "y`r"; shellInit = $shellInit; command = "ops-brain-$client"; arguments = @()
+                env = @{ OPS_BRAIN_TEST_CAPTURE = $capture; OPS_BRAIN_CLAUDE_PROFILE = $missingProfile; OPS_BRAIN_CODEX_PROFILE = $missingProfile; OPS_BRAIN_LIVE_URL = 'wss://ops-brain.example/live' }
+            }
+            Assert-True ($probe.exit -ne 0 -and -not (Test-Path -LiteralPath "$capture.args")) "explicit $client function fell back without live"
+        }
+
+        $capture = Join-Path $testDirectory 'console-explicit-live.txt'
+        $probe = Invoke-ConsoleProbe 'console-explicit-live' @{
+            shellInit = $shellInit; command = 'ops-brain-claude'; pathPrepend = $fakeBin; arguments = @()
+            env = @{ OPS_BRAIN_TEST_CAPTURE = $capture; CLAUDE_CONFIG_DIR = $claudeBase; OPS_BRAIN_CLAUDE_PROFILE = $claudeProfile; OPS_BRAIN_LIVE_STATE_DIR = $autoState }
+        }
+        Assert-True ($probe.exit -eq 0 -and $probe.error -eq '') "explicit live function failed: $($probe.error)"
+        $explicitCapture = [IO.File]::ReadAllText($capture)
+        Assert-True ($explicitCapture -like '*--dangerously-load-development-channels*' -and $explicitCapture -like '*"ops-brain-live"*') 'explicit function did not open the Channel with its overlay'
+        $explicitConfigDirectory = (($explicitCapture -split "`n---CONFIG-DIR---`n", 2)[1] -split "`n", 2)[0]
+        Assert-True (-not (Test-Path -LiteralPath $explicitConfigDirectory)) 'explicit function left its overlay behind'
 
         # Attended, configured: Auto goes live through the overlay exactly like
         # the explicit command, and announces the identity and label.

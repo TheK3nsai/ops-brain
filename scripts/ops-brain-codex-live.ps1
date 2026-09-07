@@ -3,7 +3,7 @@
 #
 # Modes:
 #   Run     (default) live is required: any preflight failure fails closed
-#   Auto    main-launcher mode for the OpsBrain-Shell.ps1 profile functions.
+#   Auto    legacy opt-in automatic mode; profile functions use Run.
 #           Attended console launches go live; redirected stdin/stdout,
 #           `codex exec` and every other subcommand, --version and --help pass
 #           straight through to Codex untouched. When the profile's App Server

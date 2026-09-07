@@ -3,7 +3,7 @@
 #
 # Modes:
 #   Run     (default) live is required: any preflight failure fails closed
-#   Auto    main-launcher mode for the OpsBrain-Shell.ps1 profile functions.
+#   Auto    legacy opt-in automatic mode; profile functions use Run.
 #           Attended console launches go live; redirected stdin/stdout,
 #           -p/--print, subcommands, --version and --help pass straight
 #           through to Claude Code untouched. A preflight failure asks the
@@ -179,7 +179,7 @@ function Invoke-PreflightFailure {
 }
 
 if ($null -eq $ClaudeArgs) { $ClaudeArgs = @() }
-# `claude --no-live` is the fleet-wide spelling. The profile function hands
+# `ops-brain-claude --no-live` is the fleet-wide spelling. The profile function hands
 # every client argument through -ClaudeArgs, so the opt-out arrives there.
 if ($ClaudeArgs.Count -gt 0 -and $ClaudeArgs[0] -in @('--no-live', '-NoLive')) {
     $NoLive = $true

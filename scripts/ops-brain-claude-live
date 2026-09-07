@@ -30,7 +30,7 @@ Channel registration cannot affect sibling or wake sessions.
 
 Modes:
   (default)   live is required: any preflight failure exits nonzero
-  --auto      main-launcher mode for an interactive shell function. Attended
+  --auto      legacy opt-in automatic mode. Attended
               TTY launches go live; headless (-p/--print), piped, subcommand,
               --version and --help invocations pass straight through to Claude
               Code untouched. A preflight failure asks the operator on the
