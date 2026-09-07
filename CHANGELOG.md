@@ -6,40 +6,38 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Plain `claude` and `codex` can be the live launchers on Linux.** Both
-  launchers gained `--auto`, the main-launcher mode: an attended foreground
-  TUI goes live through the existing overlay/App Server path, while headless
-  (`-p`, `codex exec`), piped, subcommand, `--version` and `--help`
-  invocations pass straight through to the real binary with no adapter and no
-  peer. A failed preflight asks on the terminal and only an explicit `y`
-  launches an ordinary session, announced; anything else exits nonzero.
-  `--no-live` / `OPS_BRAIN_LIVE=off` is the announced deliberate opt-out. The
-  explicit commands keep failing closed without a prompt and remain the
-  rollout boundary. `scripts/ops-brain-shell-init.sh` defines the `claude` and
-  `codex` shell functions for interactive shells; it carries no credential and
-  is invisible to scripts, timers and wake shims. Labels now carry the working
-  directory basename so sibling sessions under one identity are tellable
-  apart, the Claude channel's `list_live_peers` reports the session's own peer
-  under `self`, a lane lost after connect is announced inside the session as a
-  `lane_status` channel event, a second attended Codex session takes a free
-  App Server port, and adapter logs older than 30 days are pruned at launch.
-- **Plain `claude` and `codex` can be the live launchers on Windows too.**
-  Both PowerShell launchers gained `-Mode Auto` with the Linux contract:
-  attended console launches go live, redirected handles, `-p`, `codex exec`,
-  subcommands, `--version` and `--help` pass straight through, a failed
-  preflight asks through `Read-Host` and exits 2 on anything but `y`, and
-  `--no-live` / `-NoLive` / `OPS_BRAIN_LIVE=off` is the announced opt-out.
-  `scripts/OpsBrain-Shell.ps1` defines the `claude` and `codex` functions for
-  attended console sessions only and carries no credential; it runs the
-  launchers in-process with the client arguments as one array, because
-  `pwsh -File` binds `-p` to `-ProfileFile` by prefix and `cmd.exe` splits
-  `%*` on an unquoted `&`. Labels carry the working-directory leaf, a second
-  attended Codex session takes a free App Server port, the live banner names
-  the adapter log, and stale helper logs are pruned. The Windows tests drive
-  the prompt paths through a hidden child console fed by `WriteConsoleInput`.
+- **Optional live launcher modes.** Linux `--auto` and PowerShell `-Mode Auto`
+  request live delivery for attended TUI launches, pass headless and subcommand
+  invocations through, and ask before an ordinary fallback on failed preflight.
+  `--no-live` / `OPS_BRAIN_LIVE=off` selects an announced ordinary session.
+  Labels carry the working directory basename, the Claude channel reports its
+  own peer under `self`, lost lanes emit a `lane_status` event, a second Codex
+  session takes a free App Server port, and old adapter logs are pruned.
+
+### Changed
+
+- **Live stays opt-in through `ops-brain-claude` and `ops-brain-codex`.** Shell
+  integration no longer replaces plain `claude` or `codex`. The Linux source
+  file remains a compatibility no-op; PowerShell provides argument-safe
+  functions under the explicit live command names with fail-closed Run mode.
+  Installers and rollout guidance now preserve ordinary launchers. Open a new
+  terminal after upgrading to discard previously loaded wrapper functions.
+- **The Windows and Linux live pairs have complete attended certifications.**
+  The 2026-09-01 gates passed with the published v5.2.1 client bundle
+  (`02bd845`) and Codex CLI 0.151.0 on Windows, then source checkout `279ba8c`
+  against the v5.2.1 server and Codex CLI 0.152.0 on Linux. This retires the
+  temporary 0.149.x-only acceptance pin while keeping certification tied to
+  exact measured revisions and versions rather than an open-ended `>=` range.
+  The remaining findings are non-blocking: Claude's MCP child cannot record a
+  graceful disconnect when the Windows client kills it directly, and the
+  deliberately unacknowledged `delivery_unconfirmed` branch has not yet been
+  exercised in a fleet gate.
 
 ### Fixed
 
+- **Refresh audited transitive dependencies.** `event-listener` 5.4.2 fixes
+  RUSTSEC-2026-0221; `chacha20` 0.10.2 and `spin` 0.9.9 replace yanked
+  lockfile versions. This also removes the unused `concurrent-queue` dependency.
 - **`--auto` no longer hijacks `-h`/`--help`, or Codex's `--profile`.** The
   launcher option loop handled both before the passthrough check, so plain
   `claude --help` printed the launcher's usage and `codex --profile work`
@@ -54,22 +52,6 @@ All notable changes to this project will be documented in this file.
   launcher's now, and everything else breaks out of the option loop, so a
   new launcher switch cannot silently shadow a client one. The explicit
   `ops-brain-claude` / `ops-brain-codex` commands are unchanged.
-
-### Changed
-
-- **The Windows and Linux live pairs have complete attended certifications.**
-  The 2026-09-01 gates passed with the published v5.2.1 client bundle
-  (`02bd845`) and Codex CLI 0.151.0 on Windows, then source checkout `279ba8c`
-  against the v5.2.1 server and Codex CLI 0.152.0 on Linux. This retires the
-  temporary 0.149.x-only acceptance pin while keeping certification tied to
-  exact measured revisions and versions rather than an open-ended `>=` range.
-  The remaining findings are non-blocking: Claude's MCP child cannot record a
-  graceful disconnect when the Windows client kills it directly, and the
-  deliberately unacknowledged `delivery_unconfirmed` branch has not yet been
-  exercised in a fleet gate.
-
-### Fixed
-
 - **Bounded list and search responses no longer imply false completeness
   (2026-09-03).**
   `list_handoffs`, `list_replies_to_me`, `search_bus`, and REST

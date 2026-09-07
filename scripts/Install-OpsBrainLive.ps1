@@ -172,4 +172,5 @@ if (-not (($env:PATH -split ';') -contains $BinDirectory)) {
     'add that directory to the user PATH before invoking the shims by name'
 }
 'configure profiles with ops-brain-client configure claude|codex, then run ops-brain-claude or ops-brain-codex'
-"to make plain claude and codex launches go live from an interactive console, add to `$PROFILE:`n  . `"$(Join-Path $PSScriptRoot 'OpsBrain-Shell.ps1')`""
+"for argument-safe ops-brain-claude and ops-brain-codex functions in an interactive console, add to `$PROFILE:`n  . `"$(Join-Path $PSScriptRoot 'OpsBrain-Shell.ps1')`""
+'plain claude and codex remain the standard launchers'

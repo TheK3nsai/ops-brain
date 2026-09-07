@@ -59,7 +59,7 @@ The server-side binding is the source of peer identity.
    overlay on both Linux and Windows; **2.1.260** passed the 2026-09-04 Windows
    gate with client checkout `194bea2`; 2.1.241 is the earlier Linux baseline.
    Checking `--help` will make you conclude the client lacks support and chase
-   an upgrade that changes nothing. The integrated main-launcher path was
+   an upgrade that changes nothing. The former integrated main-launcher path was
    operator-confirmed on Linux 2026-09-03 with Claude Code **2.1.259** and
    Codex **0.153.0**; same rule, that is a measured pair, not a `>=` claim. To check positively, grep the installed
    bundle instead of the help text:
@@ -186,7 +186,8 @@ put it in a command argument, transcript, or log.
 Both adapters write JSON lines to `OPS_BRAIN_LIVE_STATE_DIR`, default
 `~/.local/state/ops-brain-live/`: `codex-adapter.*.log` and
 `claude-adapter.*.log`. On Linux, each launcher's `--status` prints the path;
-on Windows, use `-Mode Status`.
+on Windows, use `ops-brain-claude-live -Mode Status` or
+`ops-brain-codex-live -Mode Status`.
 
 These files record connection, reconnection, disconnect, and terminal adapter
 failures; they do not record per-message injection or rendering. Log silence
@@ -260,21 +261,18 @@ only switches it still reads there, and every other argument — including
 `-h`/`--help`, `--`, and Codex's own `--profile` — goes to the client
 untouched. Choose the ops-brain profile in `--auto` with
 `OPS_BRAIN_CLAUDE_PROFILE` / `OPS_BRAIN_CODEX_PROFILE`. The
-PowerShell launchers use `-Mode Status`, `-Mode DryRun`, and `-ProfileFile`
-instead.
+PowerShell scripts use `-Mode Status`, `-Mode DryRun`, and `-ProfileFile`
+instead. Use the `ops-brain-claude-live` / `ops-brain-codex-live` compatibility
+commands for those launcher options: the optional `ops-brain-claude` /
+`ops-brain-codex` profile functions forward their arguments to the client.
 
-`--` is the one place where the two platforms cannot be made to agree, and the
-difference is worth stating because the symptom is identical. On Linux the
-launcher used to consume a leading `--` in its own option loop, which is what
-the change above fixes: `claude -- --not-a-flag` now reaches the client intact.
-On Windows the same invocation still loses it, from a cause no launcher can
-reach — PowerShell's parser strips the first unquoted `--` in argument mode
-before `$args` is ever populated, so the token is gone before the profile
-function runs and no parameter declaration (including
-`ValueFromRemainingArguments`) gets it back. Quoting survives on both:
-**`claude '--' --not-a-flag` is the portable spelling.** Measured, and pinned by
-assertion on each side — `scripts/test-live-launchers` on Linux, the `112`
-probe in `scripts/Test-OpsBrainLiveWindows.ps1` on Windows.
+In Linux `--auto` mode, a leading client end-of-options marker is preserved:
+`ops-brain-claude --auto -- --not-a-flag`. PowerShell strips the first unquoted
+`--` before a profile function receives its arguments. Quote that marker when
+using the explicit function: `ops-brain-claude '--' --not-a-flag`. The launcher
+cannot recover a token already consumed by the PowerShell parser. Regression
+coverage lives in `scripts/test-live-launchers` and
+`scripts/Test-OpsBrainLiveWindows.ps1`.
 
 The token path and exact expected server-bound identity are required
 deliberately. There is no generic
@@ -282,44 +280,25 @@ fallback that could silently bind a sibling identity, and registration fails
 closed if the server reports another slug. Linux token files must be mode 600
 or 400.
 
-## Main-launcher integration (Linux)
+## Explicit launchers (Linux)
 
-Once the explicit-launcher gate above is clean on a host, plain `claude` and
-`codex` can become the live launchers for that host's interactive shells. The
-mechanism is two shell functions, sourced from the shell's rc file:
+Live is a separate launch option for sessions where the fleet will use live
+delivery together. Use `ops-brain-claude` or `ops-brain-codex` to request a
+foreground live session; plain `claude` and `codex` start ordinary sessions.
 
-```bash
-. "<client-root>/scripts/ops-brain-shell-init.sh"
-```
+No shell startup hook is required. `scripts/ops-brain-shell-init.sh` is retained
+for compatibility and no longer defines either plain command. Remove its
+source line from `~/.bashrc` or `~/.zshrc` when upgrading, then open a new
+terminal to discard previously loaded wrapper functions.
 
-The installer prints the exact line for its checkout or bundle. Each function
-runs the matching launcher in `--auto` mode and carries no credential: the
-launcher still reads the protected token file itself, and nothing is exported.
-Shell functions are not inherited by child processes, so scripts, systemd
-timers, wake shims and anything else that execs `claude` or `codex` by name
-reach the real binaries untouched.
-
-`--auto` is the main-launcher contract. It goes live only for an attended
-foreground TUI, and it treats every other shape as ordinary without a word:
-a non-terminal stdin or stdout, `claude -p`/`--print`, `codex exec` and every
-other subcommand, `--version` and `--help`. Those sessions cannot render a
-channel event, and a peer with no sink is the "healthy session, absent lane"
-defect the gate exists to catch. When live is wanted and preflight fails (no
-profile, missing or badly-moded token, adapter absent), `--auto` prints the
-reason on the terminal and asks:
-
-```
-ops-brain live: NOT available — <reason>
-Continue without live delivery? [y/N]
-```
-
-Only an explicit `y` launches an ordinary session, and that launch is
-announced. Anything else exits nonzero without launching. There is no silent
-fallback in either direction, and the explicit `ops-brain-claude` /
-`ops-brain-codex` commands keep failing closed with no prompt, so they remain
-the rollout boundary. A deliberate ordinary launch is `claude --no-live` (or
-`OPS_BRAIN_LIVE=off claude`), announced once on stderr; `command claude ...`
-bypasses the function entirely.
+The explicit launchers fail closed when live preflight fails. Optional
+`ops-brain-claude --auto` / `ops-brain-codex --auto` behavior remains available:
+only attended foreground TUI launches request live, while headless, piped,
+subcommand, version, and help invocations pass through. A failed live preflight
+asks `Continue without live delivery? [y/N]`; only an explicit `y` starts an
+ordinary session, with an announcement. `--no-live` / `OPS_BRAIN_LIVE=off`
+still selects an announced ordinary session through the explicit launcher.
+For everyday ordinary sessions, use `claude` or `codex` directly.
 
 A live launch prints one line before the client takes the terminal:
 
@@ -340,11 +319,9 @@ finds the profile's App Server port already owned by the first and takes a
 free loopback port for its own App Server and adapter, so the adapter's
 exactly-one-thread invariant holds per session.
 
-Everything in the per-host acceptance gate applies unchanged to the
-integrated path, and a host is not certified on it until the same
-two-identity, rendered-marker, idle, and teardown checks pass launched from
-the plain `claude` and `codex` commands. The Windows equivalent is
-[below](#main-launcher-integration-windows).
+Run the per-host two-identity, rendered-marker, idle, and teardown checks
+through `ops-brain-claude` and `ops-brain-codex`. The Windows equivalent is
+[below](#explicit-launchers-windows).
 
 ## Windows credential preparation
 
@@ -433,24 +410,21 @@ environment, on disk, or on the command line, and independently verifies the
 server-returned binding. Claude, Codex, command arguments, generated MCP
 configuration, and logs receive only the credential-file path.
 
-## Main-launcher integration (Windows)
+## Explicit launchers (Windows)
 
-The PowerShell launchers carry the Linux contract as `-Mode Auto`, and the
-profile integration is one dot-source line in `$PROFILE`:
+Plain `claude` and `codex` remain ordinary launchers. To provide argument-safe
+PowerShell functions for the separate live commands, optionally dot-source:
 
 ```powershell
 . "<client-root>\scripts\OpsBrain-Shell.ps1"
 ```
 
-The installer prints the exact line for its checkout or bundle, and
-`Install-OpsBrain.ps1 -Mode Status` reports it as `shell init:`. The file
-defines `claude` and `codex` functions only when the session is an attended
-console: `ConsoleHost`, stdin and stdout not redirected, and pwsh not started
-with `-NonInteractive`. A scheduled task, a wake shim, or any script that
-dot-sources the profile gets no functions and reaches the real executables by
-name. The functions carry no credential; the launchers still read the DPAPI
-credential themselves. Bypass the function with
-`& (Get-Command claude -CommandType Application) ...`.
+The installer prints the exact line, and `Install-OpsBrain.ps1 -Mode Status`
+reports it as `shell init:`. The file defines only `ops-brain-claude` and
+`ops-brain-codex`, in attended console sessions. The functions carry no
+credential; the launchers still read the protected DPAPI credential themselves.
+Open a new terminal after upgrading to discard previously loaded plain-command
+wrappers.
 
 Two measured Windows facts shape the mechanism, and they are why the functions
 do not simply call the `.cmd` shims:
@@ -460,22 +434,17 @@ do not simply call the `.cmd` shims:
   `-File` mode, and a splatted array after `--` is bound again. The one shape
   that carries every client argument intact is a single explicit array, so
   the functions run the launcher in-process as
-  `ops-brain-claude-live.ps1 -Mode Auto -ClaudeArgs $args` (and `-CodexArgs`).
+  `ops-brain-claude-live.ps1 -Mode Run -ClaudeArgs $args` (and `-CodexArgs`).
 - `cmd.exe` re-parses `%*`: an unquoted `&` or `|` in a client argument splits
   the command line at the shim. In-process invocation has no shim in the path.
 
-`-Mode Auto` goes live only for an attended console and treats every other
-shape as ordinary without a word: redirected stdin or stdout, `-p`/`--print`,
-`codex exec` and every other subcommand, the same Claude subcommand list as
-the Linux launcher, `--version`/`-v`/`-V`, `--help`/`-h`. A failed preflight
-on a console prints `ops-brain live: NOT available — <reason>` on stderr and
-asks `Continue without live delivery? [y/N]` through `Read-Host`; only `y` (or
-`yes`) launches an ordinary session, announced as `off (operator choice)`, and
-anything else exits 2 with `declined ordinary fallback`. `-Mode Run` — the
-explicit `ops-brain-claude`/`ops-brain-codex` commands — keeps failing closed
-with no prompt. The deliberate opt-out is `claude --no-live` (a leading
-`--no-live` client argument, the `-NoLive` switch, or `OPS_BRAIN_LIVE=off`),
-announced once on stderr.
+The explicit functions and `.cmd` launchers use `-Mode Run`: a failed live
+preflight exits without prompting or falling back to an ordinary session.
+`-Mode Auto` remains available by invoking the PowerShell scripts directly;
+it passes headless and subcommand invocations through and asks before an
+ordinary fallback when live preflight fails. `-NoLive`, a leading `--no-live`
+client argument, or `OPS_BRAIN_LIVE=off` still selects an announced ordinary
+session through the explicit launcher.
 
 Labels carry the working-directory leaf (`<profile label>.<leaf>`, folded to
 `[A-Za-z0-9._-]`, leading `.` stripped, bounded to 80 bytes) in Run, Auto and
@@ -496,11 +465,10 @@ profile functions — through a hidden child console fed by `WriteConsoleInput`.
 When no console can be allocated it prints a warning that the attended paths
 were not exercised instead of passing silently.
 
-The per-host gate applies unchanged: a Windows host is not certified on the
-integrated path until the two-identity, rendered-marker, idle, and teardown
-checks pass launched from plain `claude` and `codex`, plus `claude -p` and
-`codex exec` from the same session creating no peer, and a deliberately broken
-preflight prompting and exiting 2 on `n`.
+The per-host gate applies to the explicit `ops-brain-claude` and
+`ops-brain-codex` commands: verify two identities, rendered markers, idle
+delivery, and teardown. Plain `claude` and `codex` must remain ordinary
+sessions with no launcher-owned live peer.
 
 ## Capturing launcher output
 
