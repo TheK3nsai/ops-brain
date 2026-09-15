@@ -155,8 +155,9 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    # Advisory-only: don't block CI on upstream vulnerabilities we can't fix
-    continue-on-error: true
+    # Blocking. A new advisory is resolved by bumping the dependency or by an
+    # --ignore below with its reasoning in audit.toml. An advisory-only job hid
+    # RUSTSEC-2026-0285 behind a green run (#128).
     steps:
       - uses: actions/checkout@v6
 
