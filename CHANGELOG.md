@@ -32,9 +32,15 @@ All notable changes to this project will be documented in this file.
   graceful disconnect when the Windows client kills it directly, and the
   deliberately unacknowledged `delivery_unconfirmed` branch has not yet been
   exercised in a fleet gate.
+- **The Security Audit CI job now blocks.** It was `continue-on-error`, which
+  let RUSTSEC-2026-0285 sit behind a green run. Unfixable advisories take a
+  `--ignore` in `ci.yml` plus reasoning in `audit.toml`.
 
 ### Fixed
 
+- **`rustls` 0.23.45 fixes RUSTSEC-2026-0285** (TLS 1.3 handshake messages
+  accepted across encryption levels). Lockfile-only; `rustls-webpki` moves to
+  0.103.15.
 - **Refresh audited transitive dependencies.** `event-listener` 5.4.2 fixes
   RUSTSEC-2026-0221; `chacha20` 0.10.2 and `spin` 0.9.9 replace yanked
   lockfile versions. This also removes the unused `concurrent-queue` dependency.
