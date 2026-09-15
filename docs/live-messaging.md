@@ -188,6 +188,12 @@ shells and can be removed. Open a new terminal to discard previously loaded
 wrapper functions. On PowerShell, the optional profile integration provides
 only `ops-brain-claude` and `ops-brain-codex` functions.
 
+In those PowerShell functions, quote a literal end-of-options marker:
+`ops-brain-claude '--' --literal-value` (likewise for `ops-brain-codex`).
+PowerShell consumes an unquoted `--` before the function receives its arguments.
+The `.cmd` shims reject `--` even when quoted; see [Windows launcher details](live-fleet-rollout.md#explicit-launchers-windows)
+for their other argument limits and bundle availability.
+
 Adapter ownership stays foreground-only. Never treat tool discovery or a
 successful client start as proof of live delivery; run the per-host acceptance
 gate with the explicit commands before calling a host live

@@ -430,13 +430,21 @@ Two measured Windows facts shape the mechanism, and they are why the functions
 do not simply call the `.cmd` shims:
 
 - `pwsh -File` binds a client's `-p` to the launcher's `-ProfileFile` by
-  parameter-name prefix and eats `-v` as `-Verbose`; `--` is rejected in
-  `-File` mode, and a splatted array after `--` is bound again. The one shape
-  that carries every client argument intact is a single explicit array, so
+  parameter-name prefix and eats `-v` and `--verbose` as `-Verbose`; `--` is
+  rejected through the `.cmd` shim even when quoted, and a splatted array after
+  `--` is bound again. Pass client arguments as a single explicit array, so
   the functions run the launcher in-process as
   `ops-brain-claude-live.ps1 -Mode Run -ClaudeArgs $args` (and `-CodexArgs`).
 - `cmd.exe` re-parses `%*`: an unquoted `&` or `|` in a client argument splits
-  the command line at the shim. In-process invocation has no shim in the path.
+  the command line at the shim, and quoted paths containing spaces can be split
+  into multiple arguments. In-process invocation has no shim in the path.
+
+When typing a literal end-of-options marker into an explicit function, quote
+it: `ops-brain-claude '--' --literal-value` (likewise for `ops-brain-codex`).
+PowerShell consumes the first unquoted `--` before populating `$args`; the
+function cannot recover it. This workaround applies to the functions, not the
+`.cmd` shims. The v5.2.1 bundle predates these functions; use them after upgrading
+to a bundle that includes them or from an explicitly approved source checkout.
 
 The explicit functions and `.cmd` launchers use `-Mode Run`: a failed live
 preflight exits without prompting or falling back to an ordinary session.
