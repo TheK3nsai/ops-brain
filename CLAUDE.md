@@ -52,15 +52,15 @@ One deployment is one trusted coordination domain. Per-agent tokens bind provena
 
 ## Coordination
 
-The team-bus principle and "no startup ritual" rules live in each agent's local instructions. Repo-specific coordination details:
+**Workflow conventions ship in the server, not here.** Reply-in-thread, blocked-on-a-human, verify-before-comply, the knowledge bar, and action-vs-notify are stated in the MCP `instructions` string and tool descriptions (`src/tools/mod.rs` `get_info`, param docs in `src/tools/*.rs`) — the only text every agent on every host actually sees. Change a convention there; don't restate it in per-host instructions. Every word is paid by every agent each session, so keep it terse. Background and rationale only:
 
-- **Handoffs are the coordination layer** — creating a handoff IS the notification mechanism. `action`-category for things the recipient must do; `notify`-category for FYI broadcasts (auto-pruned after 7 days).
-- **Bus trust** — security-sensitive handoffs (credential/secret ops, config/infra changes, urgent asks from unfamiliar slugs) follow verify-before-comply: `docs/bus-trust.md`.
-- **Blocked on a human?** Reply *into the existing thread* with `to_agent: "<operator slug>"`, `category: "action"` — a cron polls that queue and mails them. Don't open a parallel handoff (two objects, one state), and complete it yourself once unblocked: `docs/operator-notify.md`.
+- **Notify rows are hidden, not deleted** — `notify` handoffs drop out of operational queries after 7 days; the rows stay.
+- **Bus trust** — full verify-before-comply reasoning: `docs/bus-trust.md`.
+- **Blocked on a human** — the operator-queue cron and mail contract: `docs/operator-notify.md`.
 - **Product bar** — only build features that solve observed field pain, reduce missed/duplicate work across agents, make the next natural action clearer, and have a lifecycle. Reject ceremony, duplicate truth, generic wiki behavior, and scheduling/orchestration features that belong to cron/systemd/Task Scheduler/CI. Durable doctrine: ops-brain knowledge `019e0d79-3a7f-7902-86cc-db4a573c1071`.
 - **Agent names** — use the CC-style convention: `CC-Stealth`, `Codex-Stealth`, `Codex-HSR`, etc. The validator remains free-form for compatibility, but new rows should keep that convention so handoffs route predictably.
 - **Fleet stewardship** — Claude Code and Codex agents may each improve ergonomics for their own client family, but shared ops-brain features must stay generic. Family-specific work belongs in local adapters, instructions, or compatibility guidance unless it exposes a reusable team-bus primitive.
-- **Knowledge policy** — knowledge entries are for cross-agent gotchas, safety warnings, compliance rules, verified patterns, and vendor behavior ONLY. Every entry costs tokens across all agents. If it would fit in your own local instructions, put it there instead. If local docs are canonical, write a pointer/provenance entry, not a duplicate. `add_knowledge` requires `author` (your agent slug, e.g. `CC-Stealth` or `Codex-HSR`).
+- **Knowledge is pull-only** — nothing surfaces an entry unless a search hits it, so the store is only as good as its signal-to-noise. Infrastructure how-to belongs in a git reference repo agents clone, not here (`ROADMAP.md` → no generic wiki); the bus holds cross-agent gotchas and pointers.
 - **Client-scope guard** — scoped knowledge queries withhold unsafe cross-client content unless explicitly acknowledged. Unscoped searches and handoffs are fleet-wide; one deployment is one trust domain.
 
 ## Gotchas
@@ -75,13 +75,13 @@ The team-bus principle and "no startup ritual" rules live in each agent's local 
 - **nomic-embed-text tokenization** — real content tokenizes at ~1–1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` is 6,000. Do not increase without empirical testing.
 - **Production deploys MUST use `-f docker-compose.prod.yml`** — prod uses `shared-postgres`, dev uses bundled postgres. Dev compose is project-namespaced as `ops-brain-dev` so a stray invocation can't clobber prod, but it can spin up isolated dev orphans.
 - **Prod does not publish `localhost:3000` on the host** — `docker-compose.prod.yml` attaches `ops-brain` to Docker networks for the reverse proxy; it does not expose `ports:`. Verify readiness with `docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/ready` and public liveness with `curl -sf https://<your-deploy-host>/health` (through the reverse proxy), not host-local `curl http://localhost:3000/health`.
-- **New env vars need BOTH `.env` AND `docker-compose.prod.yml`** — prod compose enumerates every env var explicitly under `services.ops-brain.environment:` (no `env_file:`). Adding `FOO=...` to `.env` alone leaves the container booting without `FOO`. Always pair the binary's `std::env::var("FOO")` with a `- FOO=${FOO:-}` line in the prod compose.
+- **New env vars need BOTH `.env` AND `docker-compose.prod.yml`** — prod compose enumerates every env var explicitly under `services.ops-brain.environment:` (no `env_file:`). Adding `FOO=...` to `.env` alone leaves the container booting without `FOO`. Always pair a new clap `#[arg(env = "FOO")]` in `src/config.rs` with a `- FOO=${FOO:-}` line in the prod compose.
 
 ## Development Workflow
 
-- **Before committing non-trivial changes**: use the project `reviewer` agent for a local, findings-first review. The `review-pr` skill is for an already-open PR or a requested PR review.
-- **Pre-commit hook** runs a staged `gitleaks` scan. Run the Rust fmt, clippy, check/test, and audit commands through the `test` skill before committing; the secret scan does not replace them.
-- **After merging to main**: hand off the deploy to **CC-Cloud** or **Codex-Cloud** on the VPS. Use the `deploy-ops-brain` skill on the cloud deployer; handoffs must spell out the same prod-compose rule. SSH escape hatch is reserved for cases where the cloud deployer is unavailable AND the change is genuinely urgent; even then, **always** pass `-f docker-compose.prod.yml` and smoke via container `/ready` plus the deploy's public `/health` URL behind the reverse proxy (port 3000 is not published to the host in prod).
+- **Before committing non-trivial changes**: use the project `reviewer` agent for a local, findings-first review.
+- **Before every commit**: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and `.github/scripts/fleet_string_guard.py` (this repo is public; CI runs the same guard, but only after the push has already published the string). The guard reads the tree only — it never sees a commit message or a PR body, so check those by eye.
+- **After merging to main**: hand off the deploy to **CC-Cloud** (fallback **Codex-Cloud**) on the VPS; the deploy procedure is a skill on that host, not in this repo. Handoffs must spell out the same prod-compose rule. SSH escape hatch is reserved for cases where the cloud deployer is unavailable AND the change is genuinely urgent; even then, **always** pass `-f docker-compose.prod.yml` and smoke via container `/ready` plus the deploy's public `/health` URL behind the reverse proxy (port 3000 is not published to the host in prod).
 - **Subagents**: Use `ops-dev` for implementation/refactoring, `reviewer` for code review. Both are in `.claude/agents/`.
 
 ## What NOT to Do

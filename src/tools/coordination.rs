@@ -15,8 +15,9 @@ pub struct CreateHandoffParams {
     /// Examples: "CC-Stealth", "Codex-HSR".
     #[serde(alias = "from_machine")]
     pub from_agent: String,
-    /// Target agent (optional — if omitted, any agent can pick it up).
-    /// Same form as `from_agent`: free-form slug.
+    /// Target agent (free-form slug, same form as `from_agent`). Omit to
+    /// broadcast: the handoff then appears in every other agent's `check_in`
+    /// until one of them accepts it.
     #[serde(alias = "to_machine")]
     pub to_agent: Option<String>,
     /// Priority: low, normal, high, or critical
@@ -26,11 +27,12 @@ pub struct CreateHandoffParams {
     /// Use "notify" for introductions, "I just shipped X" announcements —
     /// anything the recipient doesn't need to act on.
     pub category: Option<String>,
-    /// Short title for the handoff
+    /// Short title for the handoff (max 200 bytes)
     pub title: String,
-    /// Detailed body (markdown supported)
+    /// Detailed body, markdown supported (max 100,000 bytes)
     pub body: String,
-    /// Optional structured context (JSON object)
+    /// Optional structured context: a JSON object, max 8,192 bytes serialized.
+    /// Point at evidence (paths, IDs, URLs) instead of inlining it.
     pub context: Option<serde_json::Value>,
     /// Parent handoff ID (UUID) when this handoff is a reply to another.
     /// Enables threaded discovery via `list_replies_to_me`. The reply's
@@ -86,12 +88,12 @@ pub struct MarkMergedParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListHandoffsParams {
-    /// Filter by status: pending, accepted, or completed
+    /// Filter by status: pending, accepted, completed, or merged
     pub status: Option<String>,
-    /// Filter by target agent (free-form slug; exact match).
+    /// Filter by target agent (free-form slug; exact match, case-insensitive).
     #[serde(alias = "to_machine")]
     pub to_agent: Option<String>,
-    /// Filter by source agent (free-form slug; exact match).
+    /// Filter by source agent (free-form slug; exact match, case-insensitive).
     #[serde(alias = "from_machine")]
     pub from_agent: Option<String>,
     /// Filter by category: "action" or "notify". Overrides include_notify
@@ -214,9 +216,59 @@ pub async fn handle_create_handoff(
                 &text,
             )
             .await;
-            json_result(&handoff)
+
+            let warning = match to_agent.as_deref() {
+                Some(target) => unknown_recipient_warning(&brain.pool, target, handoff.id).await,
+                None => None,
+            };
+            match warning {
+                Some(msg) => {
+                    let mut value = match serde_json::to_value(&handoff) {
+                        Ok(v) => v,
+                        Err(_) => return json_result(&handoff),
+                    };
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("_warning".to_string(), serde_json::Value::String(msg));
+                    }
+                    json_result(&value)
+                }
+                None => json_result(&handoff),
+            }
         }
         Err(e) => error_result(&format!("Database error: {e}")),
+    }
+}
+
+/// Soft warning for a recipient slug the bus has never seen before. There is no
+/// agent registry by design — new agents must be addressable, so this never
+/// refuses the write. It exists because the alternative failure mode is silent:
+/// a typo'd recipient produces a perfectly valid handoff that nobody's
+/// `check_in` will ever match. Returns `None` for known slugs, and on any DB
+/// error (a warning is not worth failing a successful create over).
+async fn unknown_recipient_warning(
+    pool: &sqlx::PgPool,
+    target: &str,
+    created_id: uuid::Uuid,
+) -> Option<String> {
+    match crate::repo::handoff_repo::agent_seen_before(pool, target, created_id).await {
+        Ok(true) => None,
+        Ok(false) => {
+            let similar =
+                crate::repo::handoff_repo::suggest_similar_agents(pool, target, created_id).await;
+            let tail = if similar.is_empty() {
+                "no similar known slugs".to_string()
+            } else {
+                format!("similar known slugs: {}", similar.join(", "))
+            };
+            Some(format!(
+                "first handoff ever addressed to '{target}'; if this is a typo it will sit \
+                 unread; {tail}"
+            ))
+        }
+        Err(e) => {
+            tracing::warn!("recipient-novelty check failed for '{target}': {e}");
+            None
+        }
     }
 }
 

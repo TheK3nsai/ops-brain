@@ -16,6 +16,21 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Workflow conventions ship in the server.** The MCP `instructions` string
+  and tool descriptions now state reply-in-thread, blocked-on-a-human,
+  verify-before-comply, and the knowledge bar — previously written only in this
+  repo's `CLAUDE.md`, which agents on other hosts never load. A unit test pins
+  the conventions and a character budget. `add_knowledge` states its policy
+  instead of inviting "lesson, gotcha, tip"; `update_knowledge` no longer leaks
+  a code comment into its schema; `search_bus`, `list_handoffs`, and
+  `accept_handoff` descriptions now match the code.
+- **`check_in` reports `has_more`** per section instead of silently capping,
+  and surfaces pending unaddressed handoffs from other agents — an omitted
+  `to_agent` was advertised as "any agent can pick it up" but reached nobody.
+  Broadcasts never reach `GET /api/pending`, so they wake no host.
+- **`create_handoff` warns on a never-seen recipient slug** with similar known
+  slugs (`_warning`, non-blocking), so a typo no longer sits unread forever.
+
 - **Live stays opt-in through `ops-brain-claude` and `ops-brain-codex`.** Shell
   integration no longer replaces plain `claude` or `codex`. The Linux source
   file remains a compatibility no-op; PowerShell provides argument-safe

@@ -36,7 +36,7 @@ pub async fn generate_briefing_inner(
     // Briefings show actionable work only — notify-class FYIs are not "pending"
     // in any meaningful sense.
     let open_handoffs =
-        crate::repo::handoff_repo::list_open_handoffs(pool, None, None, None, false, 20)
+        crate::repo::handoff_repo::list_open_handoffs(pool, None, None, None, false, false, 20)
             .await
             .map_err(|e| format!("Failed to list handoffs: {e}"))?;
 
