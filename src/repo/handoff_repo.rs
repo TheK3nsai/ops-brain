@@ -427,6 +427,63 @@ pub async fn count_open_handoffs(pool: &PgPool) -> Result<OpenHandoffCounts, sql
     })
 }
 
+/// One open action handoff, projected for the briefing's operator view.
+///
+/// Deliberately not a `Handoff`: the briefing renders one line per row and
+/// never reads `body` or `context`, which at fleet scale would pull megabytes
+/// across the wire to be dropped. The two boolean columns are computed in SQL
+/// so the case-insensitive agent comparisons use the same `LOWER() = LOWER()`
+/// idiom as every other agent filter in this module.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OpenActionBrief {
+    pub id: Uuid,
+    pub from_agent: String,
+    pub to_agent: Option<String>,
+    pub status: String,
+    pub priority: String,
+    pub title: String,
+    pub origin: String,
+    pub repeat_count: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Addressed to the operator slug passed to the query.
+    pub is_operator: bool,
+    /// Sender and recipient are the same agent — a self-addressed coordination
+    /// claim, not work waiting on anybody else.
+    pub is_self_addressed: bool,
+}
+
+/// Every open (pending + accepted) action handoff, oldest first, projected for
+/// the briefing. Uncapped on purpose: the briefing derives true totals and
+/// per-recipient counts from this set, and a `LIMIT` here would silently turn
+/// every one of those counts into a page length. The projection is small
+/// enough (no body, no context, no vectors) that the whole open set is cheap.
+///
+/// Filter matches `count_open_handoffs` exactly, so the counts and these rows
+/// can never disagree. `id` breaks ties on `created_at` so a briefing of an
+/// unchanged bus renders identically twice — UUIDv7 is time-ordered, so it
+/// sorts the same way the timestamp would.
+pub async fn list_open_action_briefs(
+    pool: &PgPool,
+    operator: &str,
+) -> Result<Vec<OpenActionBrief>, sqlx::Error> {
+    // Exact case-insensitive matching, NOT ILIKE: `_` is legal in agent names
+    // and ILIKE would treat it as a wildcard (same reasoning as
+    // list_pending_for_agent).
+    sqlx::query_as::<_, OpenActionBrief>(
+        "SELECT id, from_agent, to_agent, status, priority, title, origin,
+                repeat_count, created_at,
+                (to_agent IS NOT NULL AND LOWER(to_agent) = LOWER($1)) AS is_operator,
+                (to_agent IS NOT NULL AND LOWER(to_agent) = LOWER(from_agent))
+                    AS is_self_addressed
+           FROM handoffs
+          WHERE category = 'action' AND status IN ('pending', 'accepted')
+          ORDER BY created_at ASC, id ASC",
+    )
+    .bind(operator)
+    .fetch_all(pool)
+    .await
+}
+
 /// Has any handoff other than `exclude_id` ever named `agent` as sender or
 /// recipient? The bus deliberately has no agent registry — an agent exists
 /// because it has appeared on a handoff. Used by `create_handoff` to warn (not

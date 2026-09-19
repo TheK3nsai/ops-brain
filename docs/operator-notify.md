@@ -176,6 +176,16 @@ A long-blocked item goes quiet on the notifier after its first alert — that is
 intentional. Re-nagging every 20 minutes trains you to ignore it, and the
 standing list of what is still open is what the briefing is already for.
 
+The briefing leads with that standing list, scoped to the operator. `POST
+/api/briefing` renders three sections: **waiting on you** — open action
+handoffs addressed to the operator slug, oldest first, each with its age,
+sender and short id; **stuck** — everything else open past its threshold
+(pending over 3 days, accepted over 7, measured from `created_at`), grouped by
+recipient; and **everything else** as counts only. Self-addressed claims and
+machine-filed findings are counted, never titled, so they cannot crowd out the
+items that need a human. The `operator` field on the request body names the
+slug; it defaults to `Operator`.
+
 ## What this deliberately is not
 
 No dashboard, no web view, no event log, no transition timestamps. The
@@ -185,6 +195,10 @@ one state that needs a human, and that is what this is.
 
 A richer history view (notably `accepted_at`, which does not exist today —
 `updated_at` is overwritten on every touch) is a schema change in service of a
-metric nothing is currently bleeding from. If real friction shows up, the
-cheapest next step is a section in the briefing that already gets read, not a
-new surface. See `ROADMAP.md` on measurement as ceremony.
+metric nothing is currently bleeding from. The friction that did show up — open
+items sitting unread — was answered with sections in the briefing that already
+gets read, costing no schema change and no agent tokens. That remains the
+cheapest next step for anything similar. It is also why the stuck section says
+"open Nd" rather than "accepted Nd ago": without `accepted_at` the latter would
+be a claim the data cannot support. See `ROADMAP.md` on measurement as
+ceremony.

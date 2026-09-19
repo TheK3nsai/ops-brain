@@ -652,9 +652,13 @@ mod v5_surface_tests {
     #[tokio::test]
     async fn rest_briefing_is_stateless() {
         let pool = pool().await;
-        let value = ops_brain::tools::briefings::generate_briefing_inner(&pool, "daily")
-            .await
-            .unwrap();
+        let value = ops_brain::tools::briefings::generate_briefing_inner(
+            &pool,
+            "daily",
+            ops_brain::tools::briefings::DEFAULT_OPERATOR,
+        )
+        .await
+        .unwrap();
         assert_eq!(value["briefing_type"], "daily");
         assert!(value.get("briefing_id").is_none());
         let table: Option<String> =
@@ -3188,5 +3192,261 @@ mod api_error_envelope_tests {
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
         let msg = json_body(resp).await["error"].to_string();
         assert!(msg.contains("machine tokens"), "got {msg}");
+    }
+}
+
+// ===== Briefing operator view =====
+//
+// The briefing is fleet-wide, so these tests never assert on totals or on the
+// absence of *other* rows — every fixture uses a UUID-suffixed operator slug
+// and UUID-suffixed titles, and assertions are about those strings only.
+mod briefing_operator_view_tests {
+    use super::*;
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Request, StatusCode};
+    use axum::routing::post;
+    use axum::Router;
+    use ops_brain::api::ApiState;
+    use ops_brain::tools::briefings;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    /// Push a handoff's `created_at` back so the age-threshold logic has
+    /// something to bite on. There is no API for backdating — deliberately.
+    async fn backdate(pool: &PgPool, id: Uuid, days: i64) {
+        sqlx::query(
+            "UPDATE handoffs SET created_at = now() - ($2 || ' days')::interval WHERE id = $1",
+        )
+        .bind(id)
+        .bind(days.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn file(pool: &PgPool, from: &str, to: Option<&str>, title: &str, days: i64) -> Uuid {
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            pool, from, to, "normal", "action", title, "body", None, None,
+        )
+        .await
+        .unwrap();
+        backdate(pool, h.id, days).await;
+        h.id
+    }
+
+    async fn cleanup(pool: &PgPool, ids: &[Uuid]) {
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(ids.to_vec())
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    fn app(pool: PgPool) -> Router {
+        // No auth layer: these exercise request validation, not the bearer
+        // middleware (covered in auth_middleware_tests).
+        Router::new()
+            .route("/api/briefing", post(ops_brain::api::generate_briefing))
+            .with_state(Arc::new(ApiState { pool }))
+    }
+
+    async fn post_briefing(
+        pool: PgPool,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let resp = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/briefing")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn operator_items_are_listed_oldest_first_with_ages() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        let operator = format!("Op-{uniq}");
+        let old = format!("older operator item {uniq}");
+        let new = format!("newer operator item {uniq}");
+
+        let id_old = file(&pool, "CC-Stealth", Some(&operator), &old, 26).await;
+        let id_new = file(&pool, "CC-Cloud", Some(&operator), &new, 3).await;
+
+        let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
+            .await
+            .unwrap();
+
+        let items = value["waiting_on_you"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "only this operator's items may appear");
+        assert_eq!(items[0]["title"], old, "oldest first");
+        assert_eq!(items[0]["age_days"], 26);
+        assert_eq!(items[1]["title"], new);
+        assert_eq!(items[1]["age_days"], 3);
+        assert_eq!(value["waiting_on_you"]["total"], 2);
+        assert_eq!(value["waiting_on_you"]["truncated"], false);
+
+        // And the markdown the operator actually reads carries the same order.
+        let md = value["content"].as_str().unwrap();
+        let (i_old, i_new) = (md.find(&old).unwrap(), md.find(&new).unwrap());
+        assert!(i_old < i_new, "markdown must be oldest first too");
+        assert!(md.contains(&format!("## Waiting on you ({operator})")));
+
+        cleanup(&pool, &[id_old, id_new]).await;
+    }
+
+    #[tokio::test]
+    async fn a_custom_operator_slug_is_honoured_over_the_default() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        let operator = format!("Op-{uniq}");
+        let title = format!("custom-operator item {uniq}");
+        let id = file(&pool, "CC-Stealth", Some(&operator), &title, 1).await;
+
+        let (status, value) = post_briefing(
+            pool.clone(),
+            serde_json::json!({"type": "daily", "operator": operator}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["operator"], operator);
+        assert_eq!(value["waiting_on_you"]["total"], 1);
+        assert_eq!(value["waiting_on_you"]["items"][0]["title"], title);
+
+        // Omitting `operator` must still work — existing callers send only the
+        // type — and must not pick this item up.
+        let (status, value) =
+            post_briefing(pool.clone(), serde_json::json!({"type": "daily"})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["operator"], briefings::DEFAULT_OPERATOR);
+        assert!(!value["content"].as_str().unwrap().contains(&title));
+
+        cleanup(&pool, &[id]).await;
+    }
+
+    #[tokio::test]
+    async fn self_addressed_and_machine_rows_are_counted_never_titled() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        let operator = format!("Op-{uniq}");
+        let claimer = format!("CC-Claimer-{uniq}");
+        let self_title = format!("self-addressed claim {uniq}");
+        let machine_title = format!("[auto] sweep finding {uniq}");
+
+        // Old enough that only the exclusions keep them out of Stuck.
+        let id_self = file(&pool, &claimer, Some(&claimer), &self_title, 10).await;
+        let machine = ops_brain::repo::handoff_repo::create_machine_handoff(
+            &pool,
+            "Monitor",
+            &format!("CC-Target-{uniq}"),
+            "normal",
+            "action",
+            &machine_title,
+            "body",
+            None,
+            Some(&format!("key-{uniq}")),
+        )
+        .await
+        .unwrap();
+        backdate(&pool, machine.id, 10).await;
+
+        let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
+            .await
+            .unwrap();
+        let md = value["content"].as_str().unwrap();
+
+        assert!(
+            !md.contains(&self_title),
+            "self-addressed claims are a count, not a title"
+        );
+        assert!(
+            !md.contains(&machine_title),
+            "machine findings are a count, not a title"
+        );
+        // They are still in the shape counts, and in the legacy title lists the
+        // JSON consumers already read.
+        assert!(value["counts"]["self_addressed"]["count"].as_u64().unwrap() >= 1);
+        assert!(
+            value["counts"]["machine_findings"]["count"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
+
+        cleanup(&pool, &[id_self, machine.id]).await;
+    }
+
+    #[tokio::test]
+    async fn stuck_lists_aged_items_for_other_agents_and_skips_fresh_ones() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        let operator = format!("Op-{uniq}");
+        let target = format!("CC-Target-{uniq}");
+        let aged = format!("four days waiting {uniq}");
+        let fresh = format!("filed today {uniq}");
+
+        let id_aged = file(&pool, "CC-Stealth", Some(&target), &aged, 4).await;
+        let id_fresh = file(&pool, "CC-Stealth", Some(&target), &fresh, 0).await;
+
+        let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
+            .await
+            .unwrap();
+        let md = value["content"].as_str().unwrap();
+
+        assert!(
+            md.contains(&aged),
+            "a 4-day-old pending item is past the 3-day threshold"
+        );
+        assert!(!md.contains(&fresh), "a same-day item is not stuck");
+        assert!(
+            md.contains(&format!("**{target}**")),
+            "stuck items group by recipient"
+        );
+
+        let group = value["stuck"]["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["to_agent"] == target)
+            .expect("group for the target agent");
+        let titles: Vec<&str> = group["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, vec![aged.as_str()]);
+
+        cleanup(&pool, &[id_aged, id_fresh]).await;
+    }
+
+    #[tokio::test]
+    async fn an_invalid_operator_slug_is_rejected_not_a_server_error() {
+        let (status, body) = post_briefing(
+            pool().await,
+            serde_json::json!({"type": "daily", "operator": "not a slug!"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "got body {body}");
+        assert_eq!(body["field"], "operator");
+    }
+
+    #[tokio::test]
+    async fn an_empty_operator_slug_is_rejected() {
+        let (status, body) = post_briefing(
+            pool().await,
+            serde_json::json!({"type": "daily", "operator": "  "}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "got body {body}");
+        assert_eq!(body["field"], "operator");
     }
 }
