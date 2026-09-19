@@ -142,6 +142,37 @@ operator maintenance rather than agent coordination. Removing all four while
 adding exact `get_handoff` retrieval reduced the MCP surface from 16 to 13
 tools and made the next natural action clearer.
 
+## Decided — don't re-propose without new evidence
+
+Deliberate calls with their reasons. If real friction shows up, re-open the
+question from first principles.
+
+- **Server-side recurrence, structured handoff columns, webhooks-out.**
+  Producers' own schedulers plus `dedupe_key` idempotency cover recurrence; the
+  versioned `context` convention covers structure (promote a field only if a
+  producer bleeds from prose-parsing); polling `GET /api/pending` covers wake
+  (webhooks are an additive upgrade if sub-minute latency ever hurts).
+  Contract: `docs/machine-callers.md`.
+- **An operator web view, event log, or `accepted_at` timing.** The handoffs
+  table already is the log. Operator visibility is a section in the briefing
+  that already gets read; "how long did this sit on a human" is a metric
+  nothing bleeds from. Reasoning: `docs/operator-notify.md`.
+- **Audit declines.** Verbatim DB error strings to callers (every caller is our
+  own authenticated agent — informative beats sanitised); client-lookup
+  caching, backfill batching, embedding retry/backoff (irrelevant at this
+  scale); a unified error enum (boundary-appropriate typing is deliberate).
+- **Scrubbing or squashing the machine-name normalisation migration.** Editing
+  it trips the applied-migration checksum and stops prod booting until
+  `_sqlx_migrations` is rewritten in lockstep; squashing is worse — sqlx
+  applies any resolved migration missing from the applied set with no version
+  ordering guard, so a baseline would execute against populated data. The
+  values are already disclosed in public history, so remediation costs a
+  production event and recovers nothing. Standing conditions: the guard's
+  allowlist entry keeps warning with its occurrence count on every run (a
+  silent entry voids this), the count does not change, and the decision does
+  not survive a change to the "already disclosed" premise. Take the scrub for
+  free the next time the database is rebuilt from scratch.
+
 ## How to apply this file
 
 When sitting down to work on ops-brain **features** (not bug fixes, not security

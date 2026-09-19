@@ -11,9 +11,8 @@ message while disconnected. Use an ops-brain handoff for durable work.
 ## Requirements
 
 - Node.js 22 or newer.
-- Claude Code with Channels support. Measured on 2.1.241 and 2.1.257 (fleet
-  gates) and 2.1.259 (Linux main-launcher path); see
-  `docs/live-fleet-rollout.md` for what each measurement covered.
+- Claude Code with Channels support. Measured versions:
+  `docs/live-fleet-rollout.md` → "Measured client versions".
 - An ops-brain per-agent bearer bound to the Claude agent identity. The main
   bearer and machine tokens cannot use `/live`.
 - During the Channels research preview, a custom server must be started with
