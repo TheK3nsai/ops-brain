@@ -80,6 +80,9 @@ reaches the entire MCP surface; a machine token bounds theft blast-radius to
   callers cannot file open (unaddressed) handoffs.
 - `priority` — `low` | `normal` | `high` | `critical` (default `normal`).
   Priority lives HERE, not in context — one source of truth.
+  The operator briefing titles open findings rated `high` or `critical` and
+  only counts the rest, so rate a FAIL accordingly — and tier the dedupe key
+  if a check can escalate, since suppression freezes the first priority.
 - `category` — `action` (default) or `notify`.
 - `origin` is stamped `machine` server-side on everything filed through this
   endpoint. It is not a request field.
