@@ -64,7 +64,7 @@ Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_
   the foreground live adapter. Installation, identity mapping, acceptance, and rollback are documented in
   [`docs/live-fleet-rollout.md`](docs/live-fleet-rollout.md).
 
-Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context.
+Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context. A briefing opens with what is waiting on the operator (oldest first), then machine findings rated high or critical, then what is stuck in another agent's queue past its age threshold, then the open set as counts only. The `operator` field names the slug that first section reads; it defaults to `Operator`, and a slug no handoff has ever used is called out rather than rendered as an empty queue.
 
 Run embedding maintenance from an operator shell when needed:
 
@@ -135,7 +135,7 @@ Claude Code and Codex each have their own adapter ergonomics, but ops-brain prim
 ```
 POST /api/handoff   machine token with `create` scope
 GET  /api/pending   machine token with `read` scope
-POST /api/briefing  main bearer; `{ "type": "daily" | "weekly" }`
+POST /api/briefing  main bearer; `{ "type": "daily" | "weekly", "operator"?: "<slug>" }`
 GET  /health        unauthenticated liveness probe
 GET  /ready         unauthenticated database-readiness probe
 GET  /live          agent token; ephemeral WebSocket adapter transport

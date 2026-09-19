@@ -462,6 +462,11 @@ pub struct GenerateBriefingRequest {
     /// "daily" or "weekly"
     #[serde(rename = "type")]
     pub briefing_type: String,
+    /// Slug whose open queue fills the briefing's "waiting on you" section.
+    /// Optional: existing callers send only `type` and get
+    /// `briefings::DEFAULT_OPERATOR`.
+    #[serde(default)]
+    pub operator: Option<String>,
 }
 
 /// POST /api/briefing — generate and return an operational briefing. Thin HTTP
@@ -482,7 +487,15 @@ pub async fn generate_briefing(
         .field("type"));
     }
 
-    match briefings::generate_briefing_inner(&state.pool, &briefing_type).await {
+    // A malformed operator slug is the caller's mistake, not a server fault:
+    // reject it at the edge rather than letting it fall through to a query
+    // that quietly matches nothing and reports an empty queue as good news.
+    let operator = match req.operator.as_deref() {
+        Some(raw) => validate_agent_name(raw).map_err(|e| bad_request(e).field("operator"))?,
+        None => briefings::DEFAULT_OPERATOR,
+    };
+
+    match briefings::generate_briefing_inner(&state.pool, &briefing_type, operator).await {
         Ok(data) => Ok(Json(data)),
         Err(e) => Err(ApiError::internal(e)),
     }

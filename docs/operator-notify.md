@@ -176,6 +176,27 @@ A long-blocked item goes quiet on the notifier after its first alert — that is
 intentional. Re-nagging every 20 minutes trains you to ignore it, and the
 standing list of what is still open is what the briefing is already for.
 
+The briefing leads with that standing list, scoped to the operator. `POST
+/api/briefing` renders four sections: **waiting on you** — open action
+handoffs addressed to the operator slug, oldest first, each with its age,
+sender and short id; **failing checks** — open machine findings their producer
+rated `high` or `critical`, titled at any age with who they are for and how
+often they have been re-filed, because a failed backup matters the day it
+fails; **stuck** — everything else open past its threshold
+(pending over 3 days, accepted over 7, measured from `created_at`), grouped by
+recipient; and **the open set at a glance** as counts only. Self-addressed
+claims and lower-priority machine findings are counted rather than titled
+*unless they are addressed to the operator* — a monitor escalation aimed at the human is
+still work only the human can clear. Every titled section caps its rendered list and
+state the true total when they do.
+
+If the slug has never appeared on any handoff, the first section says so
+instead of reporting a clear queue. Slug validation checks shape only, so a
+plausible misspelling would otherwise render as good news — the one lie this
+section exists to prevent. **The caller must pass the slug its agents actually
+address the operator by**; the default is `Operator`, matching the convention
+above.
+
 ## What this deliberately is not
 
 No dashboard, no web view, no event log, no transition timestamps. The
@@ -185,6 +206,10 @@ one state that needs a human, and that is what this is.
 
 A richer history view (notably `accepted_at`, which does not exist today —
 `updated_at` is overwritten on every touch) is a schema change in service of a
-metric nothing is currently bleeding from. If real friction shows up, the
-cheapest next step is a section in the briefing that already gets read, not a
-new surface. See `ROADMAP.md` on measurement as ceremony.
+metric nothing is currently bleeding from. The friction that did show up — open
+items sitting unread — was answered with sections in the briefing that already
+gets read, costing no schema change and no agent tokens. That remains the
+cheapest next step for anything similar. It is also why the stuck section says
+"open Nd" rather than "accepted Nd ago": without `accepted_at` the latter would
+be a claim the data cannot support. See `ROADMAP.md` on measurement as
+ceremony.
