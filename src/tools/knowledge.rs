@@ -218,8 +218,13 @@ fn knowledge_entries_to_json(
 pub struct AddKnowledgeParams {
     pub title: String,
     pub content: String,
+    /// Free-form grouping label, e.g. "gotcha", "pattern", "vendor". Used by
+    /// browse-mode filtering in `search_bus`.
     pub category: Option<String>,
+    /// Free-form tags for retrieval. Keep them few and reusable.
     pub tags: Option<Vec<String>>,
+    /// Scope this entry to the owning client (slug). Leave
+    /// `cross_client_safe` false unless the content is genuinely global.
     pub client_slug: Option<String>,
     /// Allow this entry to surface in other clients' contexts (default: false)
     pub cross_client_safe: Option<bool>,
@@ -236,7 +241,7 @@ pub struct AddKnowledgeParams {
 pub struct SearchKnowledgeParams {
     /// Search query. Use empty string or "*" to browse recent entries across tables.
     pub query: Option<String>,
-    /// fts (default single-table), semantic, or hybrid (default multi-table). Ignored for browse.
+    /// fts, semantic, or hybrid (default). Ignored for browse.
     pub mode: Option<String>,
     /// Tables to search: knowledge (default), handoffs
     pub tables: Option<Vec<String>>,
@@ -250,16 +255,20 @@ pub struct SearchKnowledgeParams {
     /// Max results per table (default 20, clamped to 1..=200)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
-    /// Snippets instead of full bodies (67KB→~5KB). Default: true multi-table, false single-table.
+    /// Snippets instead of full bodies. Default: true multi-table, false single-table.
     pub compact: Option<bool>,
 }
 
-/// Update an existing knowledge entry.
-///
-/// Note: `author` is intentionally NOT updatable via this tool. Provenance
-/// is immutable after creation — if you need to correct the author, do it
-/// via direct SQL. This prevents accidental (or deliberate) rewriting of
-/// history in the one shared cross-agent artifact.
+// Update an existing knowledge entry.
+//
+// Note: `author` is intentionally NOT updatable via this tool. Provenance
+// is immutable after creation — if you need to correct the author, do it
+// via direct SQL. This prevents accidental (or deliberate) rewriting of
+// history in the one shared cross-agent artifact.
+//
+// Deliberately a `//` comment, not a doc comment: schemars lifts struct-level
+// doc comments into the JSON schema `description`, which would ship the
+// direct-SQL escape hatch to every agent in the handshake.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateKnowledgeParams {
     /// Knowledge entry ID (UUID)
@@ -270,8 +279,9 @@ pub struct UpdateKnowledgeParams {
     pub tags: Option<Vec<String>>,
     /// Allow this entry to surface in other clients' contexts
     pub cross_client_safe: Option<bool>,
-    /// Set to true to mark this entry as verified (confirms content is still accurate).
-    /// Sets last_verified_at to now without requiring content changes.
+    /// Set to true to confirm the content is still accurate: sets
+    /// last_verified_at to now without requiring content changes. This is how
+    /// a `_staleness_warning` on an entry is cleared.
     pub verified: Option<bool>,
 }
 

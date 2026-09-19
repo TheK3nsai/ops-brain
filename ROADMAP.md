@@ -8,8 +8,9 @@ What we build, what we don't, why. Philosophy first. Shipped-work history lives 
 agent's per-machine instructions are its scope, its filesystem is its state, its
 git history is its memory. ops-brain exists for the handful of things agents
 genuinely cannot do alone: handoffs between machines and vendors, bounded
-cross-agent knowledge, exact work retrieval, and narrow machine-to-agent wake
-signals.
+cross-agent knowledge, exact work retrieval, narrow machine-to-agent wake
+signals, and an opt-in ephemeral live lane between sessions that are online at
+the same time.
 **If a question can be answered without ops-brain, it should be.**
 
 **We kill without mercy.** Any tool, feature, or scaffolding that an agent can
@@ -50,10 +51,18 @@ Non-negotiable. Any idea that violates one of these is DOA.
   live peer while its socket is connected, but it disappears on disconnect and
   cannot become a second source of truth. Handoffs remain the offline lane.
 - **No new fields on `check_in`.** It's the right size now. Every added field
-  dilutes the briefing for every call, for every agent, forever.
+  dilutes the briefing for every call, for every agent, forever. (`has_more`
+  is not a field in this sense: it reports that the capped page is incomplete,
+  which a silent cap otherwise hides.)
 - **No generic wiki / documentation features.** Local docs + GitHub are truth.
   ops-brain knowledge is strictly for cross-agent gotchas that cross scope
-  boundaries.
+  boundaries. "How we build the infrastructure we run" is documentation: it
+  lives in a git reference repo agents clone — reviewed, diffable, versioned —
+  and the bus carries at most a pointer to it.
+- **Conventions ship in the server.** The MCP `instructions` string and tool
+  descriptions are the only text every agent on every host sees. A workflow
+  convention that lives only in a repo or per-host instruction file reaches
+  one agent and rots in the others.
 - **No structured-evidence handoff types.** Handoffs stay freeform markdown
   forever.
 - **No workflow chains on handoffs.** No `workflow_id`, no `list_workflows`,
@@ -71,7 +80,8 @@ Non-negotiable. Any idea that violates one of these is DOA.
   incidents, and monitoring were removed in v3.0.0; Zammad ticketing followed
   in v4.0.0. Configuration management owns inventory, Uptime Kuma owns
   monitoring, and tickets/incidents live in each client's own systems.
-  ops-brain stays on its lane: handoffs, knowledge, briefings.
+  ops-brain stays on its lane: handoffs, bounded knowledge, check-in, and
+  the opt-in live lane.
 
 ## Dead forever (don't resurrect)
 
@@ -145,5 +155,10 @@ patches, not cosmetic polish):
    principles. "Wait for demand" is not the same as "dead."
 4. ops-brain is in operator mode — new features should be the exception,
    removals the norm. v5.0.0's 16 → 13 tool reduction is the model: consolidate
-   overlapping paths and keep maintenance out of agent context. Read
+   overlapping paths and keep maintenance out of agent context. The two live
+   tools added since passed the bar on one ground: two sessions that are both
+   online cannot reach each other locally at all. The lane stays explicit-only
+   (`ops-brain-claude` / `ops-brain-codex`) so ordinary sessions pay nothing
+   beyond the two tool stubs; if it goes unused, the kill rule applies to it
+   like anything else. Read
    `CHANGELOG.md` for shipped history.

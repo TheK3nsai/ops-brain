@@ -36,9 +36,11 @@ ops-brain speaks MCP over either stdio (default) or HTTP. Most multi-machine set
 "ops-brain": {
   "type": "http",
   "url": "https://your-host.example.com/mcp",
-  "headers": { "Authorization": "Bearer $OPS_BRAIN_AUTH_TOKEN" }
+  "headers": { "Authorization": "Bearer ${OPS_BRAIN_AGENT_TOKEN}" }
 }
 ```
+
+`${OPS_BRAIN_AGENT_TOKEN}` is expanded by Claude Code from its environment at launch; a literal value works too. Either way, use that agent's own **per-agent token** ([`docs/agent-tokens.md`](docs/agent-tokens.md)), not the server's main `OPS_BRAIN_AUTH_TOKEN` — the main bearer is unbound operator break-glass and should not live in an agent config.
 
 **Codex CLI** uses the same HTTP MCP transport through its own config — point it at `/mcp` and pass its per-agent bearer token. Once connected, every agent should use a stable `agent_name` such as `CC-Stealth` or `Codex-HSR`.
 
@@ -47,7 +49,7 @@ Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_
 ## Surface (15 tools)
 
 - **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus`. Cross-agent gotchas, safety warnings, compliance rules, and vendor behavior, with per-agent provenance via `author`. `search_bus` searches knowledge by default and can include handoffs when requested.
-- **Handoffs** — `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (auto-pruned after 7 days). Threading via `in_reply_to`; commit linkage via `commit_hash` on completion + `mark_merged` at integration time. `get_handoff` retrieves one exact handoff without pulling unrelated queue entries.
+- **Handoffs** — `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (hidden from operational queries after 7 days). Threading via `in_reply_to`; commit linkage via `commit_hash` on completion + `mark_merged` at integration time. `get_handoff` retrieves one exact handoff without pulling unrelated queue entries.
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
 - **Online peers** — `list_live_peers` and `send_live_message` route untrusted text to connected Claude Code and Codex adapters. This lane is best-effort and process-local: nothing is stored or queued, and absent peers require a handoff. Packaged adapters live in [`adapters/claude-channel`](adapters/claude-channel) and [`adapters/codex-app-server`](adapters/codex-app-server). See [`docs/live-messaging.md`](docs/live-messaging.md).
 

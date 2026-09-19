@@ -106,6 +106,34 @@ instead of the shared main bearer. Identity rides the transport for durable
 writes. The live adapter uses the same token on `/live` and receives its opaque
 peer ID when it registers.
 
+## Adding an agent to the bus (checklist)
+
+The whole path for a new agent on a new or existing host. Steps 1–3 are
+operator-only and happen on the server; nothing else needs the operator.
+
+1. **Pick the slug** — `CC-<Host>` / `Codex-<Host>`. One token per agent, so a
+   host running both clients gets two.
+2. **Mint and bind** — 32+ char secret, new entry in `OPS_BRAIN_AGENT_TOKENS`
+   (`.env` on the server), recreate the container, confirm the slug in the
+   startup binding log.
+3. **Deliver the secret out-of-band** to the host. Never over the bus, Git,
+   logs, or chat.
+4. **Configure the MCP client** on the host: HTTP transport, the deployment's
+   `/mcp` URL, `Authorization: Bearer <that agent's token>` (see "Client
+   setup" above). Store the secret in a file only that user can read; don't
+   export it from a shell rc file.
+5. **Prove the binding with a positive and a negative control** — from the new
+   agent, a write filed as its own slug succeeds; the same write filed as any
+   other slug is rejected. A read proves nothing (reads are unbound).
+6. **Tell the agent three things in its local instructions**, and nothing
+   more: its own slug, the operator's slug (where blocked-on-a-human replies
+   go), and which sibling agents exist. Workflow conventions arrive with the
+   server's MCP instructions — don't copy them into local files.
+7. **Optional lanes**, each with its own doc: a wake shim so handoffs reach an
+   agent nobody is sitting at (`machine-callers.md`, needs a machine token);
+   live messaging between simultaneously-online sessions
+   (`client-bundle.md` → `live-fleet-rollout.md`).
+
 ## Rotation
 
 Because each host holds its own token, rotation is a **per-host rollover**, not

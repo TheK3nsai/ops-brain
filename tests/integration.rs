@@ -855,6 +855,157 @@ mod check_in_tests {
             .await
             .unwrap();
     }
+
+    async fn file_action(pool: &PgPool, from: &str, to: Option<&str>, title: &str) -> Uuid {
+        ops_brain::repo::handoff_repo::create_handoff(
+            pool, from, to, "normal", "action", title, "body", None, None,
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    async fn check_in_json(pool: PgPool, agent: &str) -> serde_json::Value {
+        let brain = build_brain(pool);
+        let result = ops_brain::tools::check_in::handle_check_in(
+            &brain,
+            ops_brain::tools::check_in::CheckInParams {
+                agent_name: agent.to_string(),
+            },
+            None,
+        )
+        .await;
+        assert_eq!(result.is_error, Some(false));
+        result
+            .structured_content
+            .clone()
+            .expect("check_in returns structured JSON")
+    }
+
+    /// Past the 20-row action cap, check_in must SAY it truncated. The page
+    /// silently dropping row 21 is the failure this pins: an agent reading
+    /// `count: 20` has no way to tell a full queue from a complete one.
+    #[tokio::test]
+    async fn check_in_reports_has_more_past_the_action_cap() {
+        let pool = pool().await;
+        let agent = format!("Codex-Cap-{}", Uuid::now_v7().simple());
+
+        let mut ids = Vec::new();
+        for i in 0..21 {
+            ids.push(file_action(&pool, "CC-Stealth", Some(&agent), &format!("capped {i}")).await);
+        }
+
+        let json = check_in_json(pool.clone(), &agent).await;
+        assert_eq!(json["open_handoffs_to_you"]["count"], 20);
+        assert_eq!(json["open_handoffs_to_you"]["has_more"], true);
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn check_in_reports_no_more_under_the_action_cap() {
+        let pool = pool().await;
+        let agent = format!("Codex-Under-{}", Uuid::now_v7().simple());
+
+        // Unaddressed rows now land in every agent's check_in, so an unrelated
+        // backlog of them could legitimately fill this page. Assert the
+        // precondition so a failure here reads as "dirty test DB", not "bug".
+        let ambient: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM handoffs
+              WHERE status = 'pending' AND to_agent IS NULL
+                AND (category = 'action' OR created_at > now() - interval '7 days')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            ambient < 4,
+            "test DB holds {ambient} open unaddressed handoffs — too many to test the under-cap page"
+        );
+
+        let ids = vec![
+            file_action(&pool, "CC-Stealth", Some(&agent), "one").await,
+            file_action(&pool, "CC-Stealth", Some(&agent), "two").await,
+        ];
+
+        let json = check_in_json(pool.clone(), &agent).await;
+        assert_eq!(json["open_handoffs_to_you"]["has_more"], false);
+        assert_eq!(json["recent_notifications"]["has_more"], false);
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// `create_handoff` advertises an omitted `to_agent` as "any agent can pick
+    /// it up". check_in is the only surface that keeps that promise: the sender
+    /// doesn't see its own broadcast, and the wake-shim poll
+    /// (`list_pending_for_agent`) deliberately stays narrow so one broadcast
+    /// can't wake every host in the fleet.
+    #[tokio::test]
+    async fn check_in_surfaces_broadcasts_to_everyone_but_the_sender() {
+        let pool = pool().await;
+        let sender = format!("CC-Sender-{}", Uuid::now_v7().simple());
+        let other = format!("CC-Other-{}", Uuid::now_v7().simple());
+        let title = format!("broadcast-{}", Uuid::now_v7().simple());
+
+        let id = file_action(&pool, &sender, None, &title).await;
+
+        let theirs = check_in_json(pool.clone(), &other).await;
+        assert!(
+            theirs["open_handoffs_to_you"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["id"].as_str() == Some(&id.to_string())),
+            "an unaddressed handoff must be visible to another agent: {theirs}"
+        );
+
+        let mine = check_in_json(pool.clone(), &sender).await;
+        assert!(
+            !mine["open_handoffs_to_you"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["id"].as_str() == Some(&id.to_string())),
+            "the sender must not see its own broadcast queued back at it: {mine}"
+        );
+
+        let woken = ops_brain::repo::handoff_repo::list_pending_for_agent(&pool, &other, None, 50)
+            .await
+            .unwrap();
+        assert!(
+            !woken.iter().any(|h| h.id == id),
+            "broadcasts must not reach the wake-shim poll — it would wake every host"
+        );
+
+        // Accept records no acceptor, so once anyone claims a broadcast it must
+        // leave every other queue — otherwise two agents work the same item.
+        ops_brain::repo::handoff_repo::accept_handoff(&pool, id)
+            .await
+            .unwrap();
+        let after = check_in_json(pool.clone(), &other).await;
+        assert!(
+            !after["open_handoffs_to_you"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["id"].as_str() == Some(&id.to_string())),
+            "an accepted broadcast must drop out of other agents' check_in: {after}"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }
 
 // Handler-layer tests for the v3.1.0 safety guards on threading + commit
@@ -959,6 +1110,75 @@ mod coordination_handler_tests {
             "unbound caller must file freely: {}",
             extract_text(&result)
         );
+    }
+
+    /// A typo'd recipient is a silent failure: the row is valid, nobody's
+    /// `check_in` ever matches it, and the sender believes it was delivered.
+    /// There is no agent registry by design (new agents must be addressable),
+    /// so the bus warns from what it has actually seen and still writes the row.
+    #[tokio::test]
+    async fn create_handoff_warns_on_a_recipient_slug_the_bus_has_never_seen() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+        let known = format!("Codex-Orion{suffix}");
+        let typo = format!("Codex-Orian{suffix}");
+
+        let to = |agent: &str| CreateHandoffParams {
+            from_agent: "CC-Stealth".to_string(),
+            to_agent: Some(agent.to_string()),
+            priority: None,
+            category: Some("notify".to_string()),
+            title: "novel recipient smoke".to_string(),
+            body: "body".to_string(),
+            context: None,
+            in_reply_to: None,
+        };
+
+        // First contact with `known` teaches the bus that slug exists.
+        let first = handle_create_handoff(&brain, to(&known), None).await;
+        assert_eq!(first.is_error, Some(false), "{}", extract_text(&first));
+
+        // A near-miss of it is brand new: warn, suggest, and still create.
+        let typoed = handle_create_handoff(&brain, to(&typo), None).await;
+        assert_eq!(typoed.is_error, Some(false), "{}", extract_text(&typoed));
+        let body = typoed
+            .structured_content
+            .as_ref()
+            .expect("create_handoff returns structured JSON");
+        let warning = body["_warning"]
+            .as_str()
+            .unwrap_or_else(|| panic!("expected a _warning on a never-seen recipient: {body}"));
+        assert!(
+            warning.contains(&typo) && warning.contains("sit unread"),
+            "warning must name the slug and the failure mode: {warning}"
+        );
+        assert!(
+            warning.contains(&known),
+            "warning must offer the near-miss slug as a suggestion: {warning}"
+        );
+        assert!(
+            body["id"].as_str().is_some(),
+            "the handoff must still be created: {body}"
+        );
+
+        // Second handoff to `known` — now a familiar slug, so no warning.
+        let repeat = handle_create_handoff(&brain, to(&known), None).await;
+        assert_eq!(repeat.is_error, Some(false), "{}", extract_text(&repeat));
+        let repeat_body = repeat
+            .structured_content
+            .as_ref()
+            .expect("create_handoff returns structured JSON");
+        assert!(
+            repeat_body.get("_warning").is_none(),
+            "a known recipient must not be warned about: {repeat_body}"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE to_agent = ANY($1)")
+            .bind(vec![known, typo])
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
