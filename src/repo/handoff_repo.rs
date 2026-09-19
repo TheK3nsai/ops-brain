@@ -458,10 +458,12 @@ pub struct OpenActionBrief {
 /// every one of those counts into a page length. The projection is small
 /// enough (no body, no context, no vectors) that the whole open set is cheap.
 ///
-/// Filter matches `count_open_handoffs` exactly, so the counts and these rows
-/// can never disagree. `id` breaks ties on `created_at` so a briefing of an
-/// unchanged bus renders identically twice — UUIDv7 is time-ordered, so it
-/// sorts the same way the timestamp would.
+/// Filter matches `count_open_handoffs` exactly. The two are still separate
+/// round trips, so a handoff created between them can make the briefing's
+/// header total differ by one from the sum of its per-recipient counts — a
+/// daily snapshot of a live bus, not a torn read of one. `id` breaks ties on
+/// `created_at` so a briefing of an unchanged bus renders identically twice —
+/// UUIDv7 is time-ordered, so it sorts the way the timestamp would.
 pub async fn list_open_action_briefs(
     pool: &PgPool,
     operator: &str,

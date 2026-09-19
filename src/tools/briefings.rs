@@ -22,6 +22,11 @@ pub const STUCK_ACCEPTED_DAYS: i64 = 7;
 /// as a count.
 const OPERATOR_SECTION_CAP: usize = 50;
 
+/// Most items listed under "stuck", across all groups. The premise of this
+/// section is that work piles up, so without a cap a mailed briefing grows
+/// without bound. `StuckSection::total` keeps the true count.
+const STUCK_SECTION_CAP: usize = 50;
+
 /// Size of the legacy `pending_titles` / `accepted_titles` window.
 const LEGACY_TITLE_LIMIT: usize = 20;
 
@@ -76,6 +81,11 @@ pub struct OperatorQueue {
     /// True total, independent of the cap below.
     pub total: usize,
     pub truncated: bool,
+    /// Has this slug ever appeared on a handoff at all? An empty queue is good
+    /// news; an empty queue because the slug is misspelled is the briefing
+    /// lying about the one thing it exists to report. Only meaningful when
+    /// `total == 0`.
+    pub operator_seen: bool,
     pub items: Vec<BriefItem>,
 }
 
@@ -91,7 +101,9 @@ pub struct StuckGroup {
 pub struct StuckSection {
     pub pending_after_days: i64,
     pub accepted_after_days: i64,
+    /// True total across every group, independent of `STUCK_SECTION_CAP`.
     pub total: usize,
+    pub truncated: bool,
     pub groups: Vec<StuckGroup>,
 }
 
@@ -149,8 +161,22 @@ pub async fn generate_briefing_inner(
         .await
         .map_err(|e| format!("Failed to list handoffs: {e}"))?;
 
+    // An empty operator queue has two very different causes: nothing needs the
+    // human, or the caller named a slug no handoff has ever used. Both render
+    // as silence otherwise, and silence is exactly what this section exists to
+    // break. `validate_agent_name` only checks shape — "CC-Stelth" is a
+    // perfectly valid slug that matches nothing. Only pay for the lookup when
+    // the queue is actually empty; on DB error assume seen rather than cry wolf.
+    let operator_seen = if open.iter().any(|r| r.is_operator) {
+        true
+    } else {
+        crate::repo::handoff_repo::agent_seen_before(pool, operator, uuid::Uuid::nil())
+            .await
+            .unwrap_or(true)
+    };
+
     let now = Utc::now();
-    let sections = triage(&open, operator, &now);
+    let sections = triage(&open, operator, operator_seen, &now);
 
     let handoff_data = HandoffSummaryData {
         open_count: counts.open as usize,
@@ -221,13 +247,22 @@ fn legacy_titles(rows: &[OpenActionBrief], status: &str) -> Vec<String> {
 ///
 /// `rows` is expected oldest first (as the repo query returns it); ordering
 /// within every section follows from that.
-pub fn triage(rows: &[OpenActionBrief], operator: &str, now: &DateTime<Utc>) -> OperatorSections {
+fn triage(
+    rows: &[OpenActionBrief],
+    operator: &str,
+    operator_seen: bool,
+    now: &DateTime<Utc>,
+) -> OperatorSections {
     // ── 1. Waiting on you ──
+    // Filtered on `is_operator` alone: a machine finding or a self-addressed
+    // row that names the operator is still work only the human can clear, so
+    // it is titled here even though those classes are counts-only elsewhere.
     let mine: Vec<&OpenActionBrief> = rows.iter().filter(|r| r.is_operator).collect();
     let waiting_on_you = OperatorQueue {
         operator: operator.to_string(),
         total: mine.len(),
         truncated: mine.len() > OPERATOR_SECTION_CAP,
+        operator_seen,
         items: mine
             .iter()
             .take(OPERATOR_SECTION_CAP)
@@ -241,6 +276,7 @@ pub fn triage(rows: &[OpenActionBrief], operator: &str, now: &DateTime<Utc>) -> 
     // progress" no longer explains it.
     let mut groups: Vec<StuckGroup> = Vec::new();
     let mut stuck_total = 0usize;
+    let mut stuck_shown = 0usize;
     for row in rows {
         if row.is_operator || row.is_self_addressed || row.origin == "machine" {
             continue;
@@ -249,9 +285,21 @@ pub fn triage(rows: &[OpenActionBrief], operator: &str, now: &DateTime<Utc>) -> 
         if !is_stuck(&row.status, item.age_days) {
             continue;
         }
+        // Count every stuck row; render only up to the cap. Counting first is
+        // what keeps `total` a total rather than a page length.
         stuck_total += 1;
+        if stuck_shown >= STUCK_SECTION_CAP {
+            continue;
+        }
+        stuck_shown += 1;
         let key = row.to_agent.as_deref().unwrap_or(UNADDRESSED);
-        match groups.iter_mut().find(|g| g.to_agent == key) {
+        // Case-insensitive, matching how the SQL compares agents: `CC-Cloud`
+        // and `cc-cloud` are one agent and must not split into two groups.
+        // First spelling seen wins as the display name.
+        match groups
+            .iter_mut()
+            .find(|g| g.to_agent.eq_ignore_ascii_case(key))
+        {
             // `rows` is oldest first, so appending keeps each group oldest first.
             Some(g) => g.items.push(item),
             None => groups.push(StuckGroup {
@@ -266,6 +314,7 @@ pub fn triage(rows: &[OpenActionBrief], operator: &str, now: &DateTime<Utc>) -> 
         pending_after_days: STUCK_PENDING_DAYS,
         accepted_after_days: STUCK_ACCEPTED_DAYS,
         total: stuck_total,
+        truncated: stuck_total > stuck_shown,
         groups,
     };
 
@@ -283,7 +332,10 @@ pub fn triage(rows: &[OpenActionBrief], operator: &str, now: &DateTime<Utc>) -> 
     };
     for row in rows {
         let key = row.to_agent.as_deref().unwrap_or(UNADDRESSED);
-        match by_recipient.iter_mut().find(|c| c.to_agent == key) {
+        match by_recipient
+            .iter_mut()
+            .find(|c| c.to_agent.eq_ignore_ascii_case(key))
+        {
             Some(c) => c.open += 1,
             None => by_recipient.push(RecipientCount {
                 to_agent: key.to_string(),
@@ -349,7 +401,7 @@ fn priority_qualifier(item: &BriefItem) -> Option<&str> {
     (item.priority != "normal").then_some(item.priority.as_str())
 }
 
-pub fn build_markdown(
+fn build_markdown(
     is_weekly: bool,
     now: &DateTime<Utc>,
     handoffs: &HandoffSummaryData,
@@ -376,7 +428,15 @@ pub fn build_markdown(
     let q = &sections.waiting_on_you;
     md.push_str(&format!("## Waiting on you ({})\n\n", q.operator));
     if q.items.is_empty() {
-        md.push_str("Nothing is waiting on you.\n\n");
+        if q.operator_seen {
+            md.push_str("Nothing is waiting on you.\n\n");
+        } else {
+            // Do not report a misrouted briefing as a clear queue.
+            md.push_str(&format!(
+                "No handoff has ever named `{}` — check the operator slug.\n\n",
+                q.operator
+            ));
+        }
     } else {
         if q.truncated {
             md.push_str(&format!(
@@ -401,6 +461,13 @@ pub fn build_markdown(
     if s.groups.is_empty() {
         md.push_str("Nothing else is open past those thresholds.\n\n");
     } else {
+        if s.truncated {
+            let shown: usize = s.groups.iter().map(|g| g.items.len()).sum();
+            md.push_str(&format!(
+                "Showing the {shown} oldest of {} — the rest are in the counts below.\n\n",
+                s.total
+            ));
+        }
         for group in &s.groups {
             md.push_str(&format!("**{}**\n", group.to_agent));
             for item in &group.items {
@@ -420,7 +487,10 @@ pub fn build_markdown(
 
     // ── 3. Everything else, counts only ──
     let c = &sections.counts;
-    md.push_str("## Everything else\n\n");
+    // Not "everything else": `by_recipient` partitions the *whole* open set,
+    // including rows already titled above, and the two buckets overlap it. The
+    // heading has to match the arithmetic or the operator can't trust it.
+    md.push_str("## Open set at a glance\n\n");
     let by_recipient = if c.by_recipient.is_empty() {
         "none".to_string()
     } else {
@@ -450,7 +520,8 @@ fn bucket_phrase(bucket: &BucketCount, noun: &str) -> String {
         return "none".to_string();
     }
     let mut s = format!("{} {noun}", bucket.count);
-    if let Some(repeating) = bucket.repeating {
+    // Only when it says something — "(0 still firing)" is noise.
+    if let Some(repeating) = bucket.repeating.filter(|n| *n > 0) {
         s.push_str(&format!(" ({repeating} still firing)"));
     }
     if let Some(age) = bucket.oldest_age_days {
@@ -609,7 +680,7 @@ mod tests {
 
     #[test]
     fn waiting_on_you_is_oldest_first_and_operator_scoped() {
-        let s = triage(&fixture("Operator"), "Operator", &now());
+        let s = triage(&fixture("Operator"), "Operator", true, &now());
         let titles: Vec<&str> = s
             .waiting_on_you
             .items
@@ -631,14 +702,14 @@ mod tests {
 
     #[test]
     fn a_custom_operator_slug_reshapes_the_section() {
-        let s = triage(&fixture("Ops-Lead"), "Ops-Lead", &now());
+        let s = triage(&fixture("Ops-Lead"), "Ops-Lead", true, &now());
         assert_eq!(s.waiting_on_you.operator, "Ops-Lead");
         assert_eq!(s.waiting_on_you.total, 2);
     }
 
     #[test]
     fn stuck_excludes_operator_self_addressed_machine_and_fresh_rows() {
-        let s = triage(&fixture("Operator"), "Operator", &now());
+        let s = triage(&fixture("Operator"), "Operator", true, &now());
         let titles: Vec<&str> = s
             .stuck
             .groups
@@ -671,7 +742,7 @@ mod tests {
 
     #[test]
     fn counts_cover_every_open_row_exactly_once() {
-        let s = triage(&fixture("Operator"), "Operator", &now());
+        let s = triage(&fixture("Operator"), "Operator", true, &now());
         let total: usize = s.counts.by_recipient.iter().map(|r| r.open).sum();
         assert_eq!(total, 7, "by_recipient must partition the whole open set");
         assert_eq!(s.counts.self_addressed.count, 1);
@@ -698,7 +769,7 @@ mod tests {
                 "Operator",
             ));
         }
-        let s = triage(&rows, "Operator", &now());
+        let s = triage(&rows, "Operator", true, &now());
         assert_eq!(s.waiting_on_you.items.len(), OPERATOR_SECTION_CAP);
         assert_eq!(s.waiting_on_you.total, OPERATOR_SECTION_CAP + 5);
         assert!(s.waiting_on_you.truncated);
@@ -708,7 +779,7 @@ mod tests {
 
     #[test]
     fn markdown_renders_all_three_sections() {
-        let s = triage(&fixture("Operator"), "Operator", &now());
+        let s = triage(&fixture("Operator"), "Operator", true, &now());
         let md = build_markdown(false, &now(), &summary(), &s);
         let expected = "\
 # Daily Operational Briefing
@@ -729,7 +800,7 @@ mod tests {
 **(unaddressed)**
 - open 4d · pending · low · Anyone up for reviewing the adapter tests — from Codex-HSR · 019d4444
 
-## Everything else
+## Open set at a glance
 
 - Open by recipient: CC-Cloud 3, Operator 2, (unaddressed) 1, Codex-HSR 1
 - Self-addressed claims: 1 open, oldest 20d
@@ -740,7 +811,7 @@ mod tests {
 
     #[test]
     fn empty_sections_say_so_rather_than_vanishing() {
-        let s = triage(&[], "Operator", &now());
+        let s = triage(&[], "Operator", true, &now());
         let md = build_markdown(
             false,
             &now(),
@@ -764,7 +835,7 @@ mod tests {
 
     #[test]
     fn weekly_only_changes_the_title() {
-        let s = triage(&fixture("Operator"), "Operator", &now());
+        let s = triage(&fixture("Operator"), "Operator", true, &now());
         let md = build_markdown(true, &now(), &summary(), &s);
         assert!(md.starts_with("# Weekly Operational Briefing\n"));
     }
@@ -791,5 +862,141 @@ mod tests {
     fn future_dated_rows_read_as_today_not_negative() {
         assert_eq!(age_days(&now(), &ts("2026-09-20T12:00:00Z")), 0);
         assert_eq!(age_label(0), "today");
+    }
+
+    /// An empty queue for a slug nothing has ever used is a misrouted briefing,
+    /// not good news, and must not render as "nothing is waiting on you".
+    #[test]
+    fn an_unknown_operator_slug_is_flagged_not_reported_as_a_clear_queue() {
+        let s = triage(&[], "CC-Stelth", false, &now());
+        let md = build_markdown(false, &now(), &summary(), &s);
+        assert!(
+            md.contains("No handoff has ever named `CC-Stelth` — check the operator slug."),
+            "got {md}"
+        );
+        assert!(!md.contains("Nothing is waiting on you."));
+        assert!(!s.waiting_on_you.operator_seen);
+    }
+
+    /// The whole premise is that work piles up, so the stuck render is capped
+    /// too — but the count stays true.
+    #[test]
+    fn stuck_render_is_capped_while_the_total_stays_true() {
+        let over = STUCK_SECTION_CAP + 7;
+        let rows: Vec<OpenActionBrief> = (0..over)
+            .map(|i| {
+                row(
+                    &format!("019c3333-0000-7000-8000-{i:012x}"),
+                    "CC-Stealth",
+                    Some("CC-Cloud"),
+                    "pending",
+                    "normal",
+                    "piled up",
+                    "agent",
+                    0,
+                    "2026-09-01T12:00:00Z",
+                    "Operator",
+                )
+            })
+            .collect();
+        let s = triage(&rows, "Operator", true, &now());
+        let shown: usize = s.stuck.groups.iter().map(|g| g.items.len()).sum();
+        assert_eq!(shown, STUCK_SECTION_CAP);
+        assert_eq!(s.stuck.total, over);
+        assert!(s.stuck.truncated);
+        let md = build_markdown(false, &now(), &summary(), &s);
+        assert!(md.contains(&format!("Showing the {STUCK_SECTION_CAP} oldest of {over}")));
+    }
+
+    /// The SQL compares agents case-insensitively; the Rust grouping must too,
+    /// or one agent becomes two groups and two count lines.
+    #[test]
+    fn grouping_folds_case_and_keeps_the_first_spelling() {
+        let rows = vec![
+            row(
+                "019c3333-0000-7000-8000-000000000001",
+                "CC-Stealth",
+                Some("CC-Cloud"),
+                "pending",
+                "normal",
+                "first spelling",
+                "agent",
+                0,
+                "2026-09-01T12:00:00Z",
+                "Operator",
+            ),
+            row(
+                "019c3333-0000-7000-8000-000000000002",
+                "CC-Stealth",
+                Some("cc-cloud"),
+                "pending",
+                "normal",
+                "lowercase sibling",
+                "agent",
+                0,
+                "2026-09-02T12:00:00Z",
+                "Operator",
+            ),
+        ];
+        let s = triage(&rows, "Operator", true, &now());
+        assert_eq!(s.stuck.groups.len(), 1, "one agent, one group");
+        assert_eq!(
+            s.stuck.groups[0].to_agent, "CC-Cloud",
+            "first spelling wins"
+        );
+        assert_eq!(s.stuck.groups[0].items.len(), 2);
+        assert_eq!(s.counts.by_recipient.len(), 1, "one agent, one count line");
+        assert_eq!(s.counts.by_recipient[0].open, 2);
+    }
+
+    /// Machine and self-addressed rows are counts-only *elsewhere*. Addressed
+    /// to the operator they are work only the human can clear, so they are
+    /// titled. Pinned because the docs describe the exclusion loosely.
+    #[test]
+    fn operator_addressed_machine_and_self_rows_are_still_titled() {
+        let rows = vec![
+            row(
+                "019c3333-0000-7000-8000-000000000001",
+                "Monitor",
+                Some("Operator"),
+                "pending",
+                "high",
+                "[auto] certificate expires in 3 days",
+                "machine",
+                2,
+                "2026-09-01T12:00:00Z",
+                "Operator",
+            ),
+            row(
+                "019c3333-0000-7000-8000-000000000002",
+                "Operator",
+                Some("Operator"),
+                "pending",
+                "normal",
+                "note to self",
+                "agent",
+                0,
+                "2026-09-02T12:00:00Z",
+                "Operator",
+            ),
+        ];
+        let s = triage(&rows, "Operator", true, &now());
+        assert_eq!(s.waiting_on_you.total, 2);
+        let md = build_markdown(false, &now(), &summary(), &s);
+        assert!(md.contains("[auto] certificate expires in 3 days"));
+        assert!(md.contains("note to self"));
+        // …and they are still counted in their buckets.
+        assert_eq!(s.counts.machine_findings.count, 1);
+        assert_eq!(s.counts.self_addressed.count, 1);
+    }
+
+    #[test]
+    fn a_bucket_with_nothing_repeating_omits_the_clause() {
+        let bucket = BucketCount {
+            count: 3,
+            oldest_age_days: Some(5),
+            repeating: Some(0),
+        };
+        assert_eq!(bucket_phrase(&bucket, "open"), "3 open, oldest 5d");
     }
 }

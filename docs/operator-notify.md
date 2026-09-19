@@ -181,10 +181,18 @@ The briefing leads with that standing list, scoped to the operator. `POST
 handoffs addressed to the operator slug, oldest first, each with its age,
 sender and short id; **stuck** — everything else open past its threshold
 (pending over 3 days, accepted over 7, measured from `created_at`), grouped by
-recipient; and **everything else** as counts only. Self-addressed claims and
-machine-filed findings are counted, never titled, so they cannot crowd out the
-items that need a human. The `operator` field on the request body names the
-slug; it defaults to `Operator`.
+recipient; and **the open set at a glance** as counts only. Self-addressed
+claims and machine-filed findings are counted rather than titled *unless they
+are addressed to the operator* — a monitor escalation aimed at the human is
+still work only the human can clear. Both sections cap their rendered list and
+state the true total when they do.
+
+If the slug has never appeared on any handoff, the first section says so
+instead of reporting a clear queue. Slug validation checks shape only, so a
+plausible misspelling would otherwise render as good news — the one lie this
+section exists to prevent. **The caller must pass the slug its agents actually
+address the operator by**; the default is `Operator`, matching the convention
+above.
 
 ## What this deliberately is not
 

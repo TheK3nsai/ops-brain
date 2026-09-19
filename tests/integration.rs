@@ -3309,7 +3309,10 @@ mod briefing_operator_view_tests {
         let uniq = Uuid::now_v7().simple().to_string();
         let operator = format!("Op-{uniq}");
         let title = format!("custom-operator item {uniq}");
-        let id = file(&pool, "CC-Stealth", Some(&operator), &title, 1).await;
+        // Deliberately same-day: the default-operator leg below asserts this
+        // title is absent, which would also fail if the item were old enough
+        // to surface under Stuck instead.
+        let id = file(&pool, "CC-Stealth", Some(&operator), &title, 0).await;
 
         let (status, value) = post_briefing(
             pool.clone(),
@@ -3426,6 +3429,162 @@ mod briefing_operator_view_tests {
         assert_eq!(titles, vec![aged.as_str()]);
 
         cleanup(&pool, &[id_aged, id_fresh]).await;
+    }
+
+    /// The unit tests hand-mirror `is_operator` / `is_self_addressed` in their
+    /// fixture helper, so a broken SQL boolean would pass all of them. Only a
+    /// real query proves the `LOWER() = LOWER()` comparison works.
+    #[tokio::test]
+    async fn operator_matching_is_case_insensitive_in_the_database() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        let filed_as = format!("Op-{uniq}");
+        let requested_as = filed_as.to_lowercase();
+        assert_ne!(filed_as, requested_as, "the test needs the cases to differ");
+        let title = format!("case-folded operator item {uniq}");
+        let id = file(&pool, "CC-Stealth", Some(&filed_as), &title, 1).await;
+
+        let value = briefings::generate_briefing_inner(&pool, "daily", &requested_as)
+            .await
+            .unwrap();
+        assert_eq!(
+            value["waiting_on_you"]["total"], 1,
+            "a differently-cased slug must still match"
+        );
+        assert_eq!(value["waiting_on_you"]["items"][0]["title"], title);
+
+        cleanup(&pool, &[id]).await;
+    }
+
+    #[tokio::test]
+    async fn self_addressed_detection_is_case_insensitive_in_the_database() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        let agent = format!("CC-Claimer-{uniq}");
+        let title = format!("case-folded self claim {uniq}");
+        // Same agent, different spelling: still self-addressed, so it must be
+        // counted and must not be titled under Stuck.
+        let id = file(&pool, &agent, Some(&agent.to_lowercase()), &title, 10).await;
+
+        let value = briefings::generate_briefing_inner(&pool, "daily", &format!("Op-{uniq}"))
+            .await
+            .unwrap();
+        assert!(
+            !value["content"].as_str().unwrap().contains(&title),
+            "a case-folded self-addressed row is still self-addressed"
+        );
+
+        cleanup(&pool, &[id]).await;
+    }
+
+    /// The change is only safe if the keys the off-repo mailer already reads
+    /// survive it.
+    #[tokio::test]
+    async fn the_response_keeps_the_keys_existing_consumers_read() {
+        let pool = pool().await;
+        let value = briefings::generate_briefing_inner(&pool, "daily", "Operator")
+            .await
+            .unwrap();
+        assert!(value["content"].is_string());
+        assert!(value["generated_at"].is_string());
+        assert_eq!(value["briefing_type"], "daily");
+        for key in ["open_count", "pending_count", "accepted_count"] {
+            assert!(
+                value["handoffs"][key].is_u64(),
+                "handoffs.{key} must survive"
+            );
+        }
+        for key in ["pending_titles", "accepted_titles"] {
+            assert!(
+                value["handoffs"][key].is_array(),
+                "handoffs.{key} must survive"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn notify_class_handoffs_never_reach_the_briefing() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        let operator = format!("Op-{uniq}");
+        let title = format!("notify FYI {uniq}");
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            "CC-Stealth",
+            Some(&operator),
+            "normal",
+            "notify",
+            &title,
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
+            .await
+            .unwrap();
+        assert_eq!(
+            value["waiting_on_you"]["total"], 0,
+            "the briefing is the action queue; notify rows are not pending work"
+        );
+        assert!(!value["content"].as_str().unwrap().contains(&title));
+
+        cleanup(&pool, &[h.id]).await;
+    }
+
+    /// An empty queue for a slug nothing has ever used must not read as
+    /// "nothing is waiting on you" — that is the briefing lying.
+    #[tokio::test]
+    async fn an_unseen_operator_slug_is_called_out_in_the_markdown() {
+        let pool = pool().await;
+        let never_used = format!("Nobody-{}", Uuid::now_v7().simple());
+        let value = briefings::generate_briefing_inner(&pool, "daily", &never_used)
+            .await
+            .unwrap();
+        let md = value["content"].as_str().unwrap();
+        assert_eq!(value["waiting_on_you"]["operator_seen"], false);
+        assert!(
+            md.contains(&format!("No handoff has ever named `{never_used}`")),
+            "got {md}"
+        );
+        assert!(!md.contains("Nothing is waiting on you."));
+    }
+
+    #[tokio::test]
+    async fn a_known_but_idle_operator_reads_as_a_clear_queue() {
+        let pool = pool().await;
+        let uniq = Uuid::now_v7().simple().to_string();
+        let operator = format!("Op-{uniq}");
+        // Seen on the bus, but with nothing open: a completed handoff.
+        let h = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            "CC-Stealth",
+            Some(&operator),
+            "normal",
+            "action",
+            &format!("already done {uniq}"),
+            "body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        ops_brain::repo::handoff_repo::complete_handoff_with_commit(&pool, h.id, None)
+            .await
+            .unwrap();
+
+        let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
+            .await
+            .unwrap();
+        assert_eq!(value["waiting_on_you"]["operator_seen"], true);
+        assert!(value["content"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing is waiting on you."));
+
+        cleanup(&pool, &[h.id]).await;
     }
 
     #[tokio::test]
