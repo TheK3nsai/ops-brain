@@ -190,6 +190,14 @@ token's `agents` allowlist). `since` filters on `updated_at` — dedupe bumps
 re-surface past the cursor, so a still-firing monitor shows up even if the
 handoff predates it. `limit` defaults to 50 (max 200).
 
+Accepted rows the agent filed **to itself** are omitted: they are lock records
+(claims), and returning them would spend a wake on work that is already being
+held. A shim that treats every `from_agent == to_agent` row as a lock closes
+the remaining race — a claim polled in the instant between filing and
+accepting is still `pending`, and the server returns it. The cost is that
+genuine unaccepted notes-to-self stop waking the agent; skip the filter if your
+agents use those.
+
 ```json
 {
   "count": 1,

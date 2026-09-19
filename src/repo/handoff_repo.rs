@@ -103,6 +103,14 @@ pub async fn create_machine_handoff(
     .await
 }
 
+/// A handoff an agent files to itself and accepts is a lock record (e.g. a
+/// row claim held across a pre-land window), not inbound work. It stays
+/// readable through `list_handoffs`/`get_handoff`, but must not fill
+/// `check_in`'s action page or spend a wake. Pending self-addressed rows are
+/// left alone: a note-to-self that nobody has accepted is still work.
+const NOT_SELF_CLAIM: &str = "NOT (status = 'accepted' AND to_agent IS NOT NULL \
+     AND LOWER(from_agent) = LOWER(to_agent))";
+
 /// Open action handoffs addressed to `agent`, for wake-shim polling.
 /// `since` filters on `updated_at` (which `create_machine_handoff` bumps on
 /// dedupe suppression, so a still-firing monitor re-surfaces past a cursor).
@@ -119,7 +127,8 @@ pub async fn list_pending_for_agent(
         "SELECT {HANDOFF_COLS} FROM handoffs
           WHERE status IN ('pending', 'accepted')
             AND category = 'action'
-            AND LOWER(to_agent) = LOWER($1)"
+            AND LOWER(to_agent) = LOWER($1)
+            AND {NOT_SELF_CLAIM}"
     );
     if since.is_some() {
         q.push_str(" AND updated_at > $2 ORDER BY updated_at DESC LIMIT $3");
@@ -268,6 +277,7 @@ async fn list_handoffs_filtered(
     category: Option<&str>,
     include_notify: bool,
     include_broadcast: bool,
+    exclude_self_claims: bool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let mut query = format!("SELECT {HANDOFF_COLS} FROM handoffs");
@@ -315,6 +325,10 @@ async fn list_handoffs_filtered(
     } else if !include_notify {
         // Default: action queue only.
         conditions.push("category = 'action'".to_string());
+    }
+
+    if exclude_self_claims {
+        conditions.push(NOT_SELF_CLAIM.to_string());
     }
 
     // Read-time pruning: stale notify rows never resurface in operational
@@ -369,6 +383,7 @@ pub async fn list_handoffs(
         category,
         include_notify,
         false,
+        false,
         limit,
     )
     .await
@@ -376,6 +391,7 @@ pub async fn list_handoffs(
 
 /// Open (pending + accepted) handoffs. `include_broadcast` widens a `to_agent`
 /// filter to also pick up unaddressed rows — see `list_handoffs_filtered`.
+/// `exclude_self_claims` drops accepted self-addressed rows (`NOT_SELF_CLAIM`).
 #[allow(clippy::too_many_arguments)]
 pub async fn list_open_handoffs(
     pool: &PgPool,
@@ -384,6 +400,7 @@ pub async fn list_open_handoffs(
     category: Option<&str>,
     include_notify: bool,
     include_broadcast: bool,
+    exclude_self_claims: bool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     list_handoffs_filtered(
@@ -394,9 +411,38 @@ pub async fn list_open_handoffs(
         category,
         include_notify,
         include_broadcast,
+        exclude_self_claims,
         limit,
     )
     .await
+}
+
+/// The accepted self-addressed action handoffs `agent` holds — the rows
+/// `NOT_SELF_CLAIM` keeps out of `check_in`'s action page — as a count plus the
+/// age of the oldest, so a forgotten lock reads as forgotten without costing a
+/// page slot. Runs after the page query, so a claim accepted in between can
+/// show up in both; benign and self-healing.
+pub struct SelfClaims {
+    pub count: i64,
+    pub oldest_age_days: Option<i64>,
+}
+
+pub async fn count_self_claims(pool: &PgPool, agent: &str) -> Result<SelfClaims, sqlx::Error> {
+    let row: (i64, Option<i64>) = sqlx::query_as(
+        "SELECT count(*),
+                (EXTRACT(EPOCH FROM now() - min(created_at)) / 86400)::bigint
+           FROM handoffs
+          WHERE status = 'accepted' AND category = 'action'
+            AND LOWER(to_agent) = LOWER($1)
+            AND LOWER(from_agent) = LOWER($1)",
+    )
+    .bind(agent)
+    .fetch_one(pool)
+    .await?;
+    Ok(SelfClaims {
+        count: row.0,
+        oldest_age_days: row.1,
+    })
 }
 
 /// Real open-action-handoff counts for briefings. Mirrors the filter of

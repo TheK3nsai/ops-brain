@@ -58,8 +58,9 @@ pub async fn handle_check_in(
         Some(&agent_name),
         None,
         Some("action"),
-        false,
-        true,
+        /* include_notify */ false,
+        /* include_broadcast */ true,
+        /* exclude_self_claims */ true,
         action_page.fetch_limit(),
     )
     .await
@@ -68,6 +69,21 @@ pub async fn handle_check_in(
         Err(e) => return error_result(&format!("Failed to load action handoffs: {e}")),
     };
     let action_has_more = action_page.trim(&mut action_handoffs);
+
+    // Accepted handoffs this agent filed to itself are lock records, not
+    // inbound work: counted here, listed by list_handoffs. The count is
+    // decoration — if it fails, report null ("unknown") rather than lose the
+    // action page or claim a false zero.
+    let self_claims = match handoff_repo::count_self_claims(&brain.pool, &agent_name).await {
+        Ok(c) => serde_json::json!({
+            "count": c.count,
+            "oldest_age_days": c.oldest_age_days,
+        }),
+        Err(e) => {
+            tracing::warn!("check_in: self-claim count failed: {e}");
+            serde_json::Value::Null
+        }
+    };
 
     // Recent notify-class handoffs targeted at this agent or broadcast
     // (compact: id/title/from/created_at only). Older than NOTIFY_TTL_DAYS are
@@ -78,8 +94,9 @@ pub async fn handle_check_in(
         Some(&agent_name),
         None,
         Some("notify"),
-        false,
-        true,
+        /* include_notify */ false,
+        /* include_broadcast */ true,
+        /* exclude_self_claims */ false,
         notify_page.fetch_limit(),
     )
     .await
@@ -109,6 +126,7 @@ pub async fn handle_check_in(
             "pending_count": action_handoffs.iter().filter(|h| h.status == "pending").count(),
             "accepted_count": action_handoffs.iter().filter(|h| h.status == "accepted").count(),
             "has_more": action_has_more,
+            "self_claims_held": self_claims,
             "items": action_handoffs,
         },
         "recent_notifications": {
