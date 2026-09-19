@@ -13,6 +13,7 @@
 # 16 occurrences (3 upper-case in the header comment, 13 lower-case in the
 # CASE/WHERE clauses, where they are load-bearing data). Already published on
 # public `main` since 2026-04-26 and treated as disclosed.
-# Exit condition: remediate together with the checksum update, or when the
-# migration set is squashed to a baseline. Tracked in TODO.md.
+# Exit condition: the next time the database is rebuilt from scratch, take the
+# scrub in the same change. Squashing to a baseline is NOT an exit — sqlx would
+# execute the baseline against populated data. Decision: ROADMAP.md → "Decided".
 migrations/20260426000002_normalize_handoff_machine_names.sql

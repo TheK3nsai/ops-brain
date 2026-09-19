@@ -38,30 +38,17 @@ The server-side binding is the source of peer identity.
    deployed server. Client and server revisions need not be identical; record
    both independently so a later checkout cannot blur the measured pairing.
 2. Install Node.js 22 or newer, current Claude Code with Channels support, and
-   Codex CLI with App Server/`--remote` support. The complete attended
-   rendered-delivery gates passed with Codex **0.151.0 on Windows** using the
-   published v5.2.1 client bundle (`02bd845`), **0.152.0 on Linux** using
-   source checkout `279ba8c` against the v5.2.1 server, and **0.153.2 on
-   Windows** using source checkout `194bea2` against the production server on
-   2026-09-04. Versions 0.149.0 and 0.149.1 are earlier measured working
-   versions.
-   The adapter's resumable-thread selection handles the process-wide extra
-   loaded ID first observed in 0.150.0, but 0.150.0 itself has not run the
-   complete gate. Do not downgrade a current acceptance host merely to prove
-   that historical point release, and do not generalize one measured version
-   into an open-ended `>=` claim. Pin each gate to a declared client version and
-   record `codex --version` with the receipt so a client change cannot erase the
-   comparison baseline.
+   Codex CLI with App Server/`--remote` support. The exact client versions that
+   have passed a gate are in [Measured client versions](#measured-client-versions)
+   — the only copy of that list. They are measured pairs, never an open-ended
+   `>=` claim: pin each gate to a declared client version and record
+   `claude --version` / `codex --version` with the receipt, and do not downgrade
+   a current host merely to prove a historical point release.
    **Do not verify Channels support with `claude --help`.** The
    `--dangerously-load-development-channels` flag is hidden: it is absent from
-   `--help` output while present in the bundle and fully functional. Claude Code
-   **2.1.257** passed the complete attended gate with the private configuration
-   overlay on both Linux and Windows; **2.1.260** passed the 2026-09-04 Windows
-   gate with client checkout `194bea2`; 2.1.241 is the earlier Linux baseline.
+   `--help` output while present in the bundle and fully functional.
    Checking `--help` will make you conclude the client lacks support and chase
-   an upgrade that changes nothing. The former integrated main-launcher path was
-   operator-confirmed on Linux 2026-09-03 with Claude Code **2.1.259** and
-   Codex **0.153.0**; same rule, that is a measured pair, not a `>=` claim. To check positively, grep the installed
+   an upgrade that changes nothing. To check positively, grep the installed
    bundle instead of the help text:
 
    ```bash
@@ -620,3 +607,19 @@ Uninstalling consists only of removing the installed client command links/shims
 and the extracted client bundle (or adapter `node_modules` in a source
 checkout). Do not delete or rotate credentials merely to disable online
 delivery.
+
+## Measured client versions
+
+Append a row per attended gate; never edit a row into a range. Everything else
+in the repo points here.
+
+| Claude Code | Codex CLI | Platform | Client revision | What was measured |
+|---|---|---|---|---|
+| 2.1.241 | 0.149.0 / 0.149.1 | Linux | — | Earlier working baseline |
+| 2.1.257 | 0.151.0 | Windows | published v5.2.1 bundle (`02bd845`) | Complete attended pair gate |
+| 2.1.257 | 0.152.0 | Linux | source `279ba8c`, v5.2.1 server | Complete attended pair gate |
+| 2.1.259 | 0.153.0 | Linux | — | Former integrated main-launcher path, operator-confirmed |
+| 2.1.260 | 0.153.2 | Windows | source `194bea2`, production server | Complete attended gate |
+
+Codex 0.150.0 first exposed the process-wide extra loaded thread ID the
+adapter's thread selection handles; 0.150.0 itself never ran the full gate.

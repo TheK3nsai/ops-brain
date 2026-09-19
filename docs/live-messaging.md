@@ -125,10 +125,8 @@ channel opt-in; see the official [Channels guide](https://code.claude.com/docs/e
 and [channel reference](https://code.claude.com/docs/en/channels-reference).
 
 The implementation and setup guide are in
-[`adapters/claude-channel`](../adapters/claude-channel). It has been exercised
-against Claude Code 2.1.257 in complete attended Linux and Windows gates;
-2.1.260 passed the 2026-09-04 Windows gate with client checkout `194bea2`, and
-2.1.241 is the earlier measured Linux baseline. Custom Channels still require
+[`adapters/claude-channel`](../adapters/claude-channel). Measured client versions:
+[`live-fleet-rollout.md`](live-fleet-rollout.md#measured-client-versions). Custom Channels still require
 Anthropic's explicit development-channel opt-in and may be disabled by
 organization policy. The
 supported launcher uses a private per-launch Claude config overlay because
@@ -153,14 +151,9 @@ bidirectional JSON-RPC API over stdio or WebSocket; see the official
 [Codex App Server guide](https://developers.openai.com/codex/app-server).
 
 The implementation and shared-App-Server setup guide are in
-[`adapters/codex-app-server`](../adapters/codex-app-server). It has been
-exercised using a TUI connected through `--remote` against Codex CLI 0.149.0,
-0.151.0, 0.152.0, and 0.153.2. The complete attended 2026-09-01 pair gates
-passed with 0.151.0 and the published v5.2.1 client bundle (`02bd845`) on
-Windows, then 0.152.0 and source checkout `279ba8c` against the v5.2.1 server
-on Linux. These were followed by the 2026-09-04 Windows gate with 0.153.2 and
-source checkout `194bea2` against the production server. These are exact
-measured versions and revisions, not an open-ended compatibility range.
+[`adapters/codex-app-server`](../adapters/codex-app-server). It is
+exercised using a TUI connected through `--remote`; measured versions are in
+[`live-fleet-rollout.md`](live-fleet-rollout.md#measured-client-versions).
 `ops-brain-codex` owns the loopback App Server and adapter for one
 foreground TUI, cleans both up on exit, and provides `--status`/`--dry-run`.
 If the wrapper's pre-TUI App Server connection becomes stale, the adapter may
