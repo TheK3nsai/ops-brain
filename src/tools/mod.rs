@@ -303,6 +303,7 @@ impl OpsBrain {
         description = "Pending-work query: open action handoffs addressed to you or to \
         nobody in particular (max 20), plus recent notify-class handoffs to you or broadcast (max 5, compact). \
         `has_more` on a section means the cap was hit — use list_handoffs for the rest. \
+        Accepted handoffs you filed to yourself are locks: counted in `self_claims_held`, not listed. \
         Next step is get_handoff for the full body, then accept_handoff. Pass `agent_name` \
         (your free-form agent slug — e.g. 'CC-Stealth', 'Codex-HSR').",
         annotations(

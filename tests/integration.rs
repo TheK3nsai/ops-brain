@@ -886,6 +886,68 @@ mod check_in_tests {
             .expect("check_in returns structured JSON")
     }
 
+    /// A handoff an agent files to itself and accepts is a lock record (HSR's
+    /// row claims). It must not take an action slot or spend a wake, but it
+    /// stays counted, and a *pending* self-addressed row is still work.
+    #[tokio::test]
+    async fn check_in_and_wake_skip_accepted_self_claims() {
+        let pool = pool().await;
+        let agent = format!("Codex-Claim-{}", Uuid::now_v7().simple());
+
+        let claim = file_action(&pool, &agent, Some(&agent), "self claim").await;
+        ops_brain::repo::handoff_repo::accept_handoff(&pool, claim)
+            .await
+            .unwrap()
+            .expect("accept should succeed");
+        let note = file_action(&pool, &agent, Some(&agent), "pending note to self").await;
+        let inbound = file_action(&pool, "CC-Stealth", Some(&agent), "accepted inbound").await;
+        ops_brain::repo::handoff_repo::accept_handoff(&pool, inbound)
+            .await
+            .unwrap()
+            .expect("accept should succeed");
+
+        let json = check_in_json(pool.clone(), &agent).await;
+        let section = &json["open_handoffs_to_you"];
+        let listed: Vec<&str> = section["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["title"].as_str().unwrap())
+            .collect();
+        assert!(!listed.contains(&"self claim"), "lock record took a slot");
+        assert!(listed.contains(&"pending note to self"));
+        assert!(listed.contains(&"accepted inbound"));
+        assert_eq!(section["self_claims_held"]["count"], 1);
+        assert_eq!(section["self_claims_held"]["oldest_age_days"], 0);
+
+        let woken = ops_brain::repo::handoff_repo::list_pending_for_agent(&pool, &agent, None, 50)
+            .await
+            .unwrap();
+        let woken: Vec<Uuid> = woken.iter().map(|h| h.id).collect();
+        assert!(!woken.contains(&claim), "lock record would spend a wake");
+        assert!(woken.contains(&note) && woken.contains(&inbound));
+
+        // list_handoffs stays literal: the claim is still there to be found.
+        let all = ops_brain::repo::handoff_repo::list_handoffs(
+            &pool,
+            Some("accepted"),
+            Some(&agent),
+            None,
+            None,
+            false,
+            50,
+        )
+        .await
+        .unwrap();
+        assert!(all.iter().any(|h| h.id == claim));
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![claim, note, inbound])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
     /// Past the 20-row action cap, check_in must SAY it truncated. The page
     /// silently dropping row 21 is the failure this pins: an agent reading
     /// `count: 20` has no way to tell a full queue from a complete one.

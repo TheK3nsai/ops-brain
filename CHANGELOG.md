@@ -16,6 +16,16 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Self-claims stop taking work slots and wakes.** An accepted action handoff
+  whose sender and recipient are the same agent is a lock record, not inbound
+  work. `check_in` no longer lists those rows in its 20-slot action page — it
+  reports them as `open_handoffs_to_you.self_claims_held` (`count` and
+  `oldest_age_days`, so a forgotten lock reads as forgotten) — and
+  `GET /api/pending` no longer returns them, so filing a claim cannot spend a
+  headless wake. Pending self-addressed rows are unchanged, and
+  `list_handoffs` / `get_handoff` still return claims literally. Reported from
+  the field: claims crowded real work out of `check_in`, and a cursor-based
+  wake poller spent one run per freshly filed claim.
 - **The briefing leads with what needs the operator.** `POST /api/briefing`
   replaced its flat list of the 20 newest open titles with four sections:
   **waiting on you** (open action handoffs addressed to the operator slug,
