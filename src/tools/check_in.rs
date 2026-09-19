@@ -7,14 +7,16 @@
 //! not a mandatory startup ritual. Call it when you want to know what's
 //! waiting; otherwise just do the work.
 //!
-//! v2.0 (agent-agnostic): identity is a free-form slug.
-//! v3.0 (de-bloat): incidents subsystem removed; check_in only returns handoffs.
+//! Both sections are capped pages. They fetch one row past the cap and report
+//! `has_more`, so "20 action handoffs" never silently means "20 of 40" —
+//! list_handoffs serves the rest.
 
 use rmcp::model::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::helpers::{error_result, json_result};
+use crate::pagination::PageRequest;
 use crate::repo::handoff_repo;
 use crate::validation::validate_agent_name;
 
@@ -43,40 +45,49 @@ pub async fn handle_check_in(
     // interactive session triaging a peer's queue) but worth surfacing.
     crate::auth::warn_identity_mismatch(bound, &agent_name, "check_in");
 
-    // Open action handoffs targeted at this agent. Match is exact on the
-    // canonical stored value; v1.x normalized hostname aliases to CC names
-    // at write time, so legacy rows continue to be discoverable as long as
-    // the caller passes the same canonical name they used at write time.
-    let action_handoffs = match handoff_repo::list_open_handoffs(
+    // Open action handoffs targeted at this agent, plus unaddressed ones from
+    // anyone else — `create_handoff` advertises an omitted `to_agent` as "any
+    // agent can pick it up", and check_in is where that promise is kept.
+    // Match is exact (case-insensitive) on the canonical stored value; v1.x
+    // normalized hostname aliases to CC names at write time, so legacy rows
+    // continue to be discoverable as long as the caller passes the same
+    // canonical name they used at write time.
+    let action_page = PageRequest::new(None, ACTION_LIMIT);
+    let mut action_handoffs = match handoff_repo::list_open_handoffs(
         &brain.pool,
         Some(&agent_name),
         None,
         Some("action"),
         false,
-        ACTION_LIMIT,
+        true,
+        action_page.fetch_limit(),
     )
     .await
     {
         Ok(v) => v,
         Err(e) => return error_result(&format!("Failed to load action handoffs: {e}")),
     };
+    let action_has_more = action_page.trim(&mut action_handoffs);
 
-    // Recent notify-class handoffs targeted at this agent (compact:
-    // id/title/from/created_at only). Older than NOTIFY_TTL_DAYS are
+    // Recent notify-class handoffs targeted at this agent or broadcast
+    // (compact: id/title/from/created_at only). Older than NOTIFY_TTL_DAYS are
     // filtered at the repo level.
-    let notify_handoffs = match handoff_repo::list_open_handoffs(
+    let notify_page = PageRequest::new(None, NOTIFICATION_LIMIT);
+    let mut notify_handoffs = match handoff_repo::list_open_handoffs(
         &brain.pool,
         Some(&agent_name),
         None,
         Some("notify"),
         false,
-        NOTIFICATION_LIMIT,
+        true,
+        notify_page.fetch_limit(),
     )
     .await
     {
         Ok(v) => v,
         Err(e) => return error_result(&format!("Failed to load notify handoffs: {e}")),
     };
+    let notify_has_more = notify_page.trim(&mut notify_handoffs);
 
     let notify_summary: Vec<serde_json::Value> = notify_handoffs
         .iter()
@@ -90,15 +101,19 @@ pub async fn handle_check_in(
         })
         .collect();
 
+    // `count` is the page count, not the total: `has_more` says whether older
+    // rows were left behind for list_handoffs.
     json_result(&serde_json::json!({
         "open_handoffs_to_you": {
             "count": action_handoffs.len(),
             "pending_count": action_handoffs.iter().filter(|h| h.status == "pending").count(),
             "accepted_count": action_handoffs.iter().filter(|h| h.status == "accepted").count(),
+            "has_more": action_has_more,
             "items": action_handoffs,
         },
         "recent_notifications": {
             "count": notify_summary.len(),
+            "has_more": notify_has_more,
             "items": notify_summary,
         },
     }))

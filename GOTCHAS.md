@@ -49,7 +49,7 @@
   | File | Purpose | DB target |
   |---|---|---|
   | `docker-compose.yml` | DEV / new-user — bundles its own postgres | `postgres` service inside dev project's own network, fresh dev pgdata |
-  | `docker-compose.prod.yml` | PROD — joins `traefik-net` + `shared-db` external nets | `shared-postgres` (the real production DB) |
+  | `docker-compose.prod.yml` | PROD — joins `web-net` + `shared-db` external nets | `shared-postgres` (the real production DB) |
 
   On 2026-04-06 (PR #31 escape-hatch deploy), CC-Stealth ran `docker compose up -d --build ops-brain` without `-f`. The dev file declared `container_name: ops-brain` and `container_name: ops-brain-db`, so compose recreated the production container wired to a fresh empty postgres and ran migrations against zero rows. ~44 seconds of blank-DB serving. Recovery: `docker compose -f docker-compose.prod.yml up -d --build ops-brain`. Cleanup with `docker compose down` ALSO took out the recovered prod container (shared service name). Total downtime ~3 minutes.
 
@@ -66,7 +66,7 @@
 
   2026-05-04 rmcp 1.6 deploy (PR #47) hit this: the binary correctly read `OPS_BRAIN_ALLOWED_HOSTS`, `.env` had the value, but the container booted with `loopback default` because compose had no line to substitute. CC-Cloud caught it from startup log (`HTTP allowed_hosts: loopback default (set OPS_BRAIN_ALLOWED_HOSTS for public deploy)`) and shipped PR #48 (`e3eb232`). Fail-open guard did its job — degraded to loopback rather than allow-all.
 
-  `/prereview` should flag a new `std::env::var(...)` call paired with no compose change. Spot-grep `docker-compose.prod.yml` before approving. The `${VAR:-}` form (empty default) is the right pattern — lets `.env` drive the value while keeping compose valid when unset.
+  `/prereview` should flag a new clap `#[arg(env = "...")]` in `src/config.rs` paired with no compose change (the binary reads no env through `std::env::var`). Spot-grep `docker-compose.prod.yml` before approving. The `${VAR:-}` form (empty default) is the right pattern — lets `.env` drive the value while keeping compose valid when unset.
 
   **The both-places rule scopes to vars *the binary* reads — host-side vars belong in neither.** `scripts/operator-notify.sh` runs on the host under cron, not in the container, so its `OPS_NOTIFY_*` config (`OPS_NOTIFY_AGENT`, `OPS_NOTIFY_TOKEN_FILE`, `OPS_NOTIFY_MAIL_CMD`, `OPS_BRAIN_URL`) is set **inline on the crontab line**. Putting them in `.env` or `docker-compose.prod.yml` is not harmless-but-redundant — it looks configured while the cron job still runs without them. The 2026-07-28 #77 deploy got this right; the trap is a future session pattern-matching the rule above and "fixing" the omission. Rule of thumb: the var is the binary's only if `src/` greps for it. The one piece of #77 that *does* follow the both-places rule is the poller's credential, which rides in the existing `OPS_BRAIN_MACHINE_TOKENS` JSON array the server reads.
 

@@ -39,7 +39,7 @@ db-down:
 db-shell:
     docker compose exec postgres psql -U ops_brain -d ops_brain
 
-# Seed the database with sample data
+# Seed the database (foundational rows only — see seed/seed.sql)
 seed:
     @echo "Seeding database..."
     docker compose exec postgres psql -U ops_brain -d ops_brain -f /seed/seed.sql
@@ -55,7 +55,7 @@ test-all:
 
 # Run clippy
 lint:
-    cargo clippy -- -D warnings
+    cargo clippy --all-targets -- -D warnings
 
 # Format code
 fmt:
@@ -67,10 +67,6 @@ clean:
 
 # Full check: format, lint, test
 check: fmt lint test
-
-# Generate changelog
-changelog:
-    git-cliff -o CHANGELOG.md
 
 # Count lines of code
 loc:

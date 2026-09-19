@@ -245,11 +245,21 @@ enum StatusFilter<'a> {
 }
 
 /// Shared builder behind `list_handoffs` and `list_open_handoffs`. The only
-/// axis that differs between the two public entry points is how the status
-/// column is constrained (`status_filter`); agent/category filtering, the
+/// axes that differ between the public entry points are how the status column
+/// is constrained (`status_filter`) and whether unaddressed rows join the
+/// recipient's queue (`include_broadcast`); agent/category filtering, the
 /// notify-TTL read-time pruning clause, ordering, and the limit are identical.
 /// Keeping this in one place means the NOTIFY_TTL pruning lives in exactly one
 /// spot.
+///
+/// `include_broadcast` only matters alongside a `to_agent` filter: it widens
+/// that filter to also match rows with no recipient at all (`to_agent IS
+/// NULL`), excluding the agent's own broadcasts. `create_handoff` advertises an
+/// omitted `to_agent` as "any agent can pick it up", so somebody has to see
+/// those rows — but only `check_in` opts in. `list_handoffs`' explicit
+/// `to_agent` filter stays literal, and `list_pending_for_agent` (wake shims)
+/// stays narrow so a broadcast doesn't wake every host.
+#[allow(clippy::too_many_arguments)]
 async fn list_handoffs_filtered(
     pool: &PgPool,
     status_filter: StatusFilter<'_>,
@@ -257,6 +267,7 @@ async fn list_handoffs_filtered(
     from_agent: Option<&str>,
     category: Option<&str>,
     include_notify: bool,
+    include_broadcast: bool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let mut query = format!("SELECT {HANDOFF_COLS} FROM handoffs");
@@ -278,7 +289,19 @@ async fn list_handoffs_filtered(
     // agent names and ILIKE treats it as a single-char wildcard (same
     // reasoning as list_pending_for_agent).
     if to_agent.is_some() {
-        conditions.push(format!("LOWER(to_agent) = LOWER(${param_idx})"));
+        if include_broadcast {
+            // Same bound parameter, used twice: addressed to me, or addressed
+            // to nobody by someone other than me. The unaddressed leg is
+            // pending-only: accept records no acceptor, so an accepted
+            // broadcast left in every queue would invite duplicate work.
+            conditions.push(format!(
+                "(LOWER(to_agent) = LOWER(${param_idx}) \
+                 OR (to_agent IS NULL AND status = 'pending' \
+                     AND LOWER(from_agent) <> LOWER(${param_idx})))"
+            ));
+        } else {
+            conditions.push(format!("LOWER(to_agent) = LOWER(${param_idx})"));
+        }
         param_idx += 1;
     }
     if from_agent.is_some() {
@@ -345,17 +368,22 @@ pub async fn list_handoffs(
         from_agent,
         category,
         include_notify,
+        false,
         limit,
     )
     .await
 }
 
+/// Open (pending + accepted) handoffs. `include_broadcast` widens a `to_agent`
+/// filter to also pick up unaddressed rows — see `list_handoffs_filtered`.
+#[allow(clippy::too_many_arguments)]
 pub async fn list_open_handoffs(
     pool: &PgPool,
     to_agent: Option<&str>,
     from_agent: Option<&str>,
     category: Option<&str>,
     include_notify: bool,
+    include_broadcast: bool,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     list_handoffs_filtered(
@@ -365,6 +393,7 @@ pub async fn list_open_handoffs(
         from_agent,
         category,
         include_notify,
+        include_broadcast,
         limit,
     )
     .await
@@ -396,6 +425,57 @@ pub async fn count_open_handoffs(pool: &PgPool) -> Result<OpenHandoffCounts, sql
         pending: row.1,
         accepted: row.2,
     })
+}
+
+/// Has any handoff other than `exclude_id` ever named `agent` as sender or
+/// recipient? The bus deliberately has no agent registry — an agent exists
+/// because it has appeared on a handoff. Used by `create_handoff` to warn (not
+/// refuse) when a recipient slug is brand new, so a typo'd recipient doesn't
+/// silently sit unread. `exclude_id` is the row just inserted, which of course
+/// names the slug.
+pub async fn agent_seen_before(
+    pool: &PgPool,
+    agent: &str,
+    exclude_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+            SELECT 1 FROM handoffs
+             WHERE id <> $2
+               AND (LOWER(from_agent) = LOWER($1) OR LOWER(to_agent) = LOWER($1))
+         )",
+    )
+    .bind(agent)
+    .bind(exclude_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// Up to 3 known agent slugs most similar to `attempted`, by pg_trgm trigram
+/// similarity over the distinct sender/recipient values already on the bus.
+/// Suggestion only — never a gate. Errors degrade to no suggestions.
+pub async fn suggest_similar_agents(
+    pool: &PgPool,
+    attempted: &str,
+    exclude_id: Uuid,
+) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT agent FROM (
+             SELECT DISTINCT from_agent AS agent FROM handoffs WHERE id <> $2
+             UNION
+             SELECT DISTINCT to_agent AS agent FROM handoffs
+              WHERE id <> $2 AND to_agent IS NOT NULL
+         ) known
+          WHERE LOWER(agent) <> LOWER($1)
+            AND similarity(agent, $1) > 0.2
+          ORDER BY similarity(agent, $1) DESC
+          LIMIT 3",
+    )
+    .bind(attempted)
+    .bind(exclude_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
 }
 
 pub async fn delete_handoff(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
