@@ -31,6 +31,9 @@ const STUCK_SECTION_CAP: usize = 50;
 const LEGACY_TITLE_LIMIT: usize = 20;
 
 /// Label for handoffs filed with no recipient.
+/// Most failing checks the briefing will title before summarising the rest.
+const FAILING_SECTION_CAP: usize = 50;
+
 const UNADDRESSED: &str = "(unaddressed)";
 
 /// Structured briefing data returned alongside the markdown content.
@@ -42,6 +45,7 @@ pub struct BriefingData {
     pub operator: String,
     pub handoffs: HandoffSummaryData,
     pub waiting_on_you: OperatorQueue,
+    pub failing_checks: FailingChecks,
     pub stuck: StuckSection,
     pub counts: CountsSection,
     pub content: String,
@@ -72,6 +76,21 @@ pub struct BriefItem {
     pub priority: String,
     /// Whole days between `created_at` and the briefing's `now`.
     pub age_days: i64,
+    /// Times a machine producer re-filed this while it stayed open (dedupe
+    /// bumps). Zero for agent-filed rows.
+    pub repeat_count: i32,
+}
+
+/// Open machine-filed findings their producer rated high or critical — a
+/// failed backup, not a warning. Titled at any age: the operator wants to know
+/// the day it fails, not once it has aged into "stuck". Lower-priority machine
+/// findings stay counts-only. Oldest first.
+#[derive(Debug, Clone, Serialize)]
+pub struct FailingChecks {
+    /// True total; `items` may be a capped page of it.
+    pub total: usize,
+    pub truncated: bool,
+    pub items: Vec<BriefItem>,
 }
 
 /// Open action handoffs addressed to the operator. Oldest first.
@@ -138,6 +157,7 @@ pub struct CountsSection {
 #[derive(Debug, Serialize)]
 pub struct OperatorSections {
     pub waiting_on_you: OperatorQueue,
+    pub failing_checks: FailingChecks,
     pub stuck: StuckSection,
     pub counts: CountsSection,
 }
@@ -194,6 +214,7 @@ pub async fn generate_briefing_inner(
         operator: operator.to_string(),
         handoffs: handoff_data,
         waiting_on_you: sections.waiting_on_you,
+        failing_checks: sections.failing_checks,
         stuck: sections.stuck,
         counts: sections.counts,
         content: md,
@@ -219,7 +240,13 @@ fn to_item(row: &OpenActionBrief, now: &DateTime<Utc>) -> BriefItem {
         status: row.status.clone(),
         priority: row.priority.clone(),
         age_days: age_days(now, &row.created_at),
+        repeat_count: row.repeat_count,
     }
+}
+
+/// A machine finding its producer rated as a failure rather than a warning.
+fn is_failing_check(row: &OpenActionBrief) -> bool {
+    row.origin == "machine" && matches!(row.priority.as_str(), "high" | "critical")
 }
 
 /// Is this row past the age at which its status stops being credible?
@@ -270,7 +297,24 @@ fn triage(
             .collect(),
     };
 
-    // ── 2. Stuck ──
+    // ── 2. Failing checks ──
+    // Rows addressed to the operator are already titled above; don't say them
+    // twice.
+    let failing: Vec<&OpenActionBrief> = rows
+        .iter()
+        .filter(|r| is_failing_check(r) && !r.is_operator)
+        .collect();
+    let failing_checks = FailingChecks {
+        total: failing.len(),
+        truncated: failing.len() > FAILING_SECTION_CAP,
+        items: failing
+            .iter()
+            .take(FAILING_SECTION_CAP)
+            .map(|r| to_item(r, now))
+            .collect(),
+    };
+
+    // ── 3. Stuck ──
     // Somebody else's queue, genuinely addressed to another agent, filed by a
     // human-facing agent rather than a monitor, and old enough that "in
     // progress" no longer explains it.
@@ -365,6 +409,7 @@ fn triage(
 
     OperatorSections {
         waiting_on_you,
+        failing_checks,
         stuck,
         counts: CountsSection {
             by_recipient,
@@ -452,7 +497,42 @@ fn build_markdown(
         md.push('\n');
     }
 
-    // ── 2. Stuck ──
+    // ── 2. Failing checks ──
+    // Always rendered, for the same reason as section 1.
+    let f = &sections.failing_checks;
+    md.push_str("## Failing checks (machine findings rated high or critical)\n\n");
+    if f.items.is_empty() {
+        md.push_str("No high-priority machine finding is open.\n\n");
+    } else {
+        if f.truncated {
+            md.push_str(&format!(
+                "Showing the {} oldest of {}.\n\n",
+                f.items.len(),
+                f.total
+            ));
+        }
+        for item in &f.items {
+            let refiled = format!("re-filed ×{}", item.repeat_count);
+            let mut quals: Vec<&str> = vec![item.priority.as_str(), item.status.as_str()];
+            if item.repeat_count > 0 {
+                quals.push(&refiled);
+            }
+            // The sender is the producer; the recipient is who is meant to
+            // fix it — for a failing check that is the name worth printing.
+            let to = item.to_agent.as_deref().unwrap_or(UNADDRESSED);
+            md.push_str(&format!(
+                "- {} · {} · {} — for {to}, from {} · {}\n",
+                age_label(item.age_days),
+                quals.join(" · "),
+                item.title,
+                item.from_agent,
+                item.short_id
+            ));
+        }
+        md.push('\n');
+    }
+
+    // ── 3. Stuck ──
     let s = &sections.stuck;
     md.push_str(&format!(
         "## Stuck (pending open > {}d, accepted open > {}d)\n\n",
@@ -778,6 +858,57 @@ mod tests {
     }
 
     #[test]
+    fn failing_checks_titles_high_priority_machine_findings_at_any_age() {
+        let mut rows = fixture("Operator");
+        // Filed this morning: far too fresh for Stuck, exactly what the
+        // operator wants to hear about today.
+        rows.push(row(
+            "01a07777-0000-7000-8000-000000000007",
+            "Monitor",
+            Some("Codex-HSR"),
+            "pending",
+            "high",
+            "[auto] nightly backup is 28h old",
+            "machine",
+            2,
+            "2026-09-19T10:00:00Z",
+            "Operator",
+        ));
+        // A high machine finding addressed to the operator is already titled
+        // under "Waiting on you" and must not be said twice.
+        rows.push(row(
+            "01a08888-0000-7000-8000-000000000008",
+            "Monitor",
+            Some("Operator"),
+            "pending",
+            "critical",
+            "[auto] certificate expires tomorrow",
+            "machine",
+            0,
+            "2026-09-19T11:00:00Z",
+            "Operator",
+        ));
+        let s = triage(&rows, "Operator", true, &now());
+
+        // The fixture's normal-priority machine warning stays counts-only.
+        assert_eq!(s.failing_checks.total, 1);
+        assert_eq!(s.failing_checks.items[0].short_id, "01a07777");
+        assert_eq!(s.failing_checks.items[0].repeat_count, 2);
+        assert_eq!(s.waiting_on_you.total, 3);
+
+        let md = build_markdown(false, &now(), &summary(), &s);
+        assert!(
+            md.contains(
+                "- today · high · pending · re-filed ×2 · [auto] nightly backup is 28h old \
+                 — for Codex-HSR, from Monitor · 01a07777\n"
+            ),
+            "{md}"
+        );
+        assert!(!md.contains("No high-priority machine finding is open."));
+        assert_eq!(md.matches("certificate expires tomorrow").count(), 1);
+    }
+
+    #[test]
     fn markdown_renders_all_three_sections() {
         let s = triage(&fixture("Operator"), "Operator", true, &now());
         let md = build_markdown(false, &now(), &summary(), &s);
@@ -791,6 +922,10 @@ mod tests {
 
 - 26d · high · Blocked: need the IT budget figure — from CC-Stealth · 019e0d79
 - 3d · Approve the switch decommission — from CC-Cloud · 019e5555
+
+## Failing checks (machine findings rated high or critical)
+
+No high-priority machine finding is open.
 
 ## Stuck (pending open > 3d, accepted open > 7d)
 

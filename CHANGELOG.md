@@ -17,20 +17,22 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **The briefing leads with what needs the operator.** `POST /api/briefing`
-  replaced its flat list of the 20 newest open titles with three sections:
+  replaced its flat list of the 20 newest open titles with four sections:
   **waiting on you** (open action handoffs addressed to the operator slug,
-  oldest first, each with age, priority, sender and short id), **stuck**
+  oldest first, each with age, priority, sender and short id), **failing
+  checks** (open machine findings rated `high` or `critical`, at any age, with
+  recipient and re-file count), **stuck**
   (everything else open past pending > 3d / accepted > 7d, grouped by
   recipient), and **the open set at a glance** as counts only. Self-addressed
-  claims and machine-filed findings are counted rather than titled unless they
+  claims and lower-priority machine findings are counted rather than titled unless they
   are addressed to the operator — in production they dominated the old list and
-  buried items that had been waiting weeks. Both rendered sections cap at 50 and
+  buried items that had been waiting weeks. Titled sections cap at 50 and
   state the true total when they do. An optional `operator` field names the slug
   the first section reads (default `Operator`); requests that omit it are
   unchanged, and a slug that has never appeared on any handoff is called out
   rather than rendered as an empty queue. REST-only, so the MCP surface and
   every agent's token cost are untouched. The JSON keeps its existing keys and
-  gains `operator`, `waiting_on_you`, `stuck`, and `counts`; note
+  gains `operator`, `waiting_on_you`, `failing_checks`, `stuck`, and `counts`; note
   `pending_titles` and `accepted_titles` are now 20 per status rather than 20
   across both.
 - **Workflow conventions ship in the server.** The MCP `instructions` string
