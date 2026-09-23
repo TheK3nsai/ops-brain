@@ -20,6 +20,12 @@ certifies a dirty tree forever. Matching is case-insensitive and finds a
 guarded value anywhere inside a longer identifier, not only on separator
 boundaries.
 
+`--text [FILE ...]` scans free text instead of the tree: a commit message
+(`.githooks/commit-msg`), a PR title/body or commit range in CI, or a gh/MCP
+payload from a local agent hook. Those are the surfaces that leaked (PR #116's
+message and body both passed a clean tree scan). No allowlist applies: it names
+tree paths, and a message has none.
+
 Deliberate non-goals, so nobody over-trusts this: it does not decode base64,
 percent-encoding, or any other transformation, and it will not match a value
 whose characters have been re-spaced or split across lines. It catches
@@ -173,6 +179,39 @@ def scan_file(path: str, by_len: dict[int, set[str]], unscanned: list[tuple[str,
     return hits
 
 
+def scan_text(sources: list[str]) -> int:
+    """Scan free text (files, or stdin for none/`-`). Exit 1 on any hit.
+
+    The denylist is loaded and validated exactly as for a tree scan, so a
+    malformed or short denylist aborts here too rather than passing the text.
+    """
+    by_len = load_denylist()
+    failed = False
+    for src in sources or ["-"]:
+        label = "<stdin>" if src == "-" else src
+        try:
+            data = sys.stdin.buffer.read() if src == "-" else Path(src).read_bytes()
+        except OSError as exc:
+            # Unreadable is a failure, not a pass: an unread message is unscanned.
+            print(f"::error::NOT SCANNED (unreadable: {exc}): {label}")
+            failed = True
+            continue
+        hits = scan_bytes(data, by_len)
+        if b"\0" in data:
+            hits += scan_bytes(data.replace(b"\0", b""), by_len)
+        if hits:
+            if not failed:
+                print("::error::Fleet-private strings present in the text:")
+            failed = True
+            for lineno, prefix in hits:
+                print(f"  {label}:{lineno}: <guarded class {prefix}>")
+    if failed:
+        return 1
+    total = sum(len(v) for v in by_len.values())
+    print(f"Clean: {total} guarded classes, none in the scanned text.")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
     if args and args[0] == "--emit-hash":
@@ -186,6 +225,11 @@ def main() -> int:
             sys.exit("::error::--emit-hash: read nothing on stdin")
         print(f"{len(value.lower())}:{digest(value)}")
         return 0
+
+    if args and args[0] == "--text":
+        #   .github/scripts/fleet_string_guard.py --text .git/COMMIT_EDITMSG
+        #   git log --format=%B base..head | .github/scripts/fleet_string_guard.py --text
+        return scan_text(args[1:])
 
     use_allowlist = True
     for arg in args:

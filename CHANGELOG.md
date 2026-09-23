@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **The string guard covers commit messages and PR text.**
+  `fleet_string_guard.py --text` scans free text. `.githooks/commit-msg` runs
+  it on every commit message, whoever commits, including `#` lines (git keeps
+  them under -m/-F or verbatim cleanup), and cuts only the `-v` diff below the
+  scissors line (enable with `git config core.hooksPath .githooks`). CI scans
+  the PR title, body and branch name (rescanned on `edited`), plus each commit
+  message and author/committer identity in the pushed or PR range. A failed
+  `git log` or a force-pushed base is an error, not an empty pass. The CI
+  steps detect after publication; the hook prevents. Tests drive the hook
+  through real `git commit` runs on synthetic values.
 - **Optional live launcher modes.** Linux `--auto` and PowerShell `-Mode Auto`
   request live delivery for attended TUI launches, pass headless and subcommand
   invocations through, and ask before an ordinary fallback on failed preflight.

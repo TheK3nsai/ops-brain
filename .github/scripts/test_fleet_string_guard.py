@@ -243,6 +243,101 @@ with tempfile.TemporaryDirectory() as td:
         check("unreadable file is reported, not counted clean",
               "::warning::NOT SCANNED" in out and "unreadable" in out, f"\n{out}")
 
+# --- --text: commit messages and PR bodies, the surfaces that leaked -------
+def text_case(name: str, text: str | None, *, expect_fail: bool, via: str = "file",
+              want_in_out: str | None = None, not_in_out: list[str] | None = None) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        dl = tmp / "deny.sha256"
+        dl.write_text("\n".join(emit_hash(v) for v in FAKE) + "\n")
+        env = dict(os.environ, FLEET_GUARD_DENYLIST=str(dl),
+                   FLEET_GUARD_EXPECTED_CLASSES=str(len(FAKE)))
+        args, stdin = [sys.executable, str(GUARD), "--text"], None
+        if via == "file":
+            msg = tmp / "COMMIT_EDITMSG"
+            if text is not None:
+                msg.write_text(text)
+            args.append(str(msg))
+        else:
+            stdin = (text or "").encode()
+        res = subprocess.run(args, input=stdin, capture_output=True, env=env, cwd=td)
+        out = (res.stdout + res.stderr).decode()
+        check(name, (res.returncode != 0) == expect_fail,
+              f"(exit={res.returncode}, expected {'nonzero' if expect_fail else '0'})\n{out}")
+        if want_in_out is not None:
+            check(f"{name} :: output contains {want_in_out!r}", want_in_out in out, f"\n{out}")
+        for bad in not_in_out or []:
+            check(f"{name} :: output omits {bad!r}", bad not in out, f"\n{out}")
+
+
+text_case("--text catches a guarded value in a commit message file",
+          f"fix: reroute {FAKE[0].lower()} handoffs\n\nbody\n", expect_fail=True,
+          want_in_out="COMMIT_EDITMSG:1", not_in_out=[FAKE[0], FAKE[0].lower()])
+text_case("--text catches a guarded value on stdin (CI PR body path)",
+          f"## Summary\nDeployed on {FAKE[2]}.internal\n", expect_fail=True, via="stdin",
+          want_in_out="<stdin>:2")
+text_case("--text passes a clean message",
+          "docs: clarify rotation order\n", expect_fail=False, want_in_out="none in the scanned text")
+text_case("--text treats an unreadable/missing message as a failure, not a pass",
+          None, expect_fail=True, want_in_out="NOT SCANNED")
+
+# --- .githooks/commit-msg, end to end through a real `git commit` ---------
+HOOKS = GUARD.parents[2] / ".githooks"
+
+
+def hook_case(name: str, message: str, *, expect_block: bool, staged: str = "clean\n",
+              verbose: bool = False, bypass: bool = False,
+              git_opts: list[str] | None = None, commit_args: list[str] | None = None) -> None:
+    import shutil
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        root = make_repo(tmp, {"a.txt": staged})
+        (root / ".github" / "scripts").mkdir(parents=True)
+        shutil.copy(GUARD, root / ".github" / "scripts" / GUARD.name)
+        shutil.copytree(HOOKS, root / ".githooks")
+        dl = tmp / "deny.sha256"
+        dl.write_text("\n".join(emit_hash(v) for v in FAKE) + "\n")
+        env = dict(os.environ, FLEET_GUARD_DENYLIST=str(dl),
+                   FLEET_GUARD_EXPECTED_CLASSES=str(len(FAKE)))
+        env.pop("ALLOW_FLEET_STRINGS", None)
+        # A suite run from inside a git hook must not commit to the outer repo.
+        for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
+            env.pop(var, None)
+        if bypass:
+            env["ALLOW_FLEET_STRINGS"] = "1"
+        git = ["git", "-c", "core.hooksPath=.githooks", "-c", "user.name=t",
+               "-c", "user.email=t@example.invalid", *(git_opts or []),
+               "commit", "-q", *(commit_args or []), "-F", "-"]
+        if verbose:
+            # -v with -F needs the editor path; `true` keeps the file as written.
+            git = git[:-2] + ["-v", "-e", "-F", "-"]
+            env["GIT_EDITOR"] = "true"
+        res = subprocess.run(git, input=message.encode(), capture_output=True,
+                             env=env, cwd=root)
+        out = (res.stdout + res.stderr).decode()
+        check(name, (res.returncode != 0) == expect_block,
+              f"(exit={res.returncode}, expected {'block' if expect_block else 'commit'})\n{out}")
+        if expect_block:
+            check(f"{name} :: no plaintext in the refusal",
+                  all(v.lower() not in out.lower() for v in FAKE), f"\n{out}")
+
+
+hook_case("commit-msg hook blocks a guarded value in the message",
+          f"fix: route {FAKE[1].lower()} traffic\n", expect_block=True)
+hook_case("commit-msg hook allows a clean message", "docs: tidy\n", expect_block=False)
+hook_case("commit-msg hook ignores the -v diff below the scissors line",
+          "chore: bump\n", staged=f"{FAKE[0]}\n", verbose=True, expect_block=False)
+# git keeps `#` lines under -m/-F (whitespace cleanup), --cleanup=verbatim and a
+# custom commentChar; the hook runs before cleanup, so it must scan them.
+hook_case("commit-msg hook scans a # line that -m/-F keeps",
+          f"fix\n\n# see {FAKE[0].lower()}\n", expect_block=True)
+hook_case("commit-msg hook scans # lines under --cleanup=verbatim",
+          f"fix\n# {FAKE[1]}\n", expect_block=True, commit_args=["--cleanup=verbatim"])
+hook_case("commit-msg hook scans ; lines with core.commentChar=;",
+          f"fix\n; {FAKE[2]}\n", expect_block=True, git_opts=["-c", "core.commentChar=;"])
+hook_case("commit-msg hook honors the explicit bypass",
+          f"note {FAKE[2]}\n", bypass=True, expect_block=False)
+
 # --- performance guard: no combinatorial blowup on separator-rich tokens ---
 with tempfile.TemporaryDirectory() as td:
     import time
