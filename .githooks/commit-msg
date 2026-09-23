@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Fleet-private string guard for commit messages. This repo is public, and
+# messages have leaked where the tree scan could not see them (PR #116). Runs
+# for any committer (Claude, Codex, a human), but only on `git commit`: not with
+# --no-verify, and not for cherry-pick, rebase picks or `git am`. CI's range scan
+# is the only net for those.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# Scans the whole message except the `git commit -v` diff below the scissors
+# line (any comment char). Comment lines are NOT dropped: this runs before git's
+# cleanup and cannot know its mode, and with -m/-F, --cleanup=verbatim or a
+# custom core.commentChar, git records `#` lines verbatim. Template comments
+# (branch, paths) are public anyway. A scissors line forged into a -m message
+# truncates the scan; that is deliberate evasion, a documented non-goal.
+# Needs python3: a Windows Git Bash without it is blocked, not waved through.
+# Fails closed when the guard cannot run. Bypass deliberately, and say which
+# value and why, with: ALLOW_FLEET_STRINGS=1 git commit ...
+
+set -uo pipefail
+
+msg_file=$1
+root=$(git rev-parse --show-toplevel) || exit 1
+guard="$root/.github/scripts/fleet_string_guard.py"
+
+if [[ ${ALLOW_FLEET_STRINGS:-0} == 1 ]]; then
+    echo "commit-msg: ALLOW_FLEET_STRINGS=1, fleet string guard skipped for this message" >&2
+    exit 0
+fi
+
+if ! command -v python3 >/dev/null || [[ ! -f $guard ]]; then
+    echo "commit-msg: fleet string guard unavailable ($guard); refusing an unscanned message" >&2
+    exit 1
+fi
+
+if ! out=$(sed '/^. -\{24\} >8 -\{24\}$/,$d' -- "$msg_file" \
+    | python3 "$guard" --text 2>&1); then
+    {
+        echo "commit-msg blocked: the message carries a fleet-private string."
+        echo "${out//<stdin>/message}"
+        echo "No plaintext above on purpose. Reword the message, or bypass deliberately:"
+        echo "  ALLOW_FLEET_STRINGS=1 git commit ..."
+    } >&2
+    exit 1
+fi
+exit 0
