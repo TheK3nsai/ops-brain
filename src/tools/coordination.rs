@@ -12,7 +12,7 @@ use rmcp::model::*;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateHandoffParams {
     /// Sender agent (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "CC-Stealth", "Codex-HSR".
+    /// Examples: "Claude-Stealth", "Codex-HSR".
     #[serde(alias = "from_machine")]
     pub from_agent: String,
     /// Target agent (free-form slug, same form as `from_agent`). Omit to
@@ -572,24 +572,24 @@ mod tests {
     #[test]
     fn create_handoff_accepts_legacy_machine_aliases() {
         let params: CreateHandoffParams = serde_json::from_value(serde_json::json!({
-            "from_machine": "CC-Stealth",
+            "from_machine": "Claude-Stealth",
             "to_machine": "Codex-HSR",
             "title": "handoff",
             "body": "body"
         }))
         .unwrap();
-        assert_eq!(params.from_agent, "CC-Stealth");
+        assert_eq!(params.from_agent, "Claude-Stealth");
         assert_eq!(params.to_agent.as_deref(), Some("Codex-HSR"));
     }
 
     #[test]
     fn list_handoffs_accepts_legacy_machine_aliases() {
         let params: ListHandoffsParams = serde_json::from_value(serde_json::json!({
-            "from_machine": "CC-Stealth",
+            "from_machine": "Claude-Stealth",
             "to_machine": "Codex-HSR"
         }))
         .unwrap();
-        assert_eq!(params.from_agent.as_deref(), Some("CC-Stealth"));
+        assert_eq!(params.from_agent.as_deref(), Some("Claude-Stealth"));
         assert_eq!(params.to_agent.as_deref(), Some("Codex-HSR"));
     }
 }

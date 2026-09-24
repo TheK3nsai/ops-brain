@@ -114,14 +114,14 @@ mod knowledge_tests {
             &["ci".to_string()],
             None,
             false,
-            Some("CC-Stealth"),
+            Some("Claude-Stealth"),
         )
         .await
         .unwrap();
 
         assert_eq!(k.title, "Test Knowledge Entry");
         assert!(!k.cross_client_safe);
-        assert_eq!(k.author.as_deref(), Some("CC-Stealth"));
+        assert_eq!(k.author.as_deref(), Some("Claude-Stealth"));
 
         let fetched = ops_brain::repo::knowledge_repo::get_knowledge(&pool, k.id)
             .await
@@ -149,7 +149,7 @@ mod knowledge_tests {
             &[],
             None,
             true,
-            Some("CC-Stealth"),
+            Some("Claude-Stealth"),
         )
         .await
         .unwrap();
@@ -337,7 +337,7 @@ mod coordination_tests {
         let pool = pool().await;
 
         let cases = [
-            ("CC-Stealth", Some("CC-Cloud")),
+            ("Claude-Stealth", Some("Claude-Cloud")),
             ("Codex-HSR", Some("Gemini-HSR")),
             ("opencode.local", None),
         ];
@@ -574,7 +574,7 @@ mod v5_surface_tests {
         let handoff = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
             "Codex-Stealth",
-            Some("CC-HSR"),
+            Some("Claude-HSR"),
             "normal",
             "action",
             "exact v5 retrieval",
@@ -790,7 +790,7 @@ mod check_in_tests {
         let result = ops_brain::tools::check_in::handle_check_in(
             &brain,
             ops_brain::tools::check_in::CheckInParams {
-                agent_name: "CC-Stealth".to_string(),
+                agent_name: "Claude-Stealth".to_string(),
             },
             None,
         )
@@ -822,7 +822,7 @@ mod check_in_tests {
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "CC-Stealth",
+            "Claude-Stealth",
             Some(&agent),
             "normal",
             "action",
@@ -900,7 +900,7 @@ mod check_in_tests {
             .unwrap()
             .expect("accept should succeed");
         let note = file_action(&pool, &agent, Some(&agent), "pending note to self").await;
-        let inbound = file_action(&pool, "CC-Stealth", Some(&agent), "accepted inbound").await;
+        let inbound = file_action(&pool, "Claude-Stealth", Some(&agent), "accepted inbound").await;
         ops_brain::repo::handoff_repo::accept_handoff(&pool, inbound)
             .await
             .unwrap()
@@ -958,7 +958,15 @@ mod check_in_tests {
 
         let mut ids = Vec::new();
         for i in 0..21 {
-            ids.push(file_action(&pool, "CC-Stealth", Some(&agent), &format!("capped {i}")).await);
+            ids.push(
+                file_action(
+                    &pool,
+                    "Claude-Stealth",
+                    Some(&agent),
+                    &format!("capped {i}"),
+                )
+                .await,
+            );
         }
 
         let json = check_in_json(pool.clone(), &agent).await;
@@ -994,8 +1002,8 @@ mod check_in_tests {
         );
 
         let ids = vec![
-            file_action(&pool, "CC-Stealth", Some(&agent), "one").await,
-            file_action(&pool, "CC-Stealth", Some(&agent), "two").await,
+            file_action(&pool, "Claude-Stealth", Some(&agent), "one").await,
+            file_action(&pool, "Claude-Stealth", Some(&agent), "two").await,
         ];
 
         let json = check_in_json(pool.clone(), &agent).await;
@@ -1017,8 +1025,8 @@ mod check_in_tests {
     #[tokio::test]
     async fn check_in_surfaces_broadcasts_to_everyone_but_the_sender() {
         let pool = pool().await;
-        let sender = format!("CC-Sender-{}", Uuid::now_v7().simple());
-        let other = format!("CC-Other-{}", Uuid::now_v7().simple());
+        let sender = format!("Claude-Sender-{}", Uuid::now_v7().simple());
+        let other = format!("Claude-Other-{}", Uuid::now_v7().simple());
         let title = format!("broadcast-{}", Uuid::now_v7().simple());
 
         let id = file_action(&pool, &sender, None, &title).await;
@@ -1105,7 +1113,7 @@ mod coordination_handler_tests {
         let result = handle_create_handoff(
             &brain,
             CreateHandoffParams {
-                from_agent: "CC-Stealth".to_string(),
+                from_agent: "Claude-Stealth".to_string(),
                 to_agent: None,
                 priority: None,
                 category: None,
@@ -1128,7 +1136,7 @@ mod coordination_handler_tests {
     fn handoff_params(from_agent: &str) -> CreateHandoffParams {
         CreateHandoffParams {
             from_agent: from_agent.to_string(),
-            to_agent: Some("CC-Cloud".to_string()),
+            to_agent: Some("Claude-Cloud".to_string()),
             priority: None,
             category: Some("notify".to_string()),
             title: "identity-binding smoke".to_string(),
@@ -1140,14 +1148,18 @@ mod coordination_handler_tests {
 
     #[tokio::test]
     async fn create_handoff_bound_token_rejects_mismatched_from_agent() {
-        // A per-agent token bound to CC-Stealth cannot file as CC-Cloud.
+        // A per-agent token bound to Claude-Stealth cannot file as Claude-Cloud.
         let brain = build_brain(pool().await);
-        let result =
-            handle_create_handoff(&brain, handoff_params("CC-Cloud"), Some("CC-Stealth")).await;
+        let result = handle_create_handoff(
+            &brain,
+            handoff_params("Claude-Cloud"),
+            Some("Claude-Stealth"),
+        )
+        .await;
         assert_eq!(result.is_error, Some(true));
         let text = extract_text(&result);
         assert!(
-            text.contains("CC-Stealth") && text.contains("CC-Cloud"),
+            text.contains("Claude-Stealth") && text.contains("Claude-Cloud"),
             "expected identity-mismatch error naming both slugs, got: {text}"
         );
     }
@@ -1155,8 +1167,12 @@ mod coordination_handler_tests {
     #[tokio::test]
     async fn create_handoff_bound_token_allows_matching_from_agent_case_insensitive() {
         let brain = build_brain(pool().await);
-        let result =
-            handle_create_handoff(&brain, handoff_params("cc-stealth"), Some("CC-Stealth")).await;
+        let result = handle_create_handoff(
+            &brain,
+            handoff_params("claude-stealth"),
+            Some("Claude-Stealth"),
+        )
+        .await;
         assert_eq!(
             result.is_error,
             Some(false),
@@ -1169,7 +1185,7 @@ mod coordination_handler_tests {
     async fn create_handoff_unbound_caller_files_any_identity() {
         // The main bearer (bound = None) keeps the pre-tokens behavior.
         let brain = build_brain(pool().await);
-        let result = handle_create_handoff(&brain, handoff_params("CC-Anything"), None).await;
+        let result = handle_create_handoff(&brain, handoff_params("Claude-Anything"), None).await;
         assert_eq!(
             result.is_error,
             Some(false),
@@ -1191,7 +1207,7 @@ mod coordination_handler_tests {
         let typo = format!("Codex-Orian{suffix}");
 
         let to = |agent: &str| CreateHandoffParams {
-            from_agent: "CC-Stealth".to_string(),
+            from_agent: "Claude-Stealth".to_string(),
             to_agent: Some(agent.to_string()),
             priority: None,
             category: Some("notify".to_string()),
@@ -1842,7 +1858,7 @@ mod knowledge_safety_tests {
             &[],
             Some(client_a.id),
             false,
-            Some("CC-Stealth"),
+            Some("Claude-Stealth"),
         )
         .await
         .unwrap();
@@ -1856,7 +1872,7 @@ mod knowledge_safety_tests {
             &[],
             Some(client_a.id),
             true,
-            Some("CC-Stealth"),
+            Some("Claude-Stealth"),
         )
         .await
         .unwrap();
@@ -1969,7 +1985,7 @@ mod knowledge_safety_tests {
             &[],
             Some(client_a.id),
             false,
-            Some("CC-Stealth"),
+            Some("Claude-Stealth"),
         )
         .await
         .unwrap();
@@ -2054,7 +2070,7 @@ mod auth_middleware_tests {
             token: MACH.to_string(),
             from_agent: "Test-Producer".to_string(),
             client: None,
-            agents: vec!["CC-Test".to_string()],
+            agents: vec!["Claude-Test".to_string()],
             scopes: scopes.into_iter().map(String::from).collect(),
         }
     }
@@ -2062,7 +2078,7 @@ mod auth_middleware_tests {
     fn agent_token() -> AgentToken {
         AgentToken {
             token: AGENT.to_string(),
-            from_agent: "CC-Test".to_string(),
+            from_agent: "Claude-Test".to_string(),
             client: None,
         }
     }
@@ -2198,7 +2214,7 @@ mod auth_middleware_tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(body_text(resp).await, "Agent:CC-Test");
+        assert_eq!(body_text(resp).await, "Agent:Claude-Test");
     }
 
     #[tokio::test]
@@ -2208,7 +2224,7 @@ mod auth_middleware_tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(body_text(resp).await, "Agent:CC-Test");
+        assert_eq!(body_text(resp).await, "Agent:Claude-Test");
     }
 
     #[tokio::test]
@@ -2712,7 +2728,7 @@ mod mcp_identity_transport_tests {
             .header("Accept", "application/json, text/event-stream")
             .header("mcp-session-id", &session_id)
             .header("Mcp-Protocol-Version", "2025-06-18")
-            .body(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_handoff","arguments":{"from_agent":"Forged-Agent","to_agent":"CC-HSR","title":"must reject","body":"must not reach the database"}}}"#)
+            .body(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_handoff","arguments":{"from_agent":"Forged-Agent","to_agent":"Claude-HSR","title":"must reject","body":"must not reach the database"}}}"#)
             .send()
             .await
             .unwrap();
@@ -2751,7 +2767,7 @@ mod live_websocket_transport_tests {
             agent_tokens: Arc::new(vec![
                 AgentToken {
                     token: CLAUDE.to_string(),
-                    from_agent: "CC-Stealth".to_string(),
+                    from_agent: "Claude-Stealth".to_string(),
                     client: None,
                 },
                 AgentToken {
@@ -2836,7 +2852,7 @@ mod live_websocket_transport_tests {
         let delivered: Value =
             serde_json::from_str(codex.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(delivered["type"], "message");
-        assert_eq!(delivered["message"]["from_agent"], "CC-Stealth");
+        assert_eq!(delivered["message"]["from_agent"], "Claude-Stealth");
         assert_eq!(delivered["message"]["trust"], "untrusted_peer_input");
         let message_id = delivered["message"]["message_id"].as_str().unwrap();
 
@@ -2960,7 +2976,7 @@ mod api_handoff_tests {
     async fn to_agent_outside_allowlist_is_forbidden() {
         let resp = app(pool().await)
             .oneshot(post_handoff(serde_json::json!({
-                "to_agent": "CC-Other",
+                "to_agent": "Claude-Other",
                 "title": "t",
                 "body": "b"
             })))
@@ -3017,7 +3033,7 @@ mod exact_agent_match_tests {
 
         let h_under = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "CC-Stealth",
+            "Claude-Stealth",
             Some(&underscore_agent),
             "normal",
             "action",
@@ -3030,7 +3046,7 @@ mod exact_agent_match_tests {
         .unwrap();
         let h_wild = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "CC-Stealth",
+            "Claude-Stealth",
             Some(&wildcard_agent),
             "normal",
             "action",
@@ -3135,8 +3151,8 @@ mod api_error_envelope_tests {
         assert_eq!(title.len(), MAX_TITLE_BYTES + 2);
 
         let resp = post_handoff(serde_json::json!({
-            "from_agent": "CC-Test",
-            "to_agent": "CC-Test",
+            "from_agent": "Claude-Test",
+            "to_agent": "Claude-Test",
             "title": title,
             "body": "regression cover for 01a0206b",
         }))
@@ -3153,7 +3169,7 @@ mod api_error_envelope_tests {
     /// code runs. That path used to bypass the envelope entirely.
     #[tokio::test]
     async fn malformed_body_is_rejected_in_the_same_envelope() {
-        let resp = post_handoff(serde_json::json!({"from_agent": "CC-Test"})).await;
+        let resp = post_handoff(serde_json::json!({"from_agent": "Claude-Test"})).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = json_body(resp).await;
         assert!(
@@ -3165,8 +3181,8 @@ mod api_error_envelope_tests {
     #[tokio::test]
     async fn empty_title_names_the_field() {
         let resp = post_handoff(serde_json::json!({
-            "from_agent": "CC-Test",
-            "to_agent": "CC-Test",
+            "from_agent": "Claude-Test",
+            "to_agent": "Claude-Test",
             "title": "   ",
             "body": "x",
         }))
@@ -3178,8 +3194,8 @@ mod api_error_envelope_tests {
     #[tokio::test]
     async fn bad_priority_names_the_field_and_lists_valid_values() {
         let resp = post_handoff(serde_json::json!({
-            "from_agent": "CC-Test",
-            "to_agent": "CC-Test",
+            "from_agent": "Claude-Test",
+            "to_agent": "Claude-Test",
             "title": "t",
             "body": "b",
             "priority": "extreme",
@@ -3203,7 +3219,7 @@ mod api_error_envelope_tests {
                 token: MACH.to_string(),
                 from_agent: "Test-Producer".to_string(),
                 client: None,
-                agents: vec!["CC-Test".to_string()],
+                agents: vec!["Claude-Test".to_string()],
                 scopes: vec!["handoff:create".to_string()],
             }]
             .into(),
@@ -3340,8 +3356,8 @@ mod briefing_operator_view_tests {
         let old = format!("older operator item {uniq}");
         let new = format!("newer operator item {uniq}");
 
-        let id_old = file(&pool, "CC-Stealth", Some(&operator), &old, 26).await;
-        let id_new = file(&pool, "CC-Cloud", Some(&operator), &new, 3).await;
+        let id_old = file(&pool, "Claude-Stealth", Some(&operator), &old, 26).await;
+        let id_new = file(&pool, "Claude-Cloud", Some(&operator), &new, 3).await;
 
         let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
             .await
@@ -3374,7 +3390,7 @@ mod briefing_operator_view_tests {
         // Deliberately same-day: the default-operator leg below asserts this
         // title is absent, which would also fail if the item were old enough
         // to surface under Stuck instead.
-        let id = file(&pool, "CC-Stealth", Some(&operator), &title, 0).await;
+        let id = file(&pool, "Claude-Stealth", Some(&operator), &title, 0).await;
 
         let (status, value) = post_briefing(
             pool.clone(),
@@ -3402,7 +3418,7 @@ mod briefing_operator_view_tests {
         let pool = pool().await;
         let uniq = Uuid::now_v7().simple().to_string();
         let operator = format!("Op-{uniq}");
-        let claimer = format!("CC-Claimer-{uniq}");
+        let claimer = format!("Claude-Claimer-{uniq}");
         let self_title = format!("self-addressed claim {uniq}");
         let machine_title = format!("[auto] sweep finding {uniq}");
 
@@ -3411,7 +3427,7 @@ mod briefing_operator_view_tests {
         let machine = ops_brain::repo::handoff_repo::create_machine_handoff(
             &pool,
             "Monitor",
-            &format!("CC-Target-{uniq}"),
+            &format!("Claude-Target-{uniq}"),
             "normal",
             "action",
             &machine_title,
@@ -3454,12 +3470,12 @@ mod briefing_operator_view_tests {
         let pool = pool().await;
         let uniq = Uuid::now_v7().simple().to_string();
         let operator = format!("Op-{uniq}");
-        let target = format!("CC-Target-{uniq}");
+        let target = format!("Claude-Target-{uniq}");
         let aged = format!("four days waiting {uniq}");
         let fresh = format!("filed today {uniq}");
 
-        let id_aged = file(&pool, "CC-Stealth", Some(&target), &aged, 4).await;
-        let id_fresh = file(&pool, "CC-Stealth", Some(&target), &fresh, 0).await;
+        let id_aged = file(&pool, "Claude-Stealth", Some(&target), &aged, 4).await;
+        let id_fresh = file(&pool, "Claude-Stealth", Some(&target), &fresh, 0).await;
 
         let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
             .await
@@ -3504,7 +3520,7 @@ mod briefing_operator_view_tests {
         let requested_as = filed_as.to_lowercase();
         assert_ne!(filed_as, requested_as, "the test needs the cases to differ");
         let title = format!("case-folded operator item {uniq}");
-        let id = file(&pool, "CC-Stealth", Some(&filed_as), &title, 1).await;
+        let id = file(&pool, "Claude-Stealth", Some(&filed_as), &title, 1).await;
 
         let value = briefings::generate_briefing_inner(&pool, "daily", &requested_as)
             .await
@@ -3522,7 +3538,7 @@ mod briefing_operator_view_tests {
     async fn self_addressed_detection_is_case_insensitive_in_the_database() {
         let pool = pool().await;
         let uniq = Uuid::now_v7().simple().to_string();
-        let agent = format!("CC-Claimer-{uniq}");
+        let agent = format!("Claude-Claimer-{uniq}");
         let title = format!("case-folded self claim {uniq}");
         // Same agent, different spelling: still self-addressed, so it must be
         // counted and must not be titled under Stuck.
@@ -3572,7 +3588,7 @@ mod briefing_operator_view_tests {
         let title = format!("notify FYI {uniq}");
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "CC-Stealth",
+            "Claude-Stealth",
             Some(&operator),
             "normal",
             "notify",
@@ -3622,7 +3638,7 @@ mod briefing_operator_view_tests {
         // Seen on the bus, but with nothing open: a completed handoff.
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "CC-Stealth",
+            "Claude-Stealth",
             Some(&operator),
             "normal",
             "action",

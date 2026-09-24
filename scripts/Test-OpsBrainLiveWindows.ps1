@@ -101,12 +101,12 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     $fixtureSecret = ConvertTo-SecureString $fixtureToken -AsPlainText -Force
     $claudeCredential = Join-Path $testDirectory 'claude.cred.xml'
     $codexCredential = Join-Path $testDirectory 'codex.cred.xml'
-    [PSCredential]::new('CC-CI', $fixtureSecret) | Export-Clixml -LiteralPath $claudeCredential
+    [PSCredential]::new('Claude-CI', $fixtureSecret) | Export-Clixml -LiteralPath $claudeCredential
     [PSCredential]::new('Codex-CI', $fixtureSecret) | Export-Clixml -LiteralPath $codexCredential
     $fixtureSecret = $null
 
     $validationOutput = & "$PSScriptRoot\read-ops-brain-agent-token.ps1" `
-        -AgentCredentialFile $claudeCredential -AgentName 'CC-CI' -ValidateOnly
+        -AgentCredentialFile $claudeCredential -AgentName 'Claude-CI' -ValidateOnly
     Assert-True ($null -eq $validationOutput) 'credential identity preflight emitted output'
     $mismatchRejected = $false
     try {
@@ -125,7 +125,7 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     $helperStartInfo.RedirectStandardError = $true
     foreach ($argument in @(
         '-NoLogo', '-NoProfile', '-NonInteractive', '-File', "$PSScriptRoot\read-ops-brain-agent-token.ps1",
-        '-AgentCredentialFile', $claudeCredential, '-AgentName', 'CC-CI'
+        '-AgentCredentialFile', $claudeCredential, '-AgentName', 'Claude-CI'
     )) { [void]$helperStartInfo.ArgumentList.Add($argument) }
     $helperProcess = [Diagnostics.Process]::Start($helperStartInfo)
     $helperOutputTask = $helperProcess.StandardOutput.ReadToEndAsync()
@@ -143,7 +143,7 @@ fs.writeFileSync(capture, `${config}\n---CONFIG-DIR---\n${configDirectory}\n---A
     $fileProcess = Start-Process -FilePath $pwsh -ArgumentList @(
         '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
         ('"{0}"' -f "$PSScriptRoot\read-ops-brain-agent-token.ps1"),
-        '-AgentCredentialFile', ('"{0}"' -f $claudeCredential), '-AgentName', 'CC-CI'
+        '-AgentCredentialFile', ('"{0}"' -f $claudeCredential), '-AgentName', 'Claude-CI'
     ) -RedirectStandardOutput $fileOutput -RedirectStandardError $fileError -Wait -PassThru
     Assert-True ($fileProcess.ExitCode -ne 0) 'credential helper accepted file-backed stdout'
     Assert-True ((Get-Item -LiteralPath $fileOutput).Length -eq 0) 'credential helper wrote to file-backed stdout'
@@ -162,7 +162,7 @@ param(
     [Parameter(Mandatory)][string]$Sentinel
 )
 try {
-    & $Helper -AgentCredentialFile $Credential -AgentName 'CC-CI'
+    & $Helper -AgentCredentialFile $Credential -AgentName 'Claude-CI'
     [IO.File]::WriteAllText($Sentinel, 'accepted', [Text.UTF8Encoding]::new($false))
 }
 catch {
@@ -198,11 +198,11 @@ catch {
     $claudeProfile = Join-Path $testDirectory 'claude-profile.json'
     $codexProfile = Join-Path $testDirectory 'codex-profile.json'
     & node "$PSScriptRoot\ops-brain-client" configure claude `
-        --live-url wss://ops-brain.example/live --agent CC-CI `
+        --live-url wss://ops-brain.example/live --agent Claude-CI `
         --credential-file $claudeCredential --label claude-ci --profile $claudeProfile
     Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to configure the Claude profile'
     & node "$PSScriptRoot\ops-brain-client" configure claude `
-        --live-url wss://ops-brain.example/live --agent CC-CI `
+        --live-url wss://ops-brain.example/live --agent Claude-CI `
         --credential-file $claudeCredential --label claude-ci --profile $claudeProfile
     Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to replace its owned Claude profile'
     & node "$PSScriptRoot\ops-brain-client" configure codex `
@@ -210,7 +210,7 @@ catch {
         --credential-file $codexCredential --label codex-ci --app-server-port 4600 --profile $codexProfile
     Assert-True ($LASTEXITCODE -eq 0) 'ops-brain-client failed to configure the Codex profile'
     $profileStatus = & "$PSScriptRoot\ops-brain-claude-live.ps1" -Mode Status -ProfileFile $claudeProfile
-    Assert-True (@($profileStatus) -contains 'agent: CC-CI') 'Claude launcher did not load its protected client profile'
+    Assert-True (@($profileStatus) -contains 'agent: Claude-CI') 'Claude launcher did not load its protected client profile'
     $codexProfileStatus = & "$PSScriptRoot\ops-brain-codex-live.ps1" -Mode Status -ProfileFile $codexProfile
     Assert-True (@($codexProfileStatus) -contains 'App Server: ws://127.0.0.1:4600') 'Codex launcher did not load its profile App Server port'
     $originalPath = $env:PATH
@@ -234,7 +234,7 @@ catch {
             '-NoLogo', '-NoProfile', '-File', "$PSScriptRoot\ops-brain-claude-live.ps1",
             '-LiveUrl', 'wss://ops-brain.example/live',
             '-AgentCredentialFile', $claudeCredential,
-            '-AgentName', 'CC-CI',
+            '-AgentName', 'Claude-CI',
             '-Label', 'claude-ci',
             '-StateDirectory', (Join-Path $testDirectory 'run-state'),
             # Trailing client arguments. These must reach $ClaudeArgs; with
@@ -267,7 +267,7 @@ catch {
     $server = $config.mcpServers.'ops-brain-live'
     Assert-True ($server.command -eq $pwsh) 'generated Claude MCP command is not the resolved PowerShell executable'
     Assert-True ($server.args -contains '-AgentName') 'generated Claude MCP config omitted AgentName'
-    Assert-True ($server.args -contains 'CC-CI') 'generated Claude MCP config omitted the expected identity'
+    Assert-True ($server.args -contains 'Claude-CI') 'generated Claude MCP config omitted the expected identity'
     Assert-True ($capture -notlike "*$fixtureToken*") 'credential contents leaked into Claude capture'
     $fixtureToken = $null
     Assert-True ($capture -notlike '*must-not-be-copied*') 'existing MCP credential was copied into the Claude overlay'
@@ -664,7 +664,7 @@ finally {
         $liveCapture = [IO.File]::ReadAllText($capture)
         Assert-True ($liveCapture -like '*--dangerously-load-development-channels*') 'attended Auto did not open the Channel'
         Assert-True ($liveCapture -like '*"ops-brain-live"*') 'attended Auto overlay omitted the Channel definition'
-        Assert-True ($probe.stderr -like "*ops-brain live: connecting as CC-CI (label claude-ci.scripts); adapter log: *claude-adapter.*.log*") "attended Auto banner missing or wrong: $($probe.stderr)"
+        Assert-True ($probe.stderr -like "*ops-brain live: connecting as Claude-CI (label claude-ci.scripts); adapter log: *claude-adapter.*.log*") "attended Auto banner missing or wrong: $($probe.stderr)"
         $liveConfigDirectory = (($liveCapture -split "`n---CONFIG-DIR---`n", 2)[1] -split "`n", 2)[0]
         Assert-True (-not (Test-Path -LiteralPath $liveConfigDirectory)) 'attended Auto left its overlay behind'
 

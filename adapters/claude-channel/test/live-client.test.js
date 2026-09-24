@@ -14,7 +14,7 @@ test('authenticates, registers, lists, sends, receives, and acknowledges', async
       url: 'ws://127.0.0.1:3000/live',
       token: 'test-agent-token',
       label: 'claude-test',
-      expectedAgent: 'CC-Stealth',
+      expectedAgent: 'Claude-Stealth',
     },
     { WebSocketImpl: FakeWebSocket, logger: () => {} },
   )
@@ -55,7 +55,7 @@ test('authenticates, registers, lists, sends, receives, and acknowledges', async
 
 test('does not queue requests while disconnected', async () => {
   const client = new LiveClient(
-    { url: 'ws://127.0.0.1:9/live', token: 'x', label: 'offline', expectedAgent: 'CC-Stealth' },
+    { url: 'ws://127.0.0.1:9/live', token: 'x', label: 'offline', expectedAgent: 'Claude-Stealth' },
     { WebSocketImpl: NeverOpenedWebSocket, logger: () => {} },
   )
   await assert.rejects(client.listPeers(), /offline/)
@@ -72,7 +72,7 @@ test('owned stop reports one terminal disconnect before closing the socket', asy
       url: 'ws://127.0.0.1:3000/live',
       token: 'test-agent-token',
       label: 'claude-test',
-      expectedAgent: 'CC-Stealth',
+      expectedAgent: 'Claude-Stealth',
     },
     { WebSocketImpl: FakeWebSocket, logger: () => {} },
   )
@@ -100,7 +100,7 @@ test('treats server and legacy unconfirmed delivery results as errors', async t 
       url: 'ws://127.0.0.1:3000/live',
       token: 'test-agent-token',
       label: 'claude-test',
-      expectedAgent: 'CC-Stealth',
+      expectedAgent: 'Claude-Stealth',
     },
     { WebSocketImpl: FakeWebSocket, logger: () => {} },
   )
@@ -128,7 +128,7 @@ test('fails closed when the token is bound to an unexpected identity', async t =
       url: 'ws://127.0.0.1:3000/live',
       token: 'wrong-sibling-token',
       label: 'claude-test',
-      expectedAgent: 'CC-Cloud',
+      expectedAgent: 'Claude-Cloud',
     },
     { WebSocketImpl: FakeWebSocket, logger: message => diagnostics.push(message) },
   )
@@ -138,7 +138,7 @@ test('fails closed when the token is bound to an unexpected identity', async t =
   const [error] = await fatal
   assert.equal(client.ready, false)
   assert.match(error.message, /bound identity does not match/)
-  assert.match(error.message, /CC-Cloud/)
+  assert.match(error.message, /Claude-Cloud/)
   assert.equal(client.fatal, error)
   assert.equal(diagnostics.length, 1)
   assert.match(diagnostics[0], /bound identity does not match/)
@@ -151,7 +151,7 @@ test('does not reconnect after an identity mismatch', async t => {
       url: 'ws://127.0.0.1:3000/live',
       token: 'wrong-sibling-token',
       label: 'claude-test',
-      expectedAgent: 'CC-Cloud',
+      expectedAgent: 'Claude-Cloud',
     },
     { WebSocketImpl: FakeWebSocket, logger: () => {} },
   )
@@ -172,7 +172,7 @@ test('reports the fatal reason instead of a generic offline error', async t => {
       url: 'ws://127.0.0.1:3000/live',
       token: 'wrong-sibling-token',
       label: 'claude-test',
-      expectedAgent: 'CC-Cloud',
+      expectedAgent: 'Claude-Cloud',
     },
     { WebSocketImpl: FakeWebSocket, logger: () => {} },
   )
@@ -212,7 +212,7 @@ class FakeWebSocket extends EventEmitter {
         protocol_version: 1,
         peer: {
           peer_id: CLAUDE_PEER,
-          agent_name: 'CC-Stealth',
+          agent_name: 'Claude-Stealth',
           adapter: 'claude_code',
           label: 'claude-test',
           metadata_trust: 'self_reported',

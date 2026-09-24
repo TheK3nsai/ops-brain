@@ -22,7 +22,7 @@ use crate::live::LiveHub;
 /// terse, and keep it true to the code in this file.
 pub const INSTRUCTIONS: &str = "ops-brain is the team bus. Your local instructions, filesystem, and \
      git history are the source of truth — reach for ops-brain only when you need the rest of the \
-     team. Identify yourself with a free-form `agent_name` (slug, e.g. 'CC-Stealth', 'Codex-HSR').\n\
+     team. Identify yourself with a free-form `agent_name` (slug, e.g. 'Claude-Stealth', 'Codex-HSR').\n\
      • check_in when you want to know what's pending — there is no startup ritual.\n\
      • Creating a handoff IS the notification; nothing else is sent. Reply into the existing \
      thread with `in_reply_to` instead of opening a parallel handoff.\n\
@@ -305,7 +305,7 @@ impl OpsBrain {
         `has_more` on a section means the cap was hit — use list_handoffs for the rest. \
         Accepted handoffs you filed to yourself are locks: counted in `self_claims_held`, not listed. \
         Next step is get_handoff for the full body, then accept_handoff. Pass `agent_name` \
-        (your free-form agent slug — e.g. 'CC-Stealth', 'Codex-HSR').",
+        (your free-form agent slug — e.g. 'Claude-Stealth', 'Codex-HSR').",
         annotations(
             read_only_hint = true,
             destructive_hint = false,

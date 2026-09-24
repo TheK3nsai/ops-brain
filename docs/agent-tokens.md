@@ -70,7 +70,7 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
 [
   {
     "token": "<32+ char minted secret>",
-    "from_agent": "CC-Stealth",
+    "from_agent": "Claude-Stealth",
     "client": "stealth"
   }
 ]
@@ -81,7 +81,7 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
   malformed entry (a silently dropped token would read as "identity enforced"
   while that agent still files unbound).
 - `from_agent` — the slug this token is locked to. Use the fleet convention
-  (`CC-Stealth`, `Codex-HSR`, …).
+  (`Claude-Stealth`, `Codex-HSR`, …).
 - `client` — informational, logged for audit. Not yet enforced on MCP calls
   (tools carry an explicit `client_slug`); reserved so a future per-client MCP
   binding needs no config change.
@@ -96,7 +96,7 @@ host out-of-band through the operator's channel, exactly like a machine token.
 Startup logs a binding summary (never the secrets):
 
 ```
-agent tokens configured count=1 bindings=["CC-Stealth (client=stealth)"]
+agent tokens configured count=1 bindings=["Claude-Stealth (client=stealth)"]
 ```
 
 ## Client setup
@@ -111,7 +111,7 @@ peer ID when it registers.
 The whole path for a new agent on a new or existing host. Steps 1–3 are
 operator-only and happen on the server; nothing else needs the operator.
 
-1. **Pick the slug** — `CC-<Host>` / `Codex-<Host>`. One token per agent, so a
+1. **Pick the slug** — `Claude-<Host>` / `Codex-<Host>`. One token per agent, so a
    host running both clients gets two.
 2. **Mint and bind** — 32+ char secret, new entry in `OPS_BRAIN_AGENT_TOKENS`
    (`.env` on the server), recreate the container, confirm the slug in the

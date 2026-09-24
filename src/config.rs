@@ -44,7 +44,7 @@ pub struct Config {
     /// Machine tokens for the REST ingestion path (http transport only).
     /// JSON array of scoped token bindings, e.g.:
     /// `[{"token":"...","from_agent":"Example-Host1","client":"example",
-    ///    "agents":["CC-Example"],"scopes":["create","read"]}]`
+    ///    "agents":["Claude-Example"],"scopes":["create","read"]}]`
     /// Each token is limited to `POST /api/handoff` ("create" scope) and/or
     /// `GET /api/pending` ("read" scope) for the listed agents — never /mcp or /live.
     #[arg(long, env = "OPS_BRAIN_MACHINE_TOKENS")]
@@ -52,7 +52,7 @@ pub struct Config {
 
     /// Per-agent tokens for interactive MCP + live sessions (http only).
     /// JSON array of identity-bound token bindings, e.g.:
-    /// `[{"token":"...","from_agent":"CC-Stealth","client":"stealth"}]`
+    /// `[{"token":"...","from_agent":"Claude-Stealth","client":"stealth"}]`
     /// Each token reaches `/mcp` and the ephemeral `/live` WebSocket (never REST)
     /// with its `from_agent` bound server-side: MCP write tools reject a
     /// mismatching claimed identity. The main bearer stays unbound as operator

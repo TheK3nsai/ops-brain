@@ -9,7 +9,7 @@ const TARGET = '019cd123-1234-7123-8123-123456789abd'
 test('advertises the Claude Channel capability and proxies its MCP tools', async t => {
   const calls = []
   const live = {
-    peer: { peer_id: '019cd123-1234-7123-8123-123456789abc', agent_name: 'CC-Stealth', adapter: 'claude_code', label: 'claude.ops-brain', metadata_trust: 'self_reported' },
+    peer: { peer_id: '019cd123-1234-7123-8123-123456789abc', agent_name: 'Claude-Stealth', adapter: 'claude_code', label: 'claude.ops-brain', metadata_trust: 'self_reported' },
     async listPeers() {
       return { peers: [{ peer_id: TARGET, agent_name: 'Codex-Stealth', adapter: 'codex', label: 'codex' }] }
     },
@@ -37,7 +37,7 @@ test('advertises the Claude Channel capability and proxies its MCP tools', async
   assert.equal(listed.peers[0].peer_id, TARGET)
   // A session must be able to tell its own peer from a sibling under the same
   // identity, and metadata_trust is server-side vocabulary that stays out.
-  assert.deepEqual(listed.self, { peer_id: '019cd123-1234-7123-8123-123456789abc', agent_name: 'CC-Stealth', adapter: 'claude_code', label: 'claude.ops-brain' })
+  assert.deepEqual(listed.self, { peer_id: '019cd123-1234-7123-8123-123456789abc', agent_name: 'Claude-Stealth', adapter: 'claude_code', label: 'claude.ops-brain' })
   assert.match(client.getInstructions(), /kind=lane_status/)
   const sent = await client.callTool({
     name: 'send_live_message',

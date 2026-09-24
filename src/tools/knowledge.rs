@@ -231,7 +231,7 @@ pub struct AddKnowledgeParams {
     /// Skip duplicate detection check. Set to true if you've already seen the warning and want to create anyway.
     pub force: Option<bool>,
     /// Your agent identifier (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "CC-Stealth", "Codex-HSR". Immutable
+    /// Examples: "Claude-Stealth", "Codex-HSR". Immutable
     /// once set — provenance cannot be rewritten via the tool surface.
     #[serde(alias = "author_cc")]
     pub author: String,
@@ -981,7 +981,7 @@ mod tests {
             client_id: None,
             cross_client_safe: false,
             last_verified_at: last_verified,
-            author: Some("CC-Stealth".to_string()),
+            author: Some("Claude-Stealth".to_string()),
             created_at: created,
             updated_at: created,
         }
@@ -1059,7 +1059,7 @@ mod tests {
         let obj = json[0].as_object().expect("should be object");
         assert_eq!(
             obj.get("author"),
-            Some(&serde_json::Value::String("CC-Stealth".to_string())),
+            Some(&serde_json::Value::String("Claude-Stealth".to_string())),
             "author should survive serialization"
         );
     }
@@ -1069,9 +1069,9 @@ mod tests {
         let params: AddKnowledgeParams = serde_json::from_value(serde_json::json!({
             "title": "legacy alias",
             "content": "body",
-            "author_cc": "CC-Stealth"
+            "author_cc": "Claude-Stealth"
         }))
         .unwrap();
-        assert_eq!(params.author, "CC-Stealth");
+        assert_eq!(params.author, "Claude-Stealth");
     }
 }

@@ -55,7 +55,7 @@ recognized:
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `OPS_BRAIN_LIVE_URL` | yes | Exact `wss://host/live` endpoint. Plain `ws://` is accepted only on loopback for development. |
-| `OPS_BRAIN_EXPECTED_AGENT` | yes | Exact server-bound identity expected after registration, such as `CC-Stealth`; a mismatch disconnects fail-closed. |
+| `OPS_BRAIN_EXPECTED_AGENT` | yes | Exact server-bound identity expected after registration, such as `Claude-Stealth`; a mismatch disconnects fail-closed. |
 | `OPS_BRAIN_AGENT_TOKEN_FILE` | recommended | Protected file containing the identity-bound bearer. |
 | `OPS_BRAIN_AGENT_TOKEN` | alternative | Identity-bound bearer inherited by the adapter; mutually exclusive with the file. |
 | `OPS_BRAIN_AGENT_TOKEN_HELPER_JSON` | launcher-internal alternative | JSON command array for a short-lived credential helper; mutually exclusive with the other token sources. |

@@ -24,8 +24,8 @@ rather than a missing TTY. Do not script, cron, or service-wrap this lane.
 
 | Host class | Platform | Claude identity | Codex identity | Launcher family |
 |---|---|---|---|---|
-| Linux host | Linux | `CC-<host>` | `Codex-<host>` | Bash |
-| Windows host | Windows | `CC-<host>` | `Codex-<host>` | PowerShell |
+| Linux host | Linux | `Claude-<host>` | `Codex-<host>` | Bash |
+| Windows host | Windows | `Claude-<host>` | `Codex-<host>` | PowerShell |
 
 Every row uses two different per-agent credentials. Never point both client
 launchers at one token, reuse the main bearer, or copy a token between hosts.
@@ -139,8 +139,8 @@ path, URL, exact identity, and non-sensitive label—never the bearer:
 ```bash
 ops-brain-client configure claude \
   --live-url wss://ops-brain.example/live \
-  --agent CC-Example \
-  --credential-file "$HOME/.config/ops-brain/agent-token-cc-example" \
+  --agent Claude-Example \
+  --credential-file "$HOME/.config/ops-brain/agent-token-claude-example" \
   --label claude-example
 ops-brain-client configure codex \
   --live-url wss://ops-brain.example/live \
@@ -290,7 +290,7 @@ For everyday ordinary sessions, use `claude` or `codex` directly.
 A live launch prints one line before the client takes the terminal:
 
 ```
-ops-brain live: connecting as CC-Example (label claude-example.<cwd>); adapter log: ...
+ops-brain live: connecting as Claude-Example (label claude-example.<cwd>); adapter log: ...
 ```
 
 The label now carries the working directory's basename, folded to the
@@ -318,7 +318,7 @@ session. The operator should paste the token into `Read-Host`; never put it in
 the command line, transcript, environment, or this repository:
 
 ```powershell
-$identity = 'CC-Example' # select the exact identity for this file
+$identity = 'Claude-Example' # select the exact identity for this file
 [IO.Directory]::CreateDirectory("$HOME\.secrets") | Out-Null
 $secret = Read-Host "Agent token for $identity" -AsSecureString
 $credential = [PSCredential]::new($identity, $secret)
@@ -356,8 +356,8 @@ Configure profiles after creating the two DPAPI credentials:
 
 ```powershell
 ops-brain-client configure claude `
-  --live-url wss://ops-brain.example/live --agent CC-Example `
-  --credential-file "$HOME\.secrets\ops-brain-CC-Example.cred.xml" `
+  --live-url wss://ops-brain.example/live --agent Claude-Example `
+  --credential-file "$HOME\.secrets\ops-brain-Claude-Example.cred.xml" `
   --label claude-example
 ops-brain-client configure codex `
   --live-url wss://ops-brain.example/live --agent Codex-Example `

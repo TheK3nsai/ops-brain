@@ -89,7 +89,7 @@ printf '%s\n' \
     'exit 0' >"$TEST_DIR/fake-bin/claude"
 chmod +x "$TEST_DIR/fake-bin/claude"
 
-claude_dry=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth "$BIN_DIR/ops-brain-claude-live" --dry-run)
+claude_dry=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Claude-Stealth "$BIN_DIR/ops-brain-claude-live" --dry-run)
 assert_contains "$claude_dry" 'CLAUDE_CONFIG_DIR=<private-overlay>'
 codex_dry=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Codex-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state" "$BIN_DIR/ops-brain-codex-live" --dry-run)
 assert_contains "$codex_dry" 'token redacted'
@@ -105,7 +105,7 @@ XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_AG
     XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
     OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/claude-state" \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
-    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Claude-Stealth \
     "$BIN_DIR/ops-brain-claude-live"
 overlay=$(<"$CLAUDE_CAPTURE.dir")
 [[ ! -e $overlay ]] || fail 'Claude per-launch config overlay was not removed'
@@ -127,7 +127,7 @@ XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_TE
     CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
     OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/claude-state" \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
-    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Claude-Stealth \
     env -u XDG_RUNTIME_DIR "$BIN_DIR/ops-brain-claude-live"
 fallback_overlay=$(<"$TEST_DIR/fallback-overlay.json.dir")
 [[ ! -e $fallback_overlay ]] || fail 'fallback Claude overlay was not removed'
@@ -137,7 +137,7 @@ fallback_overlay=$(<"$TEST_DIR/fallback-overlay.json.dir")
 ln -s -- "$TOKEN_FILE" "$TEST_DIR/token-symlink"
 if PATH="$TEST_DIR/fake-bin:$PATH" XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
-    OPS_BRAIN_AGENT_TOKEN_FILE="$TEST_DIR/token-symlink" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TEST_DIR/token-symlink" OPS_BRAIN_EXPECTED_AGENT=Claude-Stealth \
     "$BIN_DIR/ops-brain-claude-live" >"$TEST_DIR/symlink-token.out" 2>&1; then
     fail 'Claude launcher accepted a symlinked credential file'
 fi
@@ -146,7 +146,7 @@ assert_contains "$(<"$TEST_DIR/symlink-token.out")" 'must be a regular file, not
 # The adapter log directory is the only signal a Claude live channel failed to
 # bind, so its path must be discoverable without launching.
 claude_status=$(XDG_CONFIG_HOME="$UNCONFIGURED_XDG" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
-    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Claude-Stealth \
     OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/status-state" \
     "$BIN_DIR/ops-brain-claude-live" --status)
 assert_contains "$claude_status" "$TEST_DIR/status-state/claude-adapter.*.log"
@@ -159,7 +159,7 @@ ln -s -- "$TEST_DIR/state-target" "$TEST_DIR/state-symlink"
 if PATH="$TEST_DIR/fake-bin:$PATH" XDG_RUNTIME_DIR="$TEST_DIR/runtime" \
     CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" \
     OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live \
-    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=CC-Stealth \
+    OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE" OPS_BRAIN_EXPECTED_AGENT=Claude-Stealth \
     OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/state-symlink" \
     "$BIN_DIR/ops-brain-claude-live" >"$TEST_DIR/symlink-state.out" 2>&1; then
     fail 'Claude launcher accepted a symlinked state directory'
@@ -172,11 +172,11 @@ fi
 assert_contains "$(<"$TEST_DIR/unconfigured-doctor.out")" 'claude profile: not configured'
 
 XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" configure claude \
-    --live-url wss://ops-brain.example/live --agent CC-Stealth \
+    --live-url wss://ops-brain.example/live --agent Claude-Stealth \
     --credential-file "$TOKEN_FILE" --label claude-stealth
 # Reconfiguration replaces the owned regular profile without changing its mode.
 XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" configure claude \
-    --live-url wss://ops-brain.example/live --agent CC-Stealth \
+    --live-url wss://ops-brain.example/live --agent Claude-Stealth \
     --credential-file "$TOKEN_FILE" --label claude-stealth
 claude_only_doctor=$(XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" doctor)
 assert_contains "$claude_only_doctor" 'codex profile: not configured'
@@ -184,7 +184,7 @@ XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-client" configure
     --live-url wss://ops-brain.example/live --agent Codex-Stealth \
     --credential-file "$TOKEN_FILE" --label codex-stealth --app-server-port 4600
 profile_status=$(XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-claude" --status)
-assert_contains "$profile_status" 'agent:   CC-Stealth'
+assert_contains "$profile_status" 'agent:   Claude-Stealth'
 assert_contains "$profile_status" 'label:   claude-stealth'
 codex_profile_status=$(XDG_CONFIG_HOME="$TEST_DIR/profile-config" "$BIN_DIR/ops-brain-codex" --status)
 assert_contains "$codex_profile_status" 'agent:      Codex-Stealth'
@@ -202,7 +202,7 @@ override_doctor=$(OPS_BRAIN_CLAUDE_PROFILE="$claude_profile" \
 assert_contains "$override_doctor" "claude profile: $claude_profile"
 assert_contains "$override_doctor" "codex profile: $codex_profile"
 override_claude_status=$(OPS_BRAIN_CLAUDE_PROFILE="$claude_profile" "$BIN_DIR/ops-brain-claude" --status)
-assert_contains "$override_claude_status" 'agent:   CC-Stealth'
+assert_contains "$override_claude_status" 'agent:   Claude-Stealth'
 override_codex_status=$(OPS_BRAIN_CODEX_PROFILE="$codex_profile" "$BIN_DIR/ops-brain-codex" --status)
 assert_contains "$override_codex_status" 'agent:      Codex-Stealth'
 
@@ -316,7 +316,7 @@ chmod +x "$TEST_DIR/plain-bin/claude" "$TEST_DIR/plain-bin/codex"
 # XDG_CONFIG_HOME is pinned so the developer's real profile cannot leak into
 # the label or identity under test.
 LIVE_ENV=(OPS_BRAIN_LIVE_URL=wss://ops-brain.example/live OPS_BRAIN_AGENT_TOKEN_FILE="$TOKEN_FILE"
-    OPS_BRAIN_EXPECTED_AGENT=CC-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/auto-state"
+    OPS_BRAIN_EXPECTED_AGENT=Claude-Stealth OPS_BRAIN_LIVE_STATE_DIR="$TEST_DIR/auto-state"
     CLAUDE_CONFIG_DIR="$TEST_DIR/claude-launch-base" XDG_RUNTIME_DIR="$TEST_DIR/runtime"
     XDG_CONFIG_HOME="$UNCONFIGURED_XDG")
 
@@ -451,7 +451,7 @@ if python3 -c 'import pty' 2>/dev/null; then
         -- "$BIN_DIR/ops-brain-claude" --auto || fail 'attended --auto launch failed'
     assert_contains "$(<"$capture.args")" '--dangerously-load-development-channels'
     assert_contains "$(<"$capture")" '"ops-brain-live"'
-    assert_contains "$(<"$capture.pty")" 'ops-brain live: connecting as CC-Stealth'
+    assert_contains "$(<"$capture.pty")" 'ops-brain live: connecting as Claude-Stealth'
     [[ ! -e $(<"$capture.dir") ]] || fail 'attended --auto left its overlay behind'
 
     # Ordering, not presence. The assertion above passes whether the channel
@@ -459,7 +459,7 @@ if python3 -c 'import pty' 2>/dev/null; then
     # the client now, and anything the launcher appends after it stops being
     # an option. That yields a session that announced itself live with no
     # Channel loaded and no MCP servers, which is the one failure this
-    # launcher exists to prevent. Found by CC-Cloud reviewing #119.
+    # launcher exists to prevent. Found by Claude-Cloud reviewing #119.
     capture="$TEST_DIR/auto-tty-endopts"
     pty_launch '' "$capture.pty" PATH="$TEST_DIR/fake-bin:$PATH" OPS_BRAIN_TEST_CAPTURE="$capture" "${LIVE_ENV[@]}" \
         -- "$BIN_DIR/ops-brain-claude" --auto -- --not-a-flag || fail 'attended --auto -- launch failed'

@@ -184,7 +184,7 @@ pub async fn generate_briefing_inner(
     // An empty operator queue has two very different causes: nothing needs the
     // human, or the caller named a slug no handoff has ever used. Both render
     // as silence otherwise, and silence is exactly what this section exists to
-    // break. `validate_agent_name` only checks shape — "CC-Stelth" is a
+    // break. `validate_agent_name` only checks shape — "Claude-Stelth" is a
     // perfectly valid slug that matches nothing. Only pay for the lookup when
     // the queue is actually empty; on DB error assume seen rather than cry wolf.
     let operator_seen = if open.iter().any(|r| r.is_operator) {
@@ -337,8 +337,8 @@ fn triage(
         }
         stuck_shown += 1;
         let key = row.to_agent.as_deref().unwrap_or(UNADDRESSED);
-        // Case-insensitive, matching how the SQL compares agents: `CC-Cloud`
-        // and `cc-cloud` are one agent and must not split into two groups.
+        // Case-insensitive, matching how the SQL compares agents: `Claude-Cloud`
+        // and `claude-cloud` are one agent and must not split into two groups.
         // First spelling seen wins as the display name.
         match groups
             .iter_mut()
@@ -662,7 +662,7 @@ mod tests {
         vec![
             row(
                 "019e0d79-3a7f-7902-86cc-db4a573c1071",
-                "CC-Stealth",
+                "Claude-Stealth",
                 Some(operator),
                 "pending",
                 "high",
@@ -674,8 +674,8 @@ mod tests {
             ),
             row(
                 "019a1111-0000-7000-8000-000000000001",
-                "CC-Cloud",
-                Some("CC-Cloud"),
+                "Claude-Cloud",
+                Some("Claude-Cloud"),
                 "accepted",
                 "normal",
                 "Claiming the certificate rotation",
@@ -687,7 +687,7 @@ mod tests {
             row(
                 "019b2222-0000-7000-8000-000000000002",
                 "Monitor",
-                Some("CC-Cloud"),
+                Some("Claude-Cloud"),
                 "pending",
                 "normal",
                 "[auto] disk above 80% on the media volume",
@@ -698,8 +698,8 @@ mod tests {
             ),
             row(
                 "019c3333-0000-7000-8000-000000000003",
-                "CC-Stealth",
-                Some("CC-Cloud"),
+                "Claude-Stealth",
+                Some("Claude-Cloud"),
                 "accepted",
                 "normal",
                 "Deploy the briefing change",
@@ -722,7 +722,7 @@ mod tests {
             ),
             row(
                 "019e5555-0000-7000-8000-000000000005",
-                "CC-Cloud",
+                "Claude-Cloud",
                 Some(operator),
                 "pending",
                 "normal",
@@ -735,7 +735,7 @@ mod tests {
             // Fresh: below the pending threshold, must not reach Stuck.
             row(
                 "019f6666-0000-7000-8000-000000000006",
-                "CC-Stealth",
+                "Claude-Stealth",
                 Some("Codex-HSR"),
                 "pending",
                 "normal",
@@ -805,7 +805,7 @@ mod tests {
             ]
         );
         assert_eq!(s.stuck.total, 2);
-        assert_eq!(s.stuck.groups[0].to_agent, "CC-Cloud");
+        assert_eq!(s.stuck.groups[0].to_agent, "Claude-Cloud");
         assert_eq!(s.stuck.groups[1].to_agent, UNADDRESSED);
     }
 
@@ -838,7 +838,7 @@ mod tests {
         for i in 0..(OPERATOR_SECTION_CAP + 5) {
             rows.push(row(
                 &format!("019e0d79-3a7f-7902-86cc-{:012x}", i),
-                "CC-Stealth",
+                "Claude-Stealth",
                 Some("Operator"),
                 "pending",
                 "normal",
@@ -920,8 +920,8 @@ mod tests {
 
 ## Waiting on you (Operator)
 
-- 26d · high · Blocked: need the IT budget figure — from CC-Stealth · 019e0d79
-- 3d · Approve the switch decommission — from CC-Cloud · 019e5555
+- 26d · high · Blocked: need the IT budget figure — from Claude-Stealth · 019e0d79
+- 3d · Approve the switch decommission — from Claude-Cloud · 019e5555
 
 ## Failing checks (machine findings rated high or critical)
 
@@ -929,15 +929,15 @@ No high-priority machine finding is open.
 
 ## Stuck (pending open > 3d, accepted open > 7d)
 
-**CC-Cloud**
-- open 11d · accepted · Deploy the briefing change — from CC-Stealth · 019c3333
+**Claude-Cloud**
+- open 11d · accepted · Deploy the briefing change — from Claude-Stealth · 019c3333
 
 **(unaddressed)**
 - open 4d · pending · low · Anyone up for reviewing the adapter tests — from Codex-HSR · 019d4444
 
 ## Open set at a glance
 
-- Open by recipient: CC-Cloud 3, Operator 2, (unaddressed) 1, Codex-HSR 1
+- Open by recipient: Claude-Cloud 3, Operator 2, (unaddressed) 1, Codex-HSR 1
 - Self-addressed claims: 1 open, oldest 20d
 - Machine findings: 1 open (1 still firing), oldest 14d
 ";
@@ -1003,10 +1003,10 @@ No high-priority machine finding is open.
     /// not good news, and must not render as "nothing is waiting on you".
     #[test]
     fn an_unknown_operator_slug_is_flagged_not_reported_as_a_clear_queue() {
-        let s = triage(&[], "CC-Stelth", false, &now());
+        let s = triage(&[], "Claude-Stelth", false, &now());
         let md = build_markdown(false, &now(), &summary(), &s);
         assert!(
-            md.contains("No handoff has ever named `CC-Stelth` — check the operator slug."),
+            md.contains("No handoff has ever named `Claude-Stelth` — check the operator slug."),
             "got {md}"
         );
         assert!(!md.contains("Nothing is waiting on you."));
@@ -1022,8 +1022,8 @@ No high-priority machine finding is open.
             .map(|i| {
                 row(
                     &format!("019c3333-0000-7000-8000-{i:012x}"),
-                    "CC-Stealth",
-                    Some("CC-Cloud"),
+                    "Claude-Stealth",
+                    Some("Claude-Cloud"),
                     "pending",
                     "normal",
                     "piled up",
@@ -1050,8 +1050,8 @@ No high-priority machine finding is open.
         let rows = vec![
             row(
                 "019c3333-0000-7000-8000-000000000001",
-                "CC-Stealth",
-                Some("CC-Cloud"),
+                "Claude-Stealth",
+                Some("Claude-Cloud"),
                 "pending",
                 "normal",
                 "first spelling",
@@ -1062,8 +1062,8 @@ No high-priority machine finding is open.
             ),
             row(
                 "019c3333-0000-7000-8000-000000000002",
-                "CC-Stealth",
-                Some("cc-cloud"),
+                "Claude-Stealth",
+                Some("claude-cloud"),
                 "pending",
                 "normal",
                 "lowercase sibling",
@@ -1076,7 +1076,7 @@ No high-priority machine finding is open.
         let s = triage(&rows, "Operator", true, &now());
         assert_eq!(s.stuck.groups.len(), 1, "one agent, one group");
         assert_eq!(
-            s.stuck.groups[0].to_agent, "CC-Cloud",
+            s.stuck.groups[0].to_agent, "Claude-Cloud",
             "first spelling wins"
         );
         assert_eq!(s.stuck.groups[0].items.len(), 2);

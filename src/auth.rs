@@ -493,7 +493,7 @@ mod tests {
     fn entry(token: &str) -> String {
         format!(
             r#"{{"token":"{token}","from_agent":"Example-Host1","client":"example",
-                "agents":["CC-Example"],"scopes":["create","read"]}}"#
+                "agents":["Claude-Example"],"scopes":["create","read"]}}"#
         )
     }
 
@@ -512,8 +512,8 @@ mod tests {
         assert_eq!(tokens[0].from_agent, "Example-Host1");
         assert!(tokens[0].has_scope("create"));
         assert!(tokens[0].has_scope("read"));
-        assert!(tokens[0].allows_agent("cc-example")); // case-insensitive
-        assert!(!tokens[0].allows_agent("CC-Other"));
+        assert!(tokens[0].allows_agent("claude-example")); // case-insensitive
+        assert!(!tokens[0].allows_agent("Claude-Other"));
     }
 
     #[test]
@@ -548,14 +548,14 @@ mod tests {
     #[test]
     fn parse_rejects_empty_and_unknown_scopes() {
         let raw = format!(
-            r#"[{{"token":"{T}","from_agent":"Example-Host1","agents":["CC-Example"],"scopes":[]}}]"#
+            r#"[{{"token":"{T}","from_agent":"Example-Host1","agents":["Claude-Example"],"scopes":[]}}]"#
         );
         assert!(parse_machine_tokens(Some(&raw), None)
             .unwrap_err()
             .contains("no scopes"));
 
         let raw = format!(
-            r#"[{{"token":"{T}","from_agent":"Example-Host1","agents":["CC-Example"],"scopes":["admin"]}}]"#
+            r#"[{{"token":"{T}","from_agent":"Example-Host1","agents":["Claude-Example"],"scopes":["admin"]}}]"#
         );
         assert!(parse_machine_tokens(Some(&raw), None)
             .unwrap_err()
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn parse_rejects_bad_agent_names() {
         let raw = format!(
-            r#"[{{"token":"{T}","from_agent":"bad agent","agents":["CC-Example"],"scopes":["create"]}}]"#
+            r#"[{{"token":"{T}","from_agent":"bad agent","agents":["Claude-Example"],"scopes":["create"]}}]"#
         );
         assert!(parse_machine_tokens(Some(&raw), None).is_err());
     }
@@ -601,7 +601,7 @@ mod tests {
     const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // 32 chars, distinct from T
 
     fn agent_entry(token: &str) -> String {
-        format!(r#"{{"token":"{token}","from_agent":"CC-Example","client":"example"}}"#)
+        format!(r#"{{"token":"{token}","from_agent":"Claude-Example","client":"example"}}"#)
     }
 
     fn machine_list() -> Vec<MachineToken> {
@@ -621,7 +621,7 @@ mod tests {
         let raw = format!("[{}]", agent_entry(A));
         let tokens = parse_agent_tokens(Some(&raw), Some("main-token"), &[]).unwrap();
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].from_agent, "CC-Example");
+        assert_eq!(tokens[0].from_agent, "Claude-Example");
         assert_eq!(tokens[0].client.as_deref(), Some("example"));
     }
 
@@ -669,10 +669,10 @@ mod tests {
         // A padded config slug must be stored trimmed, or check_bound_identity
         // (which compares against the trimmed claim with no further trim) would
         // lock the agent out of filing as itself.
-        let raw = format!("[{}]", agent_entry_named(A, "  CC-Stealth  "));
+        let raw = format!("[{}]", agent_entry_named(A, "  Claude-Stealth  "));
         let tokens = parse_agent_tokens(Some(&raw), None, &[]).unwrap();
-        assert_eq!(tokens[0].from_agent, "CC-Stealth");
-        assert!(check_bound_identity(Some(&tokens[0].from_agent), "CC-Stealth").is_ok());
+        assert_eq!(tokens[0].from_agent, "Claude-Stealth");
+        assert!(check_bound_identity(Some(&tokens[0].from_agent), "Claude-Stealth").is_ok());
     }
 
     fn agent_entry_named(token: &str, from_agent: &str) -> String {
@@ -688,15 +688,15 @@ mod tests {
 
     #[test]
     fn bound_identity_matches_case_insensitively() {
-        assert!(check_bound_identity(Some("CC-Stealth"), "cc-stealth").is_ok());
-        assert!(check_bound_identity(Some("CC-Stealth"), "CC-Stealth").is_ok());
+        assert!(check_bound_identity(Some("Claude-Stealth"), "claude-stealth").is_ok());
+        assert!(check_bound_identity(Some("Claude-Stealth"), "Claude-Stealth").is_ok());
     }
 
     #[test]
     fn bound_identity_rejects_mismatch() {
-        let err = check_bound_identity(Some("CC-Stealth"), "CC-Cloud").unwrap_err();
-        assert!(err.contains("CC-Stealth"));
-        assert!(err.contains("CC-Cloud"));
+        let err = check_bound_identity(Some("Claude-Stealth"), "Claude-Cloud").unwrap_err();
+        assert!(err.contains("Claude-Stealth"));
+        assert!(err.contains("Claude-Cloud"));
     }
 
     // CallerClass::bound_agent
@@ -705,12 +705,12 @@ mod tests {
     fn caller_class_bound_agent() {
         let agent = AgentToken {
             token: A.to_string(),
-            from_agent: "CC-Example".to_string(),
+            from_agent: "Claude-Example".to_string(),
             client: None,
         };
         assert_eq!(
             CallerClass::Agent(Arc::new(agent)).bound_agent(),
-            Some("CC-Example")
+            Some("Claude-Example")
         );
         assert_eq!(CallerClass::Full.bound_agent(), None);
         let machine = parse_machine_tokens(Some(&format!("[{}]", entry(T))), None).unwrap();

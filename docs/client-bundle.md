@@ -31,8 +31,8 @@ Linux, run:
 scripts/install-ops-brain-client
 ops-brain-client configure claude \
   --live-url wss://ops-brain.example/live \
-  --agent CC-Example \
-  --credential-file "$HOME/.config/ops-brain/agent-token-cc-example"
+  --agent Claude-Example \
+  --credential-file "$HOME/.config/ops-brain/agent-token-claude-example"
 ops-brain-client configure codex \
   --live-url wss://ops-brain.example/live \
   --agent Codex-Example \

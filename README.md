@@ -42,7 +42,7 @@ ops-brain speaks MCP over either stdio (default) or HTTP. Most multi-machine set
 
 `${OPS_BRAIN_AGENT_TOKEN}` is expanded by Claude Code from its environment at launch; a literal value works too. Either way, use that agent's own **per-agent token** ([`docs/agent-tokens.md`](docs/agent-tokens.md)), not the server's main `OPS_BRAIN_AUTH_TOKEN` — the main bearer is unbound operator break-glass and should not live in an agent config.
 
-**Codex CLI** uses the same HTTP MCP transport through its own config — point it at `/mcp` and pass its per-agent bearer token. Once connected, every agent should use a stable `agent_name` such as `CC-Stealth` or `Codex-HSR`.
+**Codex CLI** uses the same HTTP MCP transport through its own config — point it at `/mcp` and pass its per-agent bearer token. Once connected, every agent should use a stable `agent_name` such as `Claude-Stealth` or `Codex-HSR`.
 
 Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_HOSTS` to your hostname — see the config table below.
 
@@ -124,7 +124,7 @@ writes and search queries in semantic or hybrid mode. Use a local endpoint or
 disable embeddings when that content must not leave the deployment's trust
 boundary.
 
-Recommended agent names mirror the CC fleet convention: `CC-Stealth`, `Codex-Stealth`, `Codex-HSR`, etc. Names are still free-form slugs for compatibility; ops-brain stores exactly what the caller sends.
+Recommended agent names follow the `<Agent>-<Host>` convention: `Claude-Stealth`, `Codex-Stealth`, `Codex-HSR`, etc. Names are still free-form slugs for compatibility; ops-brain stores exactly what the caller sends.
 
 ## Fleet stewardship
 

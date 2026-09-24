@@ -9,7 +9,7 @@ test('loads a secure live URL and token from environment only', () => {
   const config = loadConfig({
     OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
     OPS_BRAIN_AGENT_TOKEN: 'agent-token',
-    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+    OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
     OPS_BRAIN_LIVE_LABEL: 'claude.one',
   })
   assert.equal(config.url, 'wss://ops.example.com/live')
@@ -19,11 +19,11 @@ test('loads a secure live URL and token from environment only', () => {
 
 test('permits plaintext WebSocket only on loopback', () => {
   assert.equal(
-    loadConfig({ OPS_BRAIN_LIVE_URL: 'ws://127.0.0.1:3000/live', OPS_BRAIN_AGENT_TOKEN: 'x', OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth' }).url,
+    loadConfig({ OPS_BRAIN_LIVE_URL: 'ws://127.0.0.1:3000/live', OPS_BRAIN_AGENT_TOKEN: 'x', OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth' }).url,
     'ws://127.0.0.1:3000/live',
   )
   assert.throws(
-    () => loadConfig({ OPS_BRAIN_LIVE_URL: 'ws://ops.example.com/live', OPS_BRAIN_AGENT_TOKEN: 'x', OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth' }),
+    () => loadConfig({ OPS_BRAIN_LIVE_URL: 'ws://ops.example.com/live', OPS_BRAIN_AGENT_TOKEN: 'x', OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth' }),
     /must use wss/,
   )
 })
@@ -34,13 +34,13 @@ test('rejects credentials, query strings, wrong paths, and unsafe labels', () =>
     'wss://ops.example.com/live?token=nope',
     'wss://ops.example.com/mcp',
   ]) {
-    assert.throws(() => loadConfig({ OPS_BRAIN_LIVE_URL: url, OPS_BRAIN_AGENT_TOKEN: 'x', OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth' }))
+    assert.throws(() => loadConfig({ OPS_BRAIN_LIVE_URL: url, OPS_BRAIN_AGENT_TOKEN: 'x', OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth' }))
   }
   assert.throws(() =>
     loadConfig({
       OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
       OPS_BRAIN_AGENT_TOKEN: 'x',
-      OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+      OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
       OPS_BRAIN_LIVE_LABEL: 'label with spaces',
     }),
   )
@@ -55,7 +55,7 @@ test('loads a protected token file without exposing it through the parent enviro
   const config = loadConfig({
     OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
     OPS_BRAIN_AGENT_TOKEN_FILE: file,
-    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+    OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
   })
   assert.equal(config.token, 'file-agent-token')
 
@@ -64,21 +64,21 @@ test('loads a protected token file without exposing it through the parent enviro
   assert.throws(() => loadConfig({
     OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
     OPS_BRAIN_AGENT_TOKEN_FILE: symlink,
-    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+    OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
   }), /regular file/)
 
   assert.throws(() => loadConfig({
     OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
     OPS_BRAIN_AGENT_TOKEN: 'inline',
     OPS_BRAIN_AGENT_TOKEN_FILE: file,
-    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+    OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
   }), /only one/)
 
   chmodSync(file, 0o644)
   assert.throws(() => loadConfig({
     OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
     OPS_BRAIN_AGENT_TOKEN_FILE: file,
-    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+    OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
   }), /inaccessible to group\/other/)
 })
 
@@ -88,7 +88,7 @@ test('requires a valid expected server-bound identity', () => {
     OPS_BRAIN_AGENT_TOKEN: 'agent-token',
   }
   assert.throws(() => loadConfig(base), /OPS_BRAIN_EXPECTED_AGENT is required/)
-  assert.throws(() => loadConfig({ ...base, OPS_BRAIN_EXPECTED_AGENT: 'CC Stealth' }), /EXPECTED_AGENT/)
+  assert.throws(() => loadConfig({ ...base, OPS_BRAIN_EXPECTED_AGENT: 'Claude Stealth' }), /EXPECTED_AGENT/)
 })
 
 test('loads a bearer through a credential helper without an environment value', () => {
@@ -96,13 +96,13 @@ test('loads a bearer through a credential helper without an environment value', 
   const config = loadConfig({
     OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
     OPS_BRAIN_AGENT_TOKEN_HELPER_JSON: helper,
-    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+    OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
   })
   assert.equal(config.token, 'helper-agent-token')
   assert.throws(() => loadConfig({
     OPS_BRAIN_LIVE_URL: 'wss://ops.example.com/live',
     OPS_BRAIN_AGENT_TOKEN: 'inline',
     OPS_BRAIN_AGENT_TOKEN_HELPER_JSON: helper,
-    OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+    OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
   }), /only one/)
 })

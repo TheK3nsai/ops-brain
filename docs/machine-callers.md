@@ -38,7 +38,7 @@ Configured server-side via `OPS_BRAIN_MACHINE_TOKENS` (JSON array):
     "token": "<32+ char minted secret>",
     "from_agent": "Example-Host1",
     "client": "example",
-    "agents": ["CC-Example"],
+    "agents": ["Claude-Example"],
     "scopes": ["create", "read"]
   }
 ]
@@ -66,7 +66,7 @@ reaches the entire MCP surface; a machine token bounds theft blast-radius to
 
 ```json
 {
-  "to_agent": "CC-Example",
+  "to_agent": "Claude-Example",
   "title": "[auto] Disk usage WARN: /var 91% (threshold 90%)",
   "body": "Markdown body: what was measured, value vs threshold, runbook pointer.",
   "priority": "normal",
@@ -183,7 +183,7 @@ depend on this repo to stay conformant.
 | `evidence_ref` | **Pointer** to evidence on the producer's own infrastructure (local path, repo-relative report). Never a payload; there is deliberately no `evidence_url` — evidence does not leave the producer's boundary. |
 | `metrics` | Small flat numeric map (value vs threshold). Optional. |
 
-## `GET /api/pending?agent=CC-Example&since=2026-07-17T12:00:00Z&limit=50`
+## `GET /api/pending?agent=Claude-Example&since=2026-07-17T12:00:00Z&limit=50`
 
 Open **action** handoffs addressed to `agent` (which must be in a machine
 token's `agents` allowlist). `since` filters on `updated_at` — dedupe bumps
