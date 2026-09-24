@@ -50,7 +50,7 @@ disambiguator. The server binds `agent_name` from the bearer and assigns a new
 opaque UUIDv7 `peer_id` on every connection:
 
 ```json
-{"type":"registered","protocol_version":1,"peer":{"peer_id":"...","agent_name":"CC-Stealth","adapter":"claude_code","label":"claude-1","metadata_trust":"self_reported"}}
+{"type":"registered","protocol_version":1,"peer":{"peer_id":"...","agent_name":"Claude-Stealth","adapter":"claude_code","label":"claude-1","metadata_trust":"self_reported"}}
 ```
 
 Connected adapters may list peers or route a message:

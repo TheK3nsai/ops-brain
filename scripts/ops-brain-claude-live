@@ -45,7 +45,7 @@ Environment:
   OPS_BRAIN_LIVE_URL          required wss://host/live endpoint
   OPS_BRAIN_AGENT_TOKEN_FILE required identity-bound token file (mode 600 or
                              400); always select the exact Claude identity
-  OPS_BRAIN_EXPECTED_AGENT   required exact bound identity, e.g. CC-Stealth
+  OPS_BRAIN_EXPECTED_AGENT   required exact bound identity, e.g. Claude-Stealth
   OPS_BRAIN_LIVE_LABEL        optional non-sensitive peer label
   OPS_BRAIN_CLAUDE_PROFILE    optional profile path; defaults to the Claude
                               profile reported by ops-brain-client

@@ -839,7 +839,7 @@ mod tests {
 
     async fn pair(hub: &LiveHub) -> (LiveRegistration, LiveRegistration) {
         let claude = hub
-            .register("CC-Stealth", LiveAdapter::ClaudeCode, "claude-1")
+            .register("Claude-Stealth", LiveAdapter::ClaudeCode, "claude-1")
             .await
             .unwrap();
         let codex = hub
@@ -873,7 +873,7 @@ mod tests {
         });
         let receipt = hub
             .send(
-                "CC-Stealth",
+                "Claude-Stealth",
                 claude.peer.peer_id,
                 codex_id,
                 "hello from Claude",
@@ -894,7 +894,7 @@ mod tests {
         let send = tokio::spawn(async move {
             sender_hub
                 .send(
-                    "CC-Stealth",
+                    "Claude-Stealth",
                     from_id,
                     target_id,
                     "do not report an unacknowledged delivery as success",
@@ -919,7 +919,7 @@ mod tests {
         let send = tokio::spawn(async move {
             sender_hub
                 .send(
-                    "CC-Stealth",
+                    "Claude-Stealth",
                     from_id,
                     target_id,
                     "disconnect before acknowledgement",
@@ -944,13 +944,13 @@ mod tests {
         let target_id = codex.peer.peer_id;
         let first = tokio::spawn(async move {
             sender_hub
-                .send("CC-Stealth", from_id, target_id, "first", None)
+                .send("Claude-Stealth", from_id, target_id, "first", None)
                 .await
         });
         let first_message = codex.receiver.recv().await.unwrap();
 
         let busy = hub
-            .send("CC-Stealth", from_id, target_id, "second", None)
+            .send("Claude-Stealth", from_id, target_id, "second", None)
             .await
             .unwrap_err();
         assert!(matches!(busy, LiveError::Busy(_)));
@@ -973,7 +973,7 @@ mod tests {
         let target_id = codex.peer.peer_id;
         let cancelled = tokio::spawn(async move {
             sender_hub
-                .send("CC-Stealth", from_id, target_id, "cancel me", None)
+                .send("Claude-Stealth", from_id, target_id, "cancel me", None)
                 .await
         });
         let _cancelled_message = codex.receiver.recv().await.unwrap();
@@ -981,7 +981,7 @@ mod tests {
         assert!(cancelled.await.unwrap_err().is_cancelled());
 
         let busy = hub
-            .send("CC-Stealth", from_id, target_id, "too early", None)
+            .send("Claude-Stealth", from_id, target_id, "too early", None)
             .await
             .unwrap_err();
         assert!(matches!(busy, LiveError::Busy(_)));
@@ -997,7 +997,7 @@ mod tests {
         });
         let receipt = hub
             .send(
-                "CC-Stealth",
+                "Claude-Stealth",
                 from_id,
                 target_id,
                 "target slot was released",
@@ -1025,7 +1025,7 @@ mod tests {
 
         let receipt = hub
             .send(
-                "CC-Stealth",
+                "Claude-Stealth",
                 claude.peer.peer_id,
                 target_id,
                 "wait for the valid host acknowledgement",
@@ -1068,7 +1068,7 @@ mod tests {
         });
         assert_eq!(
             hub.send_from_agent(
-                "CC-Stealth",
+                "Claude-Stealth",
                 codex_id,
                 "unique source",
                 None,
@@ -1080,12 +1080,12 @@ mod tests {
             DeliveryStatus::HostAccepted
         );
 
-        hub.register("CC-Stealth", LiveAdapter::ClaudeCode, "claude-2")
+        hub.register("Claude-Stealth", LiveAdapter::ClaudeCode, "claude-2")
             .await
             .unwrap();
         let ambiguous = hub
             .send_from_agent(
-                "CC-Stealth",
+                "Claude-Stealth",
                 codex_id,
                 "must not guess",
                 None,
@@ -1104,7 +1104,7 @@ mod tests {
         hub.unregister(codex.peer.peer_id).await;
         let error = hub
             .send(
-                "CC-Stealth",
+                "Claude-Stealth",
                 claude.peer.peer_id,
                 codex.peer.peer_id,
                 "use a handoff",
@@ -1132,7 +1132,7 @@ mod tests {
         });
         let idempotency_key = Uuid::now_v7();
         hub.send_idempotent(SendSpec {
-            bound_agent: "CC-Stealth",
+            bound_agent: "Claude-Stealth",
             from_peer_id: claude.peer.peer_id,
             to_peer_id: codex_id,
             body: "same message",
@@ -1144,7 +1144,7 @@ mod tests {
         .unwrap();
         let error = hub
             .send_idempotent(SendSpec {
-                bound_agent: "CC-Stealth",
+                bound_agent: "Claude-Stealth",
                 from_peer_id: claude.peer.peer_id,
                 to_peer_id: codex_id,
                 body: "same message",
@@ -1171,15 +1171,15 @@ mod tests {
                 .await
                 .unwrap();
         });
-        hub.send_from_agent("CC-Stealth", codex_id, "once", None, key)
+        hub.send_from_agent("Claude-Stealth", codex_id, "once", None, key)
             .await
             .unwrap();
         hub.unregister(claude.peer.peer_id).await;
-        hub.register("CC-Stealth", LiveAdapter::ClaudeCode, "claude-new")
+        hub.register("Claude-Stealth", LiveAdapter::ClaudeCode, "claude-new")
             .await
             .unwrap();
         let duplicate = hub
-            .send_from_agent("CC-Stealth", codex_id, "once", None, key)
+            .send_from_agent("Claude-Stealth", codex_id, "once", None, key)
             .await
             .unwrap_err();
         assert!(matches!(duplicate, LiveError::Duplicate(_)));
@@ -1194,7 +1194,13 @@ mod tests {
         let target_id = codex.peer.peer_id;
         let send = tokio::spawn(async move {
             sender_hub
-                .send("CC-Stealth", from_id, target_id, "verify ack source", None)
+                .send(
+                    "Claude-Stealth",
+                    from_id,
+                    target_id,
+                    "verify ack source",
+                    None,
+                )
                 .await
         });
         let message = codex.receiver.recv().await.unwrap();
@@ -1221,7 +1227,7 @@ mod tests {
         let target_id = codex.peer.peer_id;
         let send = tokio::spawn(async move {
             sender_hub
-                .send("CC-Stealth", from_id, target_id, "reject me", None)
+                .send("Claude-Stealth", from_id, target_id, "reject me", None)
                 .await
         });
         let message = codex.receiver.recv().await.unwrap();
@@ -1241,7 +1247,7 @@ mod tests {
         let (claude, codex) = pair(&hub).await;
         let self_send = hub
             .send(
-                "CC-Stealth",
+                "Claude-Stealth",
                 claude.peer.peer_id,
                 claude.peer.peer_id,
                 "loop",
@@ -1254,7 +1260,7 @@ mod tests {
         let oversized = "x".repeat(MAX_MESSAGE_BYTES + 1);
         let too_large = hub
             .send(
-                "CC-Stealth",
+                "Claude-Stealth",
                 claude.peer.peer_id,
                 codex.peer.peer_id,
                 &oversized,

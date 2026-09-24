@@ -84,7 +84,7 @@ try {
     ...process.env,
     OPS_BRAIN_LIVE_URL: `ws://127.0.0.1:${address.port}/live`,
     OPS_BRAIN_AGENT_TOKEN_FILE: tokenFile,
-    OPS_BRAIN_EXPECTED_AGENT: 'CC-E2E',
+    OPS_BRAIN_EXPECTED_AGENT: 'Claude-E2E',
     OPS_BRAIN_LIVE_LABEL: 'claude-e2e',
   }
   delete environment.OPS_BRAIN_AGENT_TOKEN
@@ -126,7 +126,7 @@ try {
   socket.send(JSON.stringify({
     type: 'registered',
     protocol_version: 1,
-    peer: { peer_id: peerId, agent_name: 'CC-E2E', adapter: 'claude_code', label: 'claude-e2e' },
+    peer: { peer_id: peerId, agent_name: 'Claude-E2E', adapter: 'claude_code', label: 'claude-e2e' },
   }))
 
   const messageId = randomUUID()
@@ -157,12 +157,12 @@ try {
   assert.equal(listRequest.type, 'list_peers')
   socket.send(JSON.stringify({
     type: 'peers', request_id: listRequest.request_id,
-    peers: [{ peer_id: peerId, agent_name: 'CC-E2E', adapter: 'claude_code', label: 'claude-e2e' }],
+    peers: [{ peer_id: peerId, agent_name: 'Claude-E2E', adapter: 'claude_code', label: 'claude-e2e' }],
   }))
   const toolResult = await withTimeout(nextMcp(), 'MCP peer-list tool result')
   assert.equal(toolResult.id, 2)
   assert.equal(toolResult.result.isError, undefined)
-  assert.match(toolResult.result.content[0].text, /CC-E2E/)
+  assert.match(toolResult.result.content[0].text, /Claude-E2E/)
 
   assert.equal(stderr.includes('fixture-token-not-a-secret'), false, 'adapter logged the bearer')
   console.log('online adapter end-to-end test passed')

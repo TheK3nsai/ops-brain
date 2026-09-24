@@ -104,8 +104,8 @@ async function waitForFrame(read, predicate, description, timeoutMs = 10_000) {
 
 test('records a terminal identity mismatch in the adapter log', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'ops-brain-main-'))
-  const server = await liveServerBoundTo('CC-Somebody-Else')
-  const child = startAdapter({ port: server.address().port, expectedAgent: 'CC-Stealth', stateDir })
+  const server = await liveServerBoundTo('Claude-Somebody-Else')
+  const child = startAdapter({ port: server.address().port, expectedAgent: 'Claude-Stealth', stateDir })
   t.after(async () => {
     child.kill('SIGKILL')
     await new Promise(resolve => server.close(resolve))
@@ -118,7 +118,7 @@ test('records a terminal identity mismatch in the adapter log', async t => {
   child.stdout.on('data', chunk => { stdout += chunk })
   const body = await waitForLog(stateDir, /"retryable":false/)
   assert.match(body, /bound identity does not match/)
-  assert.match(body, /CC-Stealth/)
+  assert.match(body, /Claude-Stealth/)
   // The session itself hears that its lane is gone, as a channel event that is
   // marked adapter status rather than peer input.
   const lost = await waitForFrame(
@@ -144,8 +144,8 @@ test('records a terminal identity mismatch in the adapter log', async t => {
 
 test('records a successful bind, and never the bearer', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'ops-brain-main-'))
-  const server = await liveServerBoundTo('CC-Stealth')
-  const child = startAdapter({ port: server.address().port, expectedAgent: 'CC-Stealth', stateDir })
+  const server = await liveServerBoundTo('Claude-Stealth')
+  const child = startAdapter({ port: server.address().port, expectedAgent: 'Claude-Stealth', stateDir })
   t.after(async () => {
     child.kill('SIGKILL')
     await new Promise(resolve => server.close(resolve))
@@ -156,15 +156,15 @@ test('records a successful bind, and never the bearer', async t => {
   assert.match(body, /claude channel adapter started/)
   const connected = body.trim().split('\n').map(line => JSON.parse(line))
     .find(r => r.message === 'live adapter connected')
-  assert.equal(connected.agent_name, 'CC-Stealth')
+  assert.equal(connected.agent_name, 'Claude-Stealth')
   assert.equal(connected.peer_id, BOUND_PEER)
   assert.doesNotMatch(body, /fixture-token-not-a-secret/)
 })
 
 test('records an owned disconnect before a graceful shutdown closes the log', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'ops-brain-main-'))
-  const server = await liveServerBoundTo('CC-Stealth')
-  const child = startAdapter({ port: server.address().port, expectedAgent: 'CC-Stealth', stateDir })
+  const server = await liveServerBoundTo('Claude-Stealth')
+  const child = startAdapter({ port: server.address().port, expectedAgent: 'Claude-Stealth', stateDir })
   t.after(async () => {
     if (child.exitCode === null) child.kill('SIGKILL')
     await new Promise(resolve => server.close(resolve))
@@ -189,7 +189,7 @@ test('records a startup failure that aborts before the first connection', async 
     env: {
       ...process.env,
       OPS_BRAIN_LIVE_URL: 'wss://ops-brain.example/live?leak=1',
-      OPS_BRAIN_EXPECTED_AGENT: 'CC-Stealth',
+      OPS_BRAIN_EXPECTED_AGENT: 'Claude-Stealth',
       OPS_BRAIN_AGENT_TOKEN: 'fixture-token-not-a-secret',
       OPS_BRAIN_LIVE_STATE_DIR: stateDir,
     },

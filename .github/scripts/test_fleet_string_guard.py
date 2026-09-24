@@ -123,7 +123,7 @@ case("catches a token embedded in a longer FQDN",
      {"a.txt": f"url = https://{FAKE[0].lower()}.internal.example.com/x\n"}, expect_fail=True)
 
 case("catches a token inside SQL quotes",
-     {"m.sql": f"WHEN '{FAKE[2].lower()}' THEN 'CC-X'\n"}, expect_fail=True)
+     {"m.sql": f"WHEN '{FAKE[2].lower()}' THEN 'Claude-X'\n"}, expect_fail=True)
 
 case("scans the whole tree, not just changed lines",
      {"deep/nested/old.md": f"legacy note about {FAKE[1]}\n"}, expect_fail=True)

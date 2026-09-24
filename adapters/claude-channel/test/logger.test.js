@@ -21,7 +21,7 @@ test('records structured lines in the state directory', t => {
   const logger = createLogger({ stateDir: dir, stderr: null, now: () => '2026-08-26T00:00:00.000Z' })
   t.after(() => logger.close())
 
-  logger.log('info', 'claude channel adapter started', { expected_agent: 'CC-Stealth' })
+  logger.log('info', 'claude channel adapter started', { expected_agent: 'Claude-Stealth' })
   logger('a bare warning')
 
   const { body } = readOnlyLog(dir)
@@ -30,7 +30,7 @@ test('records structured lines in the state directory', t => {
     ts: '2026-08-26T00:00:00.000Z',
     level: 'info',
     message: 'claude channel adapter started',
-    expected_agent: 'CC-Stealth',
+    expected_agent: 'Claude-Stealth',
   })
   assert.deepEqual(lines[1], {
     ts: '2026-08-26T00:00:00.000Z',

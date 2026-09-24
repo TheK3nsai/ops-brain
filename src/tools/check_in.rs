@@ -26,7 +26,7 @@ const NOTIFICATION_LIMIT: i64 = 5;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CheckInParams {
     /// Your agent identifier (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "CC-Stealth", "CC-Cloud", "Codex-HSR".
+    /// Examples: "Claude-Stealth", "Claude-Cloud", "Codex-HSR".
     /// Used to filter handoffs addressed to you.
     #[serde(alias = "my_name")]
     pub agent_name: String,
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn check_in_accepts_legacy_my_name_alias() {
         let params: CheckInParams =
-            serde_json::from_value(serde_json::json!({"my_name": "CC-Stealth"})).unwrap();
-        assert_eq!(params.agent_name, "CC-Stealth");
+            serde_json::from_value(serde_json::json!({"my_name": "Claude-Stealth"})).unwrap();
+        assert_eq!(params.agent_name, "Claude-Stealth");
     }
 }

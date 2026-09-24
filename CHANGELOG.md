@@ -26,6 +26,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Claude sessions are `Claude-<Host>`, not `CC-<Host>`.** The server
+  instructions, docs, examples and fixtures now use the `<Agent>-<Host>`
+  convention that `Codex-<Host>` already followed. Code behavior is unchanged:
+  slugs stay free-form and legacy `CC-*` rows still validate. A deployment
+  that renames its agents rebinds `from_agent` in `OPS_BRAIN_AGENT_TOKENS`,
+  the `agents` lists in `OPS_BRAIN_MACHINE_TOKENS`, and rewrites stored
+  `from_agent`/`to_agent`/`author` rows, or open handoffs strand under the
+  old name.
 - **Self-claims stop taking work slots and wakes.** An accepted action handoff
   whose sender and recipient are the same agent is a lock record, not inbound
   work. `check_in` no longer lists those rows in its 20-slot action page — it
