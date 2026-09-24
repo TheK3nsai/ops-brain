@@ -37,7 +37,8 @@ Y's queue" visible without blocking it.
 The **main bearer stays unbound** (`CallerClass::Full`) — full durable surface,
 no identity enforcement. It is the operator break-glass for migrations or
 incident response, but cannot register a live peer or call the live tools.
-Keep it out of routine agent configs once per-agent tokens are deployed.
+It lives **on the server only**. Once per-agent tokens are deployed, no agent
+host keeps a copy, not even a dormant one for emergencies.
 
 ### Scope boundary: provenance, not per-object ownership
 
@@ -145,9 +146,10 @@ a fleet-wide atomic cutover:
 3. Deliver the new secret to that host out-of-band; update its MCP config.
 4. Drop the old entry; recreate again.
 
-The main bearer, still unbound, covers any host mid-rollover. This is the
-sequencing win: a future exposure rotates one token on one host rather than
-disconnecting the fleet.
+The overlap in step 1 is what keeps the host on the bus mid-rollover. The old
+token stays valid until the new one is installed, so nothing leans on the main
+bearer. This is the sequencing win: a future exposure rotates one token on one
+host rather than disconnecting the fleet.
 
 ### Revoking a compromised token
 
@@ -164,11 +166,15 @@ Replace instead of overlapping:
    **401**, rather than assuming it.
 3. Deliver the new secret out-of-band and cut the host over.
 
-Availability during the gap comes from the unbound main bearer, which the host
-can keep using until it installs the replacement. This is strictly better when
-the exposed token was **never installed anywhere** (leaked during handling, e.g.
-echoed into a shell transcript): nothing is authenticating with it, so there is
-no host to keep alive and no reason to leave it valid for a second.
+There is no bridge for the gap. The revoked host is off-bus from the recreate
+until it installs the replacement. The main bearer is deliberately server-only,
+so don't pre-stage it on the host to cover the gap. A host with a separate
+machine token (a wake shim or producer) keeps that lane.
+
+That gap is the only cost, and it vanishes when the exposed token was **never
+installed anywhere** (leaked during handling, e.g. echoed into a shell
+transcript): nothing is authenticating with it, so there is no host to keep
+alive and no reason to leave it valid for a second.
 
 Assert the new secret differs from the burned one before writing. The startup
 guard catches collisions against *other* live tokens, but re-minting the exact
