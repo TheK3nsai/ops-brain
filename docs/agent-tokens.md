@@ -168,8 +168,13 @@ Replace instead of overlapping:
 
 There is no bridge for the gap. The revoked host is off-bus from the recreate
 until it installs the replacement. The main bearer is deliberately server-only,
-so don't pre-stage it on the host to cover the gap. A host with a separate
-machine token (a wake shim or producer) keeps that lane.
+so don't pre-stage it on the host to cover the gap. A separate machine token
+keeps the host's REST lane alive: pending polls and producer writes still work.
+A wake the poll triggers does not. The woken session authenticates to MCP with
+the revoked agent token, so it runs without bus tools. A wake shim that judges
+runs by a successful bus call records a failure and backs off. Expect those
+failure alerts from the host's wake lane during the gap, and don't read them as
+a second fault.
 
 That gap is the only cost, and it vanishes when the exposed token was **never
 installed anywhere** (leaked during handling, e.g. echoed into a shell
