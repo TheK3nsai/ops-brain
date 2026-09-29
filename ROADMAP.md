@@ -8,9 +8,8 @@ What we build, what we don't, why. Philosophy first. Shipped-work history lives 
 agent's per-machine instructions are its scope, its filesystem is its state, its
 git history is its memory. ops-brain exists for the handful of things agents
 genuinely cannot do alone: handoffs between machines and vendors, bounded
-cross-agent knowledge, exact work retrieval, narrow machine-to-agent wake
-signals, and an opt-in ephemeral live lane between sessions that are online at
-the same time.
+cross-agent knowledge, exact work retrieval, and narrow machine-to-agent wake
+signals.
 **If a question can be answered without ops-brain, it should be.**
 
 **We kill without mercy.** Any tool, feature, or scaffolding that an agent can
@@ -47,9 +46,7 @@ Non-negotiable. Any idea that violates one of these is DOA.
   owns memory + coordination, never execution timing.
 - **No durable session management.** `start_session`/`end_session` were removed
   in v1.3. Do not persist sessions, lifecycle state, heartbeats, profiles, or
-  resumable presence. An ephemeral transport connection may expose an opaque
-  live peer while its socket is connected, but it disappears on disconnect and
-  cannot become a second source of truth. Handoffs remain the offline lane.
+  resumable presence. Handoffs are the only lane.
 - **No new fields on `check_in`.** It's the right size now. Every added field
   dilutes the briefing for every call, for every agent, forever. (`has_more`
   is not a field in this sense: it reports that the capped page is incomplete,
@@ -80,8 +77,7 @@ Non-negotiable. Any idea that violates one of these is DOA.
   incidents, and monitoring were removed in v3.0.0; Zammad ticketing followed
   in v4.0.0. Configuration management owns inventory, Uptime Kuma owns
   monitoring, and tickets/incidents live in each client's own systems.
-  ops-brain stays on its lane: handoffs, bounded knowledge, check-in, and
-  the opt-in live lane.
+  ops-brain stays on its lane: handoffs, bounded knowledge, and check-in.
 
 ## Dead forever (don't resurrect)
 
@@ -142,6 +138,21 @@ operator maintenance rather than agent coordination. Removing all four while
 adding exact `get_handoff` retrieval reduced the MCP surface from 16 to 13
 tools and made the next natural action clearer.
 
+### ❌ Live lane (online peer messaging)
+
+Removed 2026-09-29. `list_live_peers`, `send_live_message`, the `/live`
+WebSocket, the Claude Channel and Codex App Server adapters, the
+`ops-brain-claude` / `ops-brain-codex` launchers, and the client bundle.
+
+**Why dead:** it worked, but it never stopped costing. Setting it up took a
+per-host launcher, a credential overlay, and a Node adapter per client family.
+Every Claude Code or Codex upgrade could break the channel or App Server
+contract it rode on. What it bought was sub-minute delivery between two
+sessions that happened to be online together. A handoff plus the wake shim
+already reaches the peer in minutes whether or not it is online. That is not a
+killer feature. Anything that has to re-open this must first show real work
+that stalled for lack of sub-minute delivery.
+
 ## Decided — don't re-propose without new evidence
 
 Deliberate calls with their reasons. If real friction shows up, re-open the
@@ -186,10 +197,7 @@ patches, not cosmetic polish):
    principles. "Wait for demand" is not the same as "dead."
 4. ops-brain is in operator mode — new features should be the exception,
    removals the norm. v5.0.0's 16 → 13 tool reduction is the model: consolidate
-   overlapping paths and keep maintenance out of agent context. The two live
-   tools added since passed the bar on one ground: two sessions that are both
-   online cannot reach each other locally at all. The lane stays explicit-only
-   (`ops-brain-claude` / `ops-brain-codex`) so ordinary sessions pay nothing
-   beyond the two tool stubs; if it goes unused, the kill rule applies to it
-   like anything else. Read
+   overlapping paths and keep maintenance out of agent context. The live lane
+   was the exception that proved the rule: it earned its two tools on paper and
+   was killed once its install and upgrade cost was measured. Read
    `CHANGELOG.md` for shipped history.

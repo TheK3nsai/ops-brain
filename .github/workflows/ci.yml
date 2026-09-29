@@ -96,62 +96,6 @@ jobs:
           printf '  %s\n' "${files[@]}"
           shellcheck -x --source-path=SCRIPTDIR "${files[@]}"
 
-  live-adapters:
-    name: Online adapters + Linux clients
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            adapters/claude-channel/package-lock.json
-            adapters/codex-app-server/package-lock.json
-
-      - name: Install pinned adapter dependencies
-        run: |
-          npm --prefix adapters/claude-channel ci --ignore-scripts
-          npm --prefix adapters/codex-app-server ci --ignore-scripts
-
-      - name: Check and test adapters
-        run: |
-          npm --prefix adapters/claude-channel run check
-          npm --prefix adapters/claude-channel test
-          npm --prefix adapters/codex-app-server run check
-          npm --prefix adapters/codex-app-server test
-          node scripts/test-online-adapter-e2e.mjs
-
-      - name: Test Linux fleet launchers
-        run: |
-          scripts/test-live-launchers
-          scripts/test-client-bundle
-
-  live-windows-launchers:
-    name: Windows ops-brain clients
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            adapters/claude-channel/package-lock.json
-            adapters/codex-app-server/package-lock.json
-
-      - name: Install pinned adapter dependencies
-        shell: pwsh
-        run: |
-          npm --prefix adapters/claude-channel ci --ignore-scripts
-          npm --prefix adapters/codex-app-server ci --ignore-scripts
-
-      - name: Test Windows fleet launchers
-        shell: pwsh
-        run: ./scripts/Test-OpsBrainLiveWindows.ps1
-
   audit:
     name: Security Audit
     runs-on: ubuntu-latest

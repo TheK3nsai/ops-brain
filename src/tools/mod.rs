@@ -3,7 +3,6 @@ pub mod check_in;
 pub mod coordination;
 mod helpers;
 pub mod knowledge;
-pub mod live;
 pub mod search;
 mod shared;
 
@@ -14,7 +13,6 @@ use rmcp::{
 use sqlx::PgPool;
 
 use crate::embeddings::EmbeddingClient;
-use crate::live::LiveHub;
 
 /// Server instructions — the only text every agent on every host is guaranteed
 /// to see, so the bus's workflow conventions live here rather than in any one
@@ -33,7 +31,6 @@ pub const INSTRUCTIONS: &str = "ops-brain is the team bus. Your local instructio
      • Knowledge is only for cross-agent gotchas, safety/compliance rules, verified patterns and \
      vendor behaviour. Anything that fits your own local docs belongs there; where local docs are \
      canonical, write a pointer, not a copy.\n\
-     • Live messages are best-effort and online-only; use a handoff whenever the peer is absent.\n\
      One deployment is one trusted coordination domain; scoped knowledge queries withhold unsafe \
      cross-client content until acknowledge_cross_client=true.";
 
@@ -41,7 +38,6 @@ pub const INSTRUCTIONS: &str = "ops-brain is the team bus. Your local instructio
 pub struct OpsBrain {
     pub(crate) pool: PgPool,
     pub(crate) embedding_client: Option<EmbeddingClient>,
-    pub(crate) live_hub: LiveHub,
 }
 
 #[tool_router]
@@ -50,19 +46,6 @@ impl OpsBrain {
         Self {
             pool,
             embedding_client,
-            live_hub: LiveHub::default(),
-        }
-    }
-
-    pub fn with_live_hub(
-        pool: PgPool,
-        embedding_client: Option<EmbeddingClient>,
-        live_hub: LiveHub,
-    ) -> Self {
-        Self {
-            pool,
-            embedding_client,
-            live_hub,
         }
     }
 
@@ -321,50 +304,6 @@ impl OpsBrain {
         let bound = helpers::bound_agent(&ext);
         Ok(check_in::handle_check_in(self, params.0, bound.as_deref()).await)
     }
-
-    // ===== LIVE PEERS: ephemeral online-only transport =====
-
-    #[tool(
-        name = "list_live_peers",
-        description = "List currently connected live adapters. Online-only; absence means use \
-        a handoff. If this session has a local ops-brain live adapter exposing the same tool \
-        name, use that one.",
-        annotations(
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    async fn list_live_peers(
-        &self,
-        _params: Parameters<live::ListLivePeersParams>,
-        ext: Extensions,
-    ) -> Result<CallToolResult, McpError> {
-        let bound = helpers::bound_agent(&ext);
-        Ok(live::handle_list_live_peers(self, bound.as_deref()).await)
-    }
-
-    #[tool(
-        name = "send_live_message",
-        description = "Send untrusted text to one connected peer. Best-effort; never queues \
-        offline. If this session has a local ops-brain live adapter exposing the same tool \
-        name, use that one.",
-        annotations(
-            read_only_hint = false,
-            destructive_hint = false,
-            idempotent_hint = false,
-            open_world_hint = true
-        )
-    )]
-    async fn send_live_message(
-        &self,
-        params: Parameters<live::SendLiveMessageParams>,
-        ext: Extensions,
-    ) -> Result<CallToolResult, McpError> {
-        let bound = helpers::bound_agent(&ext);
-        Ok(live::handle_send_live_message(self, params.0, bound.as_deref()).await)
-    }
 }
 
 #[tool_handler]
@@ -430,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn live_surface_is_exactly_fifteen_tools() {
+    fn tool_surface_is_exactly_thirteen_tools() {
         let tools = OpsBrain::tool_router().list_all();
         let mut names: Vec<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
         names.sort();
@@ -446,11 +385,9 @@ mod tests {
                 "delete_knowledge",
                 "get_handoff",
                 "list_handoffs",
-                "list_live_peers",
                 "list_replies_to_me",
                 "mark_merged",
                 "search_bus",
-                "send_live_message",
                 "update_knowledge",
             ]
         );

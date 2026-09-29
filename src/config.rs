@@ -46,14 +46,14 @@ pub struct Config {
     /// `[{"token":"...","from_agent":"Example-Host1","client":"example",
     ///    "agents":["Claude-Example"],"scopes":["create","read"]}]`
     /// Each token is limited to `POST /api/handoff` ("create" scope) and/or
-    /// `GET /api/pending` ("read" scope) for the listed agents — never /mcp or /live.
+    /// `GET /api/pending` ("read" scope) for the listed agents — never /mcp.
     #[arg(long, env = "OPS_BRAIN_MACHINE_TOKENS")]
     pub machine_tokens: Option<String>,
 
-    /// Per-agent tokens for interactive MCP + live sessions (http only).
+    /// Per-agent tokens for interactive MCP sessions (http only).
     /// JSON array of identity-bound token bindings, e.g.:
     /// `[{"token":"...","from_agent":"Claude-Stealth","client":"stealth"}]`
-    /// Each token reaches `/mcp` and the ephemeral `/live` WebSocket (never REST)
+    /// Each token reaches `/mcp` only (never REST)
     /// with its `from_agent` bound server-side: MCP write tools reject a
     /// mismatching claimed identity. The main bearer stays unbound as operator
     /// break-glass. Secrets must be distinct from the main and machine tokens.

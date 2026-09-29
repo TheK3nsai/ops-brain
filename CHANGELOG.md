@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- **The live lane is gone.** `list_live_peers` and `send_live_message` (15 →
+  13 tools), the `/live` WebSocket, the Claude Channel and Codex App Server
+  adapters, the `ops-brain-claude` / `ops-brain-codex` launchers, and the
+  client bundle with its release job. It worked, but it was painful to set up
+  and would stay painful across every client upgrade, and best-effort delivery
+  between two online sessions is not a killer feature: a handoff plus the wake
+  shim reaches an absent peer in minutes. Agent tokens now reach `/mcp` only,
+  and a stale launcher that still dials `/live` gets 403. Clients should remove
+  the live launchers and profile functions. Plain `claude` / `codex` sessions
+  with the HTTP MCP entry are unaffected.
+
 ### Added
 
 - **The string guard covers commit messages and PR text.**
@@ -16,13 +29,6 @@ All notable changes to this project will be documented in this file.
   `git log` or a force-pushed base is an error, not an empty pass. The CI
   steps detect after publication; the hook prevents. Tests drive the hook
   through real `git commit` runs on synthetic values.
-- **Optional live launcher modes.** Linux `--auto` and PowerShell `-Mode Auto`
-  request live delivery for attended TUI launches, pass headless and subcommand
-  invocations through, and ask before an ordinary fallback on failed preflight.
-  `--no-live` / `OPS_BRAIN_LIVE=off` selects an announced ordinary session.
-  Labels carry the working directory basename, the Claude channel reports its
-  own peer under `self`, lost lanes emit a `lane_status` event, a second Codex
-  session takes a free App Server port, and old adapter logs are pruned.
 
 ### Changed
 
@@ -78,22 +84,6 @@ All notable changes to this project will be documented in this file.
 - **`create_handoff` warns on a never-seen recipient slug** with similar known
   slugs (`_warning`, non-blocking), so a typo no longer sits unread forever.
 
-- **Live stays opt-in through `ops-brain-claude` and `ops-brain-codex`.** Shell
-  integration no longer replaces plain `claude` or `codex`. The Linux source
-  file remains a compatibility no-op; PowerShell provides argument-safe
-  functions under the explicit live command names with fail-closed Run mode.
-  Installers and rollout guidance now preserve ordinary launchers. Open a new
-  terminal after upgrading to discard previously loaded wrapper functions.
-- **The Windows and Linux live pairs have complete attended certifications.**
-  The 2026-09-01 gates passed with the published v5.2.1 client bundle
-  (`02bd845`) and Codex CLI 0.151.0 on Windows, then source checkout `279ba8c`
-  against the v5.2.1 server and Codex CLI 0.152.0 on Linux. This retires the
-  temporary 0.149.x-only acceptance pin while keeping certification tied to
-  exact measured revisions and versions rather than an open-ended `>=` range.
-  The remaining findings are non-blocking: Claude's MCP child cannot record a
-  graceful disconnect when the Windows client kills it directly, and the
-  deliberately unacknowledged `delivery_unconfirmed` branch has not yet been
-  exercised in a fleet gate.
 - **The Security Audit CI job now blocks.** It was `continue-on-error`, which
   let RUSTSEC-2026-0285 sit behind a green run. Unfixable advisories take a
   `--ignore` in `ci.yml` plus reasoning in `audit.toml`.
@@ -106,20 +96,6 @@ All notable changes to this project will be documented in this file.
 - **Refresh audited transitive dependencies.** `event-listener` 5.4.2 fixes
   RUSTSEC-2026-0221; `chacha20` 0.10.2 and `spin` 0.9.9 replace yanked
   lockfile versions. This also removes the unused `concurrent-queue` dependency.
-- **`--auto` no longer hijacks `-h`/`--help`, or Codex's `--profile`.** The
-  launcher option loop handled both before the passthrough check, so plain
-  `claude --help` printed the launcher's usage and `codex --profile work`
-  became a missing-profile preflight. In `--auto` those spellings now reach
-  the client; the ops-brain profile is chosen with `OPS_BRAIN_*_PROFILE`.
-  Measured on kensai-cloud (`01a06933-8311`).
-- **`--auto` hands the client every argument but its own two switches.** The
-  fix above was per-flag; the same collision was still live for `--` (a
-  leading end-of-options marker was consumed, so a prompt starting with a
-  dash reached the client's parser unprotected) and latent for `--status`
-  and `--dry-run`. In `--auto` only `--auto` and `--no-live` are the
-  launcher's now, and everything else breaks out of the option loop, so a
-  new launcher switch cannot silently shadow a client one. The explicit
-  `ops-brain-claude` / `ops-brain-codex` commands are unchanged.
 - **Bounded list and search responses no longer imply false completeness
   (2026-09-03).**
   `list_handoffs`, `list_replies_to_me`, `search_bus`, and REST
@@ -130,12 +106,6 @@ All notable changes to this project will be documented in this file.
 - **PR #84's production verification is closed (2026-09-03).** CC-HSR's real-caller
   re-probe passed all four byte-boundary rows, including the 200 control and
   the expected structured JSON errors (`01a03468-ce3e-7933-8b59-d82abf748e48`).
-- **Claude's private Channel overlay preserves completed onboarding without
-  copying the user's config.** The helper carries only a validated theme and a
-  literal `hasCompletedOnboarding: true`; MCP servers, account metadata,
-  credentials, unknown theme values, and incomplete onboarding state remain
-  excluded. The Windows harness covers explicit `CLAUDE_CONFIG_DIR`; the
-  cross-platform helper test also covers default `~/.claude.json` resolution.
 
 ## [5.2.1] — 2026-09-01
 

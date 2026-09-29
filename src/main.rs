@@ -2,7 +2,7 @@ use clap::Parser;
 use ops_brain::{
     api, auth,
     config::{Command, Config},
-    db, embeddings, live,
+    db, embeddings,
     tools::OpsBrain,
 };
 use rmcp::service::ServiceExt;
@@ -134,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_default();
             if !parsed_hosts.is_empty() {
                 tracing::info!("HTTP allowed_hosts: {:?}", parsed_hosts);
-                http_config = http_config.with_allowed_hosts(parsed_hosts.clone());
+                http_config = http_config.with_allowed_hosts(parsed_hosts);
             } else if config.allowed_hosts.is_some() {
                 tracing::warn!(
                     "OPS_BRAIN_ALLOWED_HOSTS set but empty/whitespace; using loopback default. \
@@ -146,20 +146,9 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
 
-            // One process-local hub is shared by every MCP service instance
-            // and the WebSocket endpoint. It is intentionally discarded on
-            // restart; handoffs remain the only durable/offline lane.
-            let live_hub = live::LiveHub::default();
-            let live_hub_mcp = live_hub.clone();
             let embedding_client_http = embedding_client.clone();
             let mcp_service = StreamableHttpService::new(
-                move || {
-                    Ok(OpsBrain::with_live_hub(
-                        pool.clone(),
-                        embedding_client_http.clone(),
-                        live_hub_mcp.clone(),
-                    ))
-                },
+                move || Ok(OpsBrain::new(pool.clone(), embedding_client_http.clone())),
                 session_manager,
                 http_config,
             );
@@ -186,10 +175,10 @@ async fn main() -> anyhow::Result<()> {
                     "machine tokens configured"
                 );
             }
-            // Per-agent tokens: identity-bound credentials for interactive MCP
-            // and live connections. Cross-checked against the main + machine secrets so a
-            // shared secret can't blur the credential classes. Parse failures
-            // abort startup — a dropped agent token would read as "identity
+            // Per-agent tokens: identity-bound credentials for interactive MCP.
+            // Cross-checked against the main + machine secrets so a shared
+            // secret can't blur the credential classes. Parse failures abort
+            // startup — a dropped agent token would read as "identity
             // enforced" while that agent still files unbound.
             let agent_tokens = auth::parse_agent_tokens(
                 config.agent_tokens.as_deref(),
@@ -240,31 +229,15 @@ async fn main() -> anyhow::Result<()> {
                 .route("/pending", axum::routing::get(api::list_pending))
                 .with_state(api_state.clone());
 
-            let live_allowed_hosts = if parsed_hosts.is_empty() {
-                vec![
-                    "localhost".to_string(),
-                    "127.0.0.1".to_string(),
-                    "[::1]".to_string(),
-                ]
-            } else {
-                parsed_hosts
-            };
-            let live_config = live::LiveEndpointConfig {
-                hub: live_hub,
-                allowed_hosts: Arc::new(live_allowed_hosts),
-            };
-
             // Outer .layer wraps everything below — auth runs BEFORE rmcp's
             // host check inside /mcp. Don't reorder: unauthenticated callers
             // shouldn't be able to enumerate which Host values are accepted.
             let app = axum::Router::new()
                 .route("/health", axum::routing::get(|| async { "OK" }))
                 .route("/ready", axum::routing::get(api::ready))
-                .route("/live", axum::routing::get(live::live_websocket))
                 .with_state(api_state)
                 .nest("/api", api_routes)
                 .nest_service("/mcp", mcp_service)
-                .layer(axum::Extension(live_config))
                 .layer(axum::middleware::from_fn_with_state(
                     auth_state,
                     auth::bearer_auth,

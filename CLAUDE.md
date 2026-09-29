@@ -6,18 +6,17 @@ Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18
 
 For roadmap philosophy + hard stops (what we will/won't build, and why), see `ROADMAP.md`. For shipped history, see `CHANGELOG.md`.
 
-## Surface (15 tools)
+## Surface (13 tools)
 
 - **Knowledge** (4): `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus` (knowledge by default; optional handoff search; empty/`*` browse)
 - **Handoffs** (8): `create_handoff` (optional `in_reply_to`), `get_handoff` (exact full UUID), `accept_handoff`, `complete_handoff` (optional `commit_hash`), `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` (flip to `status=merged`, record `merge_commit` + `merged_at`)
 - **Team bus** (1): `check_in` — open action handoffs (pending + accepted) + recent notify-class handoffs for `agent_name`
-- **Online peers** (2): `list_live_peers`, `send_live_message` — ephemeral online-only routing through the packaged Claude Channel and Codex App Server adapters; never queued or persisted.
 
 REST-only (no MCP tools, zero agent token cost): `POST /api/handoff`, `GET /api/pending`, and `POST /api/briefing`. The first two serve machine-filed handoffs and wake polling through scoped machine tokens (`OPS_BRAIN_MACHINE_TOKENS`); briefings are stateless delivery output for the main bearer. `GET /health` is liveness; `GET /ready` checks PostgreSQL readiness. Producer contract in `docs/machine-callers.md`. Recurrence/dead-man stay on producers' own schedulers — ops-brain never owns execution timing.
 
 Operator maintenance: `ops-brain backfill-embeddings [--table knowledge|handoffs] [--batch-size N]` replaces the former agent-visible backfill tool.
 
-Identity: interactive sessions authenticate with **per-agent tokens** (`OPS_BRAIN_AGENT_TOKENS`) that bind `from_agent` server-side — MCP write tools reject mismatching identity and `/live` uses the binding as peer provenance. Agent tokens reach `/mcp` and `/live`, never REST. The main bearer stays unbound as operator break-glass and cannot register a live peer. Contract in `docs/agent-tokens.md`.
+Identity: interactive sessions authenticate with **per-agent tokens** (`OPS_BRAIN_AGENT_TOKENS`) that bind `from_agent` server-side — MCP write tools reject mismatching identity. Agent tokens reach `/mcp` only, never REST. The main bearer stays unbound as operator break-glass. Contract in `docs/agent-tokens.md`.
 
 ## Architecture Constraints
 
@@ -59,7 +58,7 @@ One deployment is one trusted coordination domain. Per-agent tokens bind provena
 - **Blocked on a human** — the operator-queue cron and mail contract: `docs/operator-notify.md`.
 - **Product bar** — only build features that solve observed field pain, reduce missed/duplicate work across agents, make the next natural action clearer, and have a lifecycle. Reject ceremony, duplicate truth, generic wiki behavior, and scheduling/orchestration features that belong to cron/systemd/Task Scheduler/CI. Durable doctrine: ops-brain knowledge `019e0d79-3a7f-7902-86cc-db4a573c1071`.
 - **Agent names** — use the `<Agent>-<Host>` convention: `Claude-Stealth`, `Codex-Stealth`, `Codex-HSR`, etc. The validator remains free-form for compatibility, but new rows should keep that convention so handoffs route predictably.
-- **Fleet stewardship** — Claude Code and Codex agents may each improve ergonomics for their own client family, but shared ops-brain features must stay generic. Family-specific work belongs in local adapters, instructions, or compatibility guidance unless it exposes a reusable team-bus primitive.
+- **Fleet stewardship** — Claude Code and Codex agents may each improve ergonomics for their own client family, but shared ops-brain features must stay generic. Family-specific work belongs in client-side config, instructions, or compatibility guidance unless it exposes a reusable team-bus primitive.
 - **Knowledge is pull-only** — nothing surfaces an entry unless a search hits it, so the store is only as good as its signal-to-noise. Infrastructure how-to belongs in a git reference repo agents clone, not here (`ROADMAP.md` → no generic wiki); the bus holds cross-agent gotchas and pointers.
 - **Client-scope guard** — scoped knowledge queries withhold unsafe cross-client content unless explicitly acknowledged. Unscoped searches and handoffs are fleet-wide; one deployment is one trust domain.
 
