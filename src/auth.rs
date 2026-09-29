@@ -151,8 +151,8 @@ pub fn parse_machine_tokens(
 }
 
 /// A per-agent credential for interactive sessions. Where a machine token is
-/// REST-only and never reaches `/mcp`, an agent token reaches MCP plus the
-/// ephemeral `/live` transport — with its identity bound server-side. Write
+/// REST-only and never reaches `/mcp`, an agent token reaches only MCP — with
+/// its identity bound server-side. Write
 /// tools (`create_handoff`, `add_knowledge`) reject a mismatching claimed
 /// identity, so the bus gains a sender guarantee the single shared main bearer
 /// never had: a slug cannot appear on the bus without a token the operator
@@ -292,21 +292,21 @@ pub fn warn_identity_mismatch(bound: Option<&str>, queried: &str, tool: &str) {
 
 /// Who is calling, resolved by the auth middleware and stored in request
 /// extensions for handlers that differentiate (the machine endpoints and the
-/// identity-bound interactive tools and live transport).
+/// identity-bound interactive tools).
 #[derive(Debug, Clone)]
 pub enum CallerClass {
     /// Main bearer (or auth disabled in dev) — durable surfaces, unbound identity.
     Full,
     /// A machine token — scoped to the machine endpoints it was granted.
     Machine(Arc<MachineToken>),
-    /// A per-agent token — reaches `/mcp` and `/live`, with a bound identity.
+    /// A per-agent token — reaches `/mcp` only, with a bound identity.
     Agent(Arc<AgentToken>),
 }
 
 impl CallerClass {
     /// The server-bound agent identity this caller is locked to, if any. Only
     /// a per-agent token binds an MCP identity; `Full` (main bearer / dev) and
-    /// `Machine` (REST-only, never reaches `/mcp` or `/live`) return `None`,
+    /// `Machine` (REST-only, never reaches `/mcp`) return `None`,
     /// meaning "no interactive identity enforcement".
     pub fn bound_agent(&self) -> Option<&str> {
         match self {
@@ -419,7 +419,7 @@ pub async fn bearer_auth(
         return Ok(next.run(request).await);
     }
 
-    // Scan per-agent tokens. These reach the interactive MCP + live surfaces — the identity
+    // Scan per-agent tokens. These reach the interactive MCP surface — the identity
     // binding is enforced inside the tool handlers, not at this layer, so the
     // gate here is purely "is this an interactive request". Everything else is 403,
     // symmetric to the machine tokens' REST-only restriction.
@@ -429,7 +429,7 @@ pub async fn bearer_auth(
         .find(|t| validate_token(presented, &t.token))
     {
         let path = request.uri().path().to_string();
-        if path == "/live" || path == "/mcp" || path.starts_with("/mcp/") {
+        if path == "/mcp" || path.starts_with("/mcp/") {
             request
                 .extensions_mut()
                 .insert(CallerClass::Agent(Arc::new(token.clone())));
@@ -441,7 +441,7 @@ pub async fn bearer_auth(
             "agent token attempted a non-interactive endpoint"
         );
         return Err(ApiError::forbidden(
-            "per-agent tokens may only call the MCP and live endpoints",
+            "per-agent tokens may only call the MCP endpoint",
         ));
     }
 

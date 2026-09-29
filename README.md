@@ -46,23 +46,11 @@ ops-brain speaks MCP over either stdio (default) or HTTP. Most multi-machine set
 
 Public HTTP deployments behind a reverse proxy must also set `OPS_BRAIN_ALLOWED_HOSTS` to your hostname — see the config table below.
 
-## Surface (15 tools)
+## Surface (13 tools)
 
 - **Knowledge** — `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus`. Cross-agent gotchas, safety warnings, compliance rules, and vendor behavior, with per-agent provenance via `author`. `search_bus` searches knowledge by default and can include handoffs when requested.
 - **Handoffs** — `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged`. `action`-class for required work; `notify`-class for FYI broadcasts (hidden from operational queries after 7 days). Threading via `in_reply_to`; commit linkage via `commit_hash` on completion + `mark_merged` at integration time. `get_handoff` retrieves one exact handoff without pulling unrelated queue entries.
 - **Team bus** — `check_in` returns open action handoffs (pending + accepted) and recent notifications addressed to your `agent_name`.
-- **Online peers** — `list_live_peers` and `send_live_message` route untrusted text to connected Claude Code and Codex adapters. This lane is best-effort and process-local: nothing is stored or queued, and absent peers require a handoff. Packaged adapters live in [`adapters/claude-channel`](adapters/claude-channel) and [`adapters/codex-app-server`](adapters/codex-app-server). See [`docs/live-messaging.md`](docs/live-messaging.md).
-
-  Release archives contain pinned host adapters and the `ops-brain-client`
-  profile/doctor command; no Git checkout or `npm install` is required. Launch
-  foreground sessions with `ops-brain-claude` or `ops-brain-codex`. Both read
-  an identity-bound credential through a protected local pointer and expose
-  redacted `--status`/`--dry-run` modes. The old command names ending in
-  `-live` remain compatibility aliases. PowerShell/DPAPI launchers cover
-  Windows hosts. The ordinary `claude` and `codex` commands still start normal
-  sessions with their configured main MCP; only the `ops-brain-*` launchers add
-  the foreground live adapter. Installation, identity mapping, acceptance, and rollback are documented in
-  [`docs/live-fleet-rollout.md`](docs/live-fleet-rollout.md).
 
 Daily and weekly handoff briefings remain available as the stateless REST endpoint `POST /api/briefing`; maintenance operations such as embedding backfills stay out of every agent's MCP context. A briefing opens with what is waiting on the operator (oldest first), then machine findings rated high or critical, then what is stuck in another agent's queue past its age threshold, then the open set as counts only. The `operator` field names the slug that first section reads; it defaults to `Operator`, and a slug no handoff has ever used is called out rather than rendered as an empty queue.
 
@@ -110,7 +98,7 @@ The gate is inactive when a knowledge query omits `client_slug`, so it is not a 
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Bearer token for HTTP auth. Required for `http` transport — a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true` explicitly opts into an open dev server. |
 | `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped, identity-bound tokens for non-interactive `POST /api/handoff` and `GET /api/pending` callers. See [`docs/machine-callers.md`](docs/machine-callers.md). |
-| `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for interactive `/mcp` and `/live` connections. These enforce identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
+| `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for interactive `/mcp` connections. These enforce identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Explicitly serve HTTP without authentication (dev only — never expose beyond localhost) |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` header values for HTTP transport (rmcp DNS-rebind mitigation). Public deploys behind a reverse proxy must set their hostname. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
@@ -128,7 +116,7 @@ Recommended agent names follow the `<Agent>-<Host>` convention: `Claude-Stealth`
 
 ## Fleet stewardship
 
-Claude Code and Codex each have their own adapter ergonomics, but ops-brain primitives stay fleet-neutral. Family-specific channel/App Server behavior belongs in the local adapter, not in server-side `cc_*` or `codex_*` branches.
+Claude Code and Codex each have their own client ergonomics, but ops-brain primitives stay fleet-neutral. Family-specific behavior belongs on the client side, not in server-side `cc_*` or `codex_*` branches.
 
 ## HTTP endpoints
 
@@ -138,13 +126,12 @@ GET  /api/pending   machine token with `read` scope
 POST /api/briefing  main bearer; `{ "type": "daily" | "weekly", "operator"?: "<slug>" }`
 GET  /health        unauthenticated liveness probe
 GET  /ready         unauthenticated database-readiness probe
-GET  /live          agent token; ephemeral WebSocket adapter transport
 ```
 
-Bearer auth protects `/mcp`, `/live`, and the three `/api` endpoints. Agent tokens can reach `/mcp` and `/live`; machine tokens remain restricted to their documented REST endpoints. `/health` and `/ready` intentionally require no bearer so container healthchecks and reverse proxies can distinguish a running process from a database-ready service.
+Bearer auth protects `/mcp` and the three `/api` endpoints. Agent tokens can reach `/mcp` only; machine tokens remain restricted to their documented REST endpoints. `/health` and `/ready` intentionally require no bearer so container healthchecks and reverse proxies can distinguish a running process from a database-ready service.
 
 Production compose does not publish port 3000 on the host; the service is reached through the Docker networks and the reverse proxy. For local production-host checks, run health probes inside the container or use the public reverse-proxy URL.
 
 ## Status
 
-ops-brain is designed for solo operators and small trusted teams coordinating Claude Code and Codex across hosts. Its two coordination lanes are deliberate: handoffs provide durable/offline work with a lifecycle, while online peers provide best-effort delivery between connected foreground sessions. Claude's custom Channel API still carries Anthropic's development opt-in; that upstream preview status does not change ops-brain's durable fallback or trust boundary.
+ops-brain is designed for solo operators and small trusted teams coordinating Claude Code and Codex across hosts. It has one coordination lane on purpose: durable handoffs with a lifecycle. An ephemeral live lane between online sessions shipped and was removed — it cost more to install, run and upgrade than sub-minute delivery was worth.
