@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [6.0.0] — 2026-09-29
+
 ### Removed
 
 - **The live lane is gone.** `list_live_peers` and `send_live_message` (15 →
