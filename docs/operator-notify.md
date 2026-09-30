@@ -74,7 +74,9 @@ credentials and transport belong to the host that already sends the briefings,
 not to this script. See `--help` for the full environment.
 
 Failure behavior: a failed poll or a failed send **does not advance the
-cursor**, so the next run retries the same items rather than dropping them. The
+cursor**, so the next run retries the same items rather than dropping them.
+`scripts/test-operator-notify.sh` holds this contract, along with the rest of
+the failure behavior on this page, and CI runs it. The
 script is silent and exits 0 while the token file is absent, so the cron can be
 installed before the mint lands.
 

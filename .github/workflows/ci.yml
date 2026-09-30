@@ -96,6 +96,12 @@ jobs:
           printf '  %s\n' "${files[@]}"
           shellcheck -x --source-path=SCRIPTDIR "${files[@]}"
 
+      # operator-notify.sh is the only push path that reaches the human, and
+      # it runs unattended from cron. Its fixtures stub curl and use the
+      # runner's jq.
+      - name: Test operator-notify.sh
+        run: scripts/test-operator-notify.sh
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest

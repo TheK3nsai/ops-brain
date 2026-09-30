@@ -87,7 +87,9 @@ heartbeat() {
     [[ -n $HEARTBEAT_URL && $mode == poll ]] || return 0
     local url="$HEARTBEAT_URL?status=$status"
     [[ -n $msg ]] && url="$url&msg=$(printf '%s' "$msg" | jq -sRr @uri)"
-    curl -sf --max-time 10 "$url" >/dev/null 2>&1 ||
+    # The URL goes in by --config, not argv: its last path segment is the push
+    # token, and argv is readable by every local user through /proc.
+    curl -sf --max-time 10 --config <(printf 'url = "%s"\n' "$url") >/dev/null 2>&1 ||
         log "heartbeat ping failed (status=$status) — monitor will go stale"
     return 0
 }
@@ -147,22 +149,38 @@ if [[ -z $token ]]; then
     heartbeat down "token file empty"
     exit 1
 fi
+# The token is written into a quoted curl config line below. A quote or
+# backslash would be mangled into a confusing 401, and a line break would start
+# a second config directive. Minted tokens never contain any of them.
+if [[ $token == *[\"\\$'\r\n']* ]]; then
+    log "REFUSING: token contains a quote, backslash or line break"
+    heartbeat down "token file malformed"
+    exit 1
+fi
 
 poll_started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cursor=$(cat "$CURSOR_FILE" 2>/dev/null || true)
 url="$OPS_URL/api/pending?agent=$AGENT"
 [[ -n $cursor ]] && url="$url&since=$cursor"
 
-if ! response=$(curl -sf --max-time 20 -H "Authorization: Bearer $token" "$url"); then
+# Bearer by --config on a process-substitution fd, never as `-H` in argv, where
+# every local user can read it through ps or /proc/<pid>/cmdline.
+if ! response=$(curl -sf --max-time 20 \
+    --config <(printf 'header = "Authorization: Bearer %s"\n' "$token") "$url"); then
     log "poll failed: curl error against $OPS_URL"
     heartbeat down "poll failed against $OPS_URL"
     echo "operator-notify: poll failed against $OPS_URL" >&2
     exit 1
 fi
-if ! count=$(jq -r '.count' <<<"$response" 2>/dev/null); then
-    log "poll failed: unparseable response"
-    heartbeat down "unparseable poll response"
-    echo "operator-notify: unparseable response" >&2
+# Valid JSON is not enough. An error envelope has no .count, jq prints `null`,
+# and bash arithmetic reads that as an unset variable: the run died under set -u
+# without reporting down. Accept only the shape /api/pending actually returns.
+if ! count=$(jq -er 'if (.count | type) == "number" and .count >= 0 and (.count | floor) == .count
+            and (.items | type) == "array"
+        then .count else empty end' <<<"$response" 2>/dev/null); then
+    log "poll failed: unexpected response"
+    heartbeat down "unexpected poll response"
+    echo "operator-notify: unexpected response" >&2
     exit 1
 fi
 
