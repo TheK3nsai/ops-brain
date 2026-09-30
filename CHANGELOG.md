@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`operator-notify.sh` no longer puts secrets in argv.** The machine token
+  went to curl as `-H "Authorization: Bearer …"` and the heartbeat's push token
+  as part of the URL, so any local user could read both through `ps` or
+  `/proc/<pid>/cmdline` while curl ran. Both now reach curl through `--config`
+  on a process-substitution fd.
+- **`operator-notify.sh` reports a malformed poll response as down.** Only
+  unparseable JSON was caught before. A 200 carrying valid JSON without a
+  numeric `.count` (an error envelope, for example) left jq printing `null`,
+  and bash arithmetic then read that as an unset variable. Under `set -u` the
+  run died before it pinged the monitor, so the channel went silent instead of
+  reporting down. The response now has to match the shape `/api/pending`
+  returns (a non-negative integer `count` and an `items` array).
+- **`operator-notify.sh` refuses a token containing a quote, backslash or line
+  break**, logging and reporting down. Such a token would be mangled in the
+  quoted curl config line, or would start a second config directive.
+
+### Added
+
+- **`scripts/test-operator-notify.sh`**, run in CI's shellcheck job. It fixes
+  the script's failure contract: a failed poll or send holds the cursor, every
+  real run reports up or down, an unreachable monitor is never fatal,
+  `--dry-run` sends, advances and reports nothing on any path, and neither
+  token reaches argv or `--status`. Each case was checked against a broken
+  script before it counted.
+
 ## [6.0.0] — 2026-09-29
 
 ### Removed

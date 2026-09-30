@@ -9,7 +9,7 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 ### Bus core
 
 - **`accept_handoff` records no acceptor.** An accepted broadcast therefore leaves every queue including the acceptor's (the unaddressed leg of `check_in` is pending-only, to prevent duplicate work), and nobody can see who holds an accepted item. An `accepted_by` column fixes both; build it only if that bites.
-- **`operator-notify.sh` has no test** and is the only push path that reaches the human. It also mails an item once and then goes quiet; the briefing's "waiting on you" section is the standing view, so decide whether the script needs a re-reminder at all once that has been lived with.
+- **`operator-notify.sh` mails an item once and then goes quiet.** The briefing's "waiting on you" section is the standing view, so decide whether the script needs a re-reminder at all once that has been lived with.
 - **Knowledge store hygiene.** Most entries were single-host lessons filed under a tool description that invited them. Owners are triaging into host-local docs, blueprint-repo material, and genuine cross-agent gotchas; afterwards re-check that the staleness flag is meaningful (a content edit does not reset the clock; nothing names the verify action in the warning).
 
 ### Public-repo hygiene
