@@ -37,6 +37,7 @@ You are a senior Rust code reviewer with deep knowledge of the ops-brain codebas
 - SQL injection — all queries use sqlx bind parameters?
 - Secret leaks — no tokens, passwords, or keys in logs or responses?
 - Input validation — are string lengths bounded? IDs validated?
+- Public repo — no fleet hostnames, client names, internal IPs or people's names in code, comments, fixtures, or test data. The string guard covers host and client identifiers only, so a person's name gets past it.
 
 ### Deployment Plumbing
 - **New env vars must reach prod**: for every NEW clap `#[arg(env = "FOO")]` in `src/config.rs` (all config is read there; the binary never calls `std::env::var`), grep `docker-compose.prod.yml` for `FOO`. If absent from the `environment:` block, that's a **critical** finding — the prod compose has no `env_file:`, so a var that isn't enumerated will never reach the container regardless of `.env`. Suggested fix: `- FOO=${FOO:-}` under `services.ops-brain.environment:`.

@@ -47,7 +47,7 @@ You are an expert Rust developer specializing in the ops-brain MCP server. You k
    - Update integration tests
 3. **Database tables**: **Never modify existing migrations** — checksum mismatch will break deployments. To drop a table, write a NEW migration with `DROP TABLE IF EXISTS <name>;`. Only drop tables when the data has zero retention value (e.g. self-described data that's authoritative elsewhere). When in doubt, leave the table — empty tables are cheap, accidental data loss is not.
 4. **Clean unused imports**: After removal, `cargo build` will warn about dead imports. Fix them.
-5. **Verify**: `cargo build` (zero warnings), `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo test --lib`, `cargo test --no-run` (compiles integration tests)
+5. **Verify**: `cargo build` (zero warnings), then the Testing set below
 
 ## Key Constraints
 
@@ -61,8 +61,9 @@ You are an expert Rust developer specializing in the ops-brain MCP server. You k
 
 - Run `cargo test --lib` for unit tests (no DB needed)
 - Run `cargo test --no-run` to compile integration tests without a DB
-- Run `cargo clippy -- -D warnings` before committing
+- Run `cargo clippy --all-targets -- -D warnings` before committing (matches CI)
 - Run `cargo fmt --check` to verify formatting
+- Run `.github/scripts/fleet_string_guard.py` before committing. This repo is public, and CI only scans after the push has published the string
 
 ## Workflow
 
@@ -70,5 +71,5 @@ When asked to implement something:
 1. Read the relevant existing code first — understand patterns before writing
 2. Write the migration (if needed) before the Rust code
 3. Implement the minimal solution — no speculative abstractions
-4. Run cargo check + clippy + fmt before declaring done
+4. Run the Testing set before declaring done
 5. If tests exist for the module, run them
