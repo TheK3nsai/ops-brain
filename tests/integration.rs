@@ -163,6 +163,79 @@ mod knowledge_tests {
             .await
             .unwrap();
     }
+
+    #[tokio::test]
+    async fn content_edit_reverifies_but_metadata_edit_does_not() {
+        let pool = pool().await;
+
+        let k = ops_brain::repo::knowledge_repo::add_knowledge(
+            &pool,
+            "Staleness clock",
+            "Original body",
+            None,
+            &[],
+            None,
+            false,
+            Some("Claude-Stealth"),
+        )
+        .await
+        .unwrap();
+        assert!(k.last_verified_at.is_none());
+
+        let k = ops_brain::repo::knowledge_repo::update_knowledge(
+            &pool,
+            k.id,
+            Some("Renamed"),
+            None,
+            Some("gotcha"),
+            Some(&["tag".to_string()]),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            k.last_verified_at.is_none(),
+            "title/category/tag edits must not reset the staleness clock"
+        );
+
+        let k = ops_brain::repo::knowledge_repo::update_knowledge(
+            &pool,
+            k.id,
+            None,
+            Some("Original body"),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            k.last_verified_at.is_none(),
+            "resending the body unchanged must not reset the staleness clock"
+        );
+
+        let k = ops_brain::repo::knowledge_repo::update_knowledge(
+            &pool,
+            k.id,
+            None,
+            Some("Rewritten body"),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            k.last_verified_at.is_some(),
+            "a content edit re-verifies the entry"
+        );
+
+        sqlx::query("DELETE FROM knowledge WHERE id = $1")
+            .bind(k.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }
 
 // ===== Knowledge Provenance =====

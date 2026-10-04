@@ -28,6 +28,7 @@ fn compact_search_item(item: &serde_json::Value, entity_type: &str) -> serde_jso
             "author",
             "last_verified_at",
             "_staleness_warning",
+            "_staleness_hint",
             "created_at",
             "updated_at",
         ],
@@ -182,6 +183,11 @@ fn insert_page_metadata(
 /// at read time — no schema column, no background job.
 const KNOWLEDGE_STALE_DAYS: i64 = 90;
 
+/// Attached only to stale entries, so a reader who sees the flag also sees
+/// what clears it. Kept short: a browse can return up to 200 stale rows.
+const KNOWLEDGE_STALE_HINT: &str =
+    "90+ days unverified: update_knowledge verified=true, or edit content, or delete";
+
 /// True if a knowledge entry is stale: >90 days since last verification, or
 /// since creation if it has never been verified.
 fn is_knowledge_stale(k: &crate::models::knowledge::Knowledge) -> bool {
@@ -208,6 +214,12 @@ fn knowledge_entries_to_json(
                     "_staleness_warning".to_string(),
                     serde_json::Value::Bool(stale),
                 );
+                if stale {
+                    obj.insert(
+                        "_staleness_hint".to_string(),
+                        serde_json::Value::String(KNOWLEDGE_STALE_HINT.to_string()),
+                    );
+                }
             }
             Some(v)
         })
@@ -281,7 +293,7 @@ pub struct UpdateKnowledgeParams {
     pub cross_client_safe: Option<bool>,
     /// Set to true to confirm the content is still accurate: sets
     /// last_verified_at to now without requiring content changes. This is how
-    /// a `_staleness_warning` on an entry is cleared.
+    /// a `_staleness_warning` on an entry is cleared. Content edits also re-verify.
     pub verified: Option<bool>,
 }
 
@@ -1049,6 +1061,19 @@ mod tests {
             json[1].get("_staleness_warning"),
             Some(&serde_json::Value::Bool(true)),
             "120-day-old entry should be stale"
+        );
+        assert!(
+            json[0].get("_staleness_hint").is_none(),
+            "fresh entry carries no hint"
+        );
+        assert_eq!(
+            json[1].get("_staleness_hint"),
+            Some(&serde_json::Value::String(KNOWLEDGE_STALE_HINT.to_string())),
+            "stale entry names the action that clears it"
+        );
+        assert!(
+            KNOWLEDGE_STALE_HINT.contains(&KNOWLEDGE_STALE_DAYS.to_string()),
+            "hint text must track the threshold"
         );
     }
 

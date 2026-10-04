@@ -102,10 +102,17 @@ pub async fn update_knowledge(
     // immutable via the tool surface. Direct SQL is still possible for
     // emergency correction. See migrations 20260408000001 (column added
     // as author_cc) and 20260508000002 (renamed to author in v2.0).
+    //
+    // A content edit re-verifies: whoever rewrote the body just asserted it
+    // is accurate, so leaving the staleness clock running would flag fresh
+    // text as stale. Title, category and tag edits assert nothing and leave
+    // the clock alone, as does resending the body unchanged (a client that
+    // round-trips the whole object on a tag edit asserted nothing new).
     sqlx::query_as::<_, Knowledge>(
         "UPDATE knowledge SET
             title = COALESCE($2, title),
             content = COALESCE($3, content),
+            last_verified_at = CASE WHEN $3 IS NULL OR $3 = content THEN last_verified_at ELSE NOW() END,
             category = COALESCE($4, category),
             tags = COALESCE($5, tags),
             cross_client_safe = COALESCE($6, cross_client_safe),
