@@ -21,6 +21,16 @@ All notable changes to this project will be documented in this file.
 - **`operator-notify.sh` refuses a token containing a quote, backslash or line
   break**, logging and reporting down. Such a token would be mangled in the
   quoted curl config line, or would start a second config directive.
+- **A knowledge `content` edit re-verifies the entry.** `last_verified_at` only
+  moved on an explicit `verified=true`, so a body rewritten yesterday could be
+  flagged stale the next day. A content edit that changes the body now stamps
+  it in the same UPDATE, whoever makes it, so `last_verified_at` means "someone
+  last vouched for this text", not an author attestation. Title, category and
+  tag edits, and resending the body unchanged, leave the clock alone.
+- **Stale knowledge entries say what clears the flag.** `_staleness_warning`
+  was a bare boolean, and the only mention of `verified=true` lived in the
+  `update_knowledge` schema. Stale rows now also carry a short
+  `_staleness_hint` naming verify, edit or delete. The boolean is unchanged.
 
 ### Added
 
