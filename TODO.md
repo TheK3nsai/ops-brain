@@ -11,6 +11,8 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 - **`accept_handoff` records no acceptor.** An accepted broadcast therefore leaves every queue including the acceptor's (the unaddressed leg of `check_in` is pending-only, to prevent duplicate work), and nobody can see who holds an accepted item. An `accepted_by` column fixes both; build it only if that bites.
 - **`operator-notify.sh` mails an item once and then goes quiet.** The briefing's "waiting on you" section is the standing view, so decide whether the script needs a re-reminder at all once that has been lived with.
 
+- **Deleting a client makes its knowledge global.** `knowledge.client_id` is `ON DELETE SET NULL`, so removing a client row (operator SQL only; no tool path) would expose that client's rows to `exclude_client_data` tokens. Switch the FK to `ON DELETE RESTRICT` in a new migration before any client is ever deleted.
+
 ### Public-repo hygiene
 
 - **String guard residuals.** Messages are now guarded before commit (`.githooks/commit-msg`, once `core.hooksPath` is set per clone) and CI scans PR text and message ranges. PR bodies are prevented locally only where an agent hook covers `gh`/MCP writes; that is Claude Code on stealth, so Codex and humans still rely on CI detection, and an edit after the fact is cosmetic (the host keeps prior revisions). CI scans PR text only: issues, PR comments, reviews and release notes get no CI scan at all, just the stealth Claude hook. Also: an unmergeable PR runs no `pull_request` workflow, so it is unscanned until rebased. And the guarded classes are host and client identifiers only — a person's name in a fixture or example passes; add a class if that matters.
