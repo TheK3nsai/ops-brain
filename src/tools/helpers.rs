@@ -39,6 +39,15 @@ pub(crate) fn bound_agent(ext: &Extensions) -> Option<String> {
         .and_then(|caller| caller.bound_agent().map(str::to_string))
 }
 
+/// The caller's bound slug when its token sets `exclude_client_data`, resolved
+/// through the same transport chain as [`bound_agent`]. Handlers turn it into a
+/// [`crate::auth::Visibility`]. `None` means unrestricted.
+pub(crate) fn restricted_agent(ext: &Extensions) -> Option<String> {
+    ext.get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<crate::auth::CallerClass>())
+        .and_then(|caller| caller.restricted_agent().map(str::to_string))
+}
+
 /// Truncate `s` to at most `max_bytes`, walking back to the nearest UTF-8 char
 /// boundary so the result is always valid UTF-8. No suffix is appended — each
 /// caller owns its own ellipsis/format. If `s` already fits, it is returned

@@ -45,8 +45,12 @@ pub async fn hybrid_search_knowledge(
     pool: &PgPool,
     query_text: &str,
     query_embedding: Option<&[f32]>,
+    global_only: bool,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
+    // Filter inside each candidate leg, not after the fusion: a page cut from
+    // unfiltered candidates would come back short for a restricted caller.
+    let scope = super::global_only_clause(global_only);
     match query_embedding {
         Some(emb) => {
             let vec = Vector::from(emb.to_vec());
@@ -58,13 +62,13 @@ pub async fn hybrid_search_knowledge(
                 "WITH fts AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM knowledge
-                    WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                    WHERE search_vector @@ websearch_to_tsquery('english', $1){scope}
                     LIMIT $3
                 ),
                 vec AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $2) AS rank
                     FROM knowledge
-                    WHERE embedding IS NOT NULL
+                    WHERE embedding IS NOT NULL{scope}
                     ORDER BY embedding <=> $2
                     LIMIT $3
                 ),
@@ -88,7 +92,7 @@ pub async fn hybrid_search_knowledge(
         None => {
             let results = sqlx::query_as::<_, Knowledge>(&format!(
                 "SELECT {KNOWLEDGE_COLS} FROM knowledge
-                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                 WHERE search_vector @@ websearch_to_tsquery('english', $1){scope}
                  ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
                  LIMIT $2"
             ))
@@ -101,7 +105,7 @@ pub async fn hybrid_search_knowledge(
                 if let Some(or_text) = super::build_or_tsquery_text(query_text) {
                     return sqlx::query_as::<_, Knowledge>(&format!(
                         "SELECT {KNOWLEDGE_COLS} FROM knowledge
-                         WHERE search_vector @@ to_tsquery('english', $1)
+                         WHERE search_vector @@ to_tsquery('english', $1){scope}
                          ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
                          LIMIT $2"
                     ))
@@ -121,23 +125,25 @@ pub async fn hybrid_search_handoffs(
     pool: &PgPool,
     query_text: &str,
     query_embedding: Option<&[f32]>,
+    party: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     match query_embedding {
         Some(emb) => {
             let vec = Vector::from(emb.to_vec());
             let candidate_limit = limit.max(MIN_HYBRID_CANDIDATES);
+            let scope = super::party_clause(5, "");
             sqlx::query_as::<_, Handoff>(&format!(
                 "WITH fts AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC) AS rank
                     FROM handoffs
-                    WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                    WHERE search_vector @@ websearch_to_tsquery('english', $1) AND {scope}
                     LIMIT $3
                 ),
                 vec AS (
                     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $2) AS rank
                     FROM handoffs
-                    WHERE embedding IS NOT NULL
+                    WHERE embedding IS NOT NULL AND {scope}
                     ORDER BY embedding <=> $2
                     LIMIT $3
                 ),
@@ -155,18 +161,21 @@ pub async fn hybrid_search_handoffs(
             .bind(vec)
             .bind(candidate_limit)
             .bind(limit)
+            .bind(party)
             .fetch_all(pool)
             .await
         }
         None => {
+            let scope = super::party_clause(3, "");
             let results = sqlx::query_as::<_, Handoff>(&format!(
                 "SELECT {HANDOFF_COLS} FROM handoffs
-                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                 WHERE search_vector @@ websearch_to_tsquery('english', $1) AND {scope}
                  ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
                  LIMIT $2"
             ))
             .bind(query_text)
             .bind(limit)
+            .bind(party)
             .fetch_all(pool)
             .await?;
 
@@ -174,12 +183,13 @@ pub async fn hybrid_search_handoffs(
                 if let Some(or_text) = super::build_or_tsquery_text(query_text) {
                     return sqlx::query_as::<_, Handoff>(&format!(
                         "SELECT {HANDOFF_COLS} FROM handoffs
-                         WHERE search_vector @@ to_tsquery('english', $1)
+                         WHERE search_vector @@ to_tsquery('english', $1) AND {scope}
                          ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
                          LIMIT $2"
                     ))
                     .bind(&or_text)
                     .bind(limit)
+                    .bind(party)
                     .fetch_all(pool)
                     .await;
                 }
@@ -195,11 +205,13 @@ pub async fn hybrid_search_handoffs(
 pub async fn vector_search_knowledge(
     pool: &PgPool,
     query_embedding: &[f32],
+    global_only: bool,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
     let vec = Vector::from(query_embedding.to_vec());
+    let scope = super::global_only_clause(global_only);
     sqlx::query_as::<_, Knowledge>(&format!(
-        "SELECT {KNOWLEDGE_COLS} FROM knowledge WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2"
+        "SELECT {KNOWLEDGE_COLS} FROM knowledge WHERE embedding IS NOT NULL{scope} ORDER BY embedding <=> $1 LIMIT $2"
     ))
     .bind(vec)
     .bind(limit)
@@ -219,16 +231,18 @@ pub async fn find_similar_knowledge(
     pool: &PgPool,
     query_embedding: &[f32],
     max_distance: f64,
+    global_only: bool,
     limit: i64,
 ) -> Result<Vec<SimilarEntry>, sqlx::Error> {
     let vec = Vector::from(query_embedding.to_vec());
-    sqlx::query_as::<_, SimilarEntry>(
+    let scope = super::global_only_clause(global_only);
+    sqlx::query_as::<_, SimilarEntry>(&format!(
         "SELECT id, title, category, (embedding <=> $1)::float8 AS distance
          FROM knowledge
-         WHERE embedding IS NOT NULL AND (embedding <=> $1) < $2
+         WHERE embedding IS NOT NULL AND (embedding <=> $1) < $2{scope}
          ORDER BY distance
-         LIMIT $3",
-    )
+         LIMIT $3"
+    ))
     .bind(vec)
     .bind(max_distance)
     .bind(limit)
@@ -239,14 +253,17 @@ pub async fn find_similar_knowledge(
 pub async fn vector_search_handoffs(
     pool: &PgPool,
     query_embedding: &[f32],
+    party: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let vec = Vector::from(query_embedding.to_vec());
+    let scope = super::party_clause(3, "");
     sqlx::query_as::<_, Handoff>(&format!(
-        "SELECT {HANDOFF_COLS} FROM handoffs WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT $2"
+        "SELECT {HANDOFF_COLS} FROM handoffs WHERE embedding IS NOT NULL AND {scope} ORDER BY embedding <=> $1 LIMIT $2"
     ))
     .bind(vec)
     .bind(limit)
+    .bind(party)
     .fetch_all(pool)
     .await
 }

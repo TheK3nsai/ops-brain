@@ -158,6 +158,36 @@ fn insert_cross_client_withheld(
 const UNSCOPED_NOTE: &str =
     "unscoped query — cross-client withholding is not applied; pass client_slug to enable the safety gate";
 
+/// `_restricted` on every search_bus response to a caller whose token
+/// excludes client data. Its own key, because `_note` can already hold the
+/// embedding caveat and this one must not be crowded out.
+const RESTRICTED_NOTE: &str =
+    "this token is excluded from client data: results hold global knowledge and your own handoffs only";
+
+/// The unscoped-gate `_note`, if it applies. Never for a restricted caller:
+/// its results are not "every client's content", so the caveat would be false.
+fn scope_note(
+    requesting_client_id: Option<uuid::Uuid>,
+    vis: crate::auth::Visibility<'_>,
+) -> Option<&'static str> {
+    (requesting_client_id.is_none() && !vis.global_only()).then_some(UNSCOPED_NOTE)
+}
+
+const RESTRICTED_EDIT: &str =
+    "this token is excluded from client data and may edit or delete only knowledge it authored";
+
+fn insert_restricted_note(
+    results: &mut serde_json::Map<String, serde_json::Value>,
+    vis: crate::auth::Visibility<'_>,
+) {
+    if vis.global_only() {
+        results.insert(
+            "_restricted".to_string(),
+            serde_json::Value::String(RESTRICTED_NOTE.to_string()),
+        );
+    }
+}
+
 fn insert_page_metadata(
     results: &mut serde_json::Map<String, serde_json::Value>,
     page: crate::pagination::PageRequest,
@@ -309,6 +339,7 @@ pub async fn handle_add_knowledge(
     brain: &super::OpsBrain,
     p: AddKnowledgeParams,
     bound: Option<&str>,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     if let Err(msg) = crate::validation::validate_bounded_text(
         &p.title,
@@ -339,6 +370,9 @@ pub async fn handle_add_knowledge(
     if let Err(msg) = crate::auth::check_bound_identity(bound, &author) {
         return error_result(&msg);
     }
+    if vis.global_only() && p.client_slug.is_some() {
+        return error_result(crate::auth::CLIENT_DATA_EXCLUDED);
+    }
 
     let tags = p.tags.unwrap_or_default();
     let cross_client_safe = p.cross_client_safe.unwrap_or(false);
@@ -365,6 +399,7 @@ pub async fn handle_add_knowledge(
                     &brain.pool,
                     &embedding,
                     0.15,
+                    vis.global_only(),
                     3,
                 )
                 .await
@@ -445,6 +480,7 @@ pub async fn handle_add_knowledge(
 pub async fn handle_update_knowledge(
     brain: &super::OpsBrain,
     p: UpdateKnowledgeParams,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     if let Some(title) = p.title.as_deref() {
         if let Err(msg) = crate::validation::validate_bounded_text(
@@ -470,8 +506,14 @@ pub async fn handle_update_knowledge(
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.id)),
     };
 
-    // Verify entry exists
+    // Verify entry exists. A client row reads as missing to a restricted
+    // caller, so the reply doesn't confirm that it exists. A global row it can
+    // read but didn't write is refused by name.
     match crate::repo::knowledge_repo::get_knowledge(&brain.pool, id).await {
+        Ok(Some(k)) if !vis.can_see_knowledge(k.client_id) => return not_found("Knowledge", &p.id),
+        Ok(Some(k)) if !vis.can_modify_knowledge(k.client_id, k.author.as_deref()) => {
+            return error_result(RESTRICTED_EDIT)
+        }
         Ok(Some(_)) => {}
         Ok(None) => return not_found("Knowledge", &p.id),
         Err(e) => return error_result(&format!("Database error: {e}")),
@@ -512,14 +554,29 @@ pub async fn handle_update_knowledge(
     }
 }
 
-pub(crate) async fn handle_delete_knowledge(
+pub async fn handle_delete_knowledge(
     brain: &super::OpsBrain,
     p: DeleteKnowledgeParams,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.id) {
         Ok(id) => id,
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.id)),
     };
+
+    if vis.global_only() {
+        match crate::repo::knowledge_repo::get_knowledge(&brain.pool, id).await {
+            Ok(Some(k)) if !vis.can_see_knowledge(k.client_id) => {
+                return not_found("Knowledge", &p.id)
+            }
+            Ok(Some(k)) if !vis.can_modify_knowledge(k.client_id, k.author.as_deref()) => {
+                return error_result(RESTRICTED_EDIT)
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => return not_found("Knowledge", &p.id),
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        }
+    }
 
     match crate::repo::knowledge_repo::delete_knowledge(&brain.pool, id).await {
         Ok(true) => json_result(&serde_json::json!({"deleted": true, "id": p.id})),
@@ -531,6 +588,7 @@ pub(crate) async fn handle_delete_knowledge(
 pub async fn handle_search_knowledge(
     brain: &super::OpsBrain,
     p: SearchKnowledgeParams,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let tables = p.tables.unwrap_or_else(|| vec!["knowledge".to_string()]);
     if tables.is_empty() {
@@ -550,6 +608,9 @@ pub async fn handle_search_knowledge(
     if p.category.is_some() && tables.iter().any(|table| table == "handoffs") {
         return error_result("category browse filter applies to knowledge only");
     }
+    if vis.global_only() && p.client_slug.is_some() {
+        return error_result(crate::auth::CLIENT_DATA_EXCLUDED);
+    }
 
     // Detect browse mode: empty or "*" query means "show me recent entries"
     let raw_query = p.query.unwrap_or_default();
@@ -567,6 +628,7 @@ pub async fn handle_search_knowledge(
             p.acknowledge_cross_client.unwrap_or(false),
             page,
             compact,
+            vis,
         )
         .await;
     }
@@ -605,6 +667,7 @@ pub async fn handle_search_knowledge(
             acknowledge,
             page,
             compact,
+            vis,
         )
         .await;
     }
@@ -631,6 +694,7 @@ pub async fn handle_search_knowledge(
                         crate::repo::embedding_repo::vector_search_knowledge(
                             &brain.pool,
                             emb_ref.unwrap(),
+                            vis.global_only(),
                             page.fetch_limit(),
                         )
                         .await
@@ -640,6 +704,7 @@ pub async fn handle_search_knowledge(
                             &brain.pool,
                             &raw_query,
                             emb_ref,
+                            vis.global_only(),
                             page.fetch_limit(),
                         )
                         .await
@@ -648,6 +713,7 @@ pub async fn handle_search_knowledge(
                         crate::repo::knowledge_repo::search_knowledge(
                             &brain.pool,
                             &raw_query,
+                            vis.global_only(),
                             page.fetch_limit(),
                         )
                         .await
@@ -688,12 +754,14 @@ pub async fn handle_search_knowledge(
                 }
             }
             "handoffs" => {
-                // Handoffs are NOT gated — no client_id on handoffs table
+                // Handoffs carry no client_id, so the client_slug gate can't
+                // apply. A restricted caller is narrowed to its own handoffs.
                 let search_result = match mode {
                     "semantic" => {
                         crate::repo::embedding_repo::vector_search_handoffs(
                             &brain.pool,
                             emb_ref.unwrap(),
+                            vis.party(),
                             page.fetch_limit(),
                         )
                         .await
@@ -703,6 +771,7 @@ pub async fn handle_search_knowledge(
                             &brain.pool,
                             &raw_query,
                             emb_ref,
+                            vis.party(),
                             page.fetch_limit(),
                         )
                         .await
@@ -711,6 +780,7 @@ pub async fn handle_search_knowledge(
                         crate::repo::handoff_repo::search_handoffs(
                             &brain.pool,
                             &raw_query,
+                            vis.party(),
                             page.fetch_limit(),
                         )
                         .await
@@ -762,19 +832,21 @@ pub async fn handle_search_knowledge(
     }
 
     // Unscoped query: the safety gate is inert. Don't clobber an embedding
-    // `_note` if one was set above — surface the unscoped caveat only when the
+    // `_note` if one was set above — surface the scope caveat only when the
     // slot is free.
-    if requesting_client_id.is_none() {
+    if let Some(note) = scope_note(requesting_client_id, vis) {
         results
             .entry("_note".to_string())
-            .or_insert_with(|| serde_json::Value::String(UNSCOPED_NOTE.to_string()));
+            .or_insert_with(|| serde_json::Value::String(note.to_string()));
     }
+    insert_restricted_note(&mut results, vis);
 
     json_result(&serde_json::Value::Object(results))
 }
 
 /// Browse mode: return recent entries across requested tables (no search filter).
 /// Triggered when query is empty or "*".
+#[allow(clippy::too_many_arguments)]
 async fn browse_recent_entries(
     brain: &super::OpsBrain,
     tables: &[String],
@@ -783,6 +855,7 @@ async fn browse_recent_entries(
     acknowledge: bool,
     page: crate::pagination::PageRequest,
     compact: bool,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let requesting_client_id = match resolve_client_id(&brain.pool, client_slug).await {
         Ok(v) => v,
@@ -800,6 +873,7 @@ async fn browse_recent_entries(
                     &brain.pool,
                     category,
                     None,
+                    vis.global_only(),
                     page.fetch_limit(),
                 )
                 .await
@@ -845,6 +919,7 @@ async fn browse_recent_entries(
                     None,
                     None,
                     false,
+                    vis.party(),
                     page.fetch_limit(),
                 )
                 .await
@@ -882,17 +957,19 @@ async fn browse_recent_entries(
                 .to_string(),
         ),
     );
-    if requesting_client_id.is_none() {
+    if let Some(note) = scope_note(requesting_client_id, vis) {
         results.insert(
             "_note".to_string(),
-            serde_json::Value::String(UNSCOPED_NOTE.to_string()),
+            serde_json::Value::String(note.to_string()),
         );
     }
+    insert_restricted_note(&mut results, vis);
 
     json_result(&serde_json::Value::Object(results))
 }
 
 /// Single-table knowledge search.
+#[allow(clippy::too_many_arguments)]
 async fn search_knowledge_single(
     brain: &super::OpsBrain,
     query: &str,
@@ -901,6 +978,7 @@ async fn search_knowledge_single(
     acknowledge: bool,
     page: crate::pagination::PageRequest,
     compact: bool,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let result = match mode {
         "semantic" => {
@@ -912,6 +990,7 @@ async fn search_knowledge_single(
             crate::repo::embedding_repo::vector_search_knowledge(
                 &brain.pool,
                 &emb,
+                vis.global_only(),
                 page.fetch_limit(),
             )
             .await
@@ -922,13 +1001,19 @@ async fn search_knowledge_single(
                 &brain.pool,
                 query,
                 emb.as_deref(),
+                vis.global_only(),
                 page.fetch_limit(),
             )
             .await
         }
         _ => {
-            crate::repo::knowledge_repo::search_knowledge(&brain.pool, query, page.fetch_limit())
-                .await
+            crate::repo::knowledge_repo::search_knowledge(
+                &brain.pool,
+                query,
+                vis.global_only(),
+                page.fetch_limit(),
+            )
+            .await
         }
     };
     match result {
@@ -962,8 +1047,11 @@ async fn search_knowledge_single(
             if !withheld.is_empty() {
                 response["cross_client_withheld"] = serde_json::json!(withheld);
             }
-            if requesting_client_id.is_none() {
-                response["_note"] = serde_json::Value::String(UNSCOPED_NOTE.to_string());
+            if let Some(note) = scope_note(requesting_client_id, vis) {
+                response["_note"] = serde_json::Value::String(note.to_string());
+            }
+            if vis.global_only() {
+                response["_restricted"] = serde_json::Value::String(RESTRICTED_NOTE.to_string());
             }
             json_result(&response)
         }

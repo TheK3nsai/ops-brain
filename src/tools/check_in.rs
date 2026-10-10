@@ -36,13 +36,19 @@ pub async fn handle_check_in(
     brain: &super::OpsBrain,
     p: CheckInParams,
     bound: Option<&str>,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let agent_name = match validate_agent_name(&p.agent_name) {
         Ok(n) => n.to_string(),
         Err(e) => return error_result(&e),
     };
     // Read path: checking in as another agent is legitimate (e.g. an
-    // interactive session triaging a peer's queue) but worth surfacing.
+    // interactive session triaging a peer's queue) but worth surfacing. A
+    // token that excludes client data gets its own queue only, and its party
+    // filter below also drops broadcasts, which anyone may have written.
+    if let Err(msg) = vis.check_own_queue(&agent_name) {
+        return error_result(&msg);
+    }
     crate::auth::warn_identity_mismatch(bound, &agent_name, "check_in");
 
     // Open action handoffs targeted at this agent, plus unaddressed ones from
@@ -61,6 +67,7 @@ pub async fn handle_check_in(
         /* include_notify */ false,
         /* include_broadcast */ true,
         /* exclude_self_claims */ true,
+        vis.party(),
         action_page.fetch_limit(),
     )
     .await
@@ -97,6 +104,7 @@ pub async fn handle_check_in(
         /* include_notify */ false,
         /* include_broadcast */ true,
         /* exclude_self_claims */ false,
+        vis.party(),
         notify_page.fetch_limit(),
     )
     .await

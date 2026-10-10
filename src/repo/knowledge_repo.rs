@@ -54,6 +54,7 @@ pub async fn list_knowledge(
     pool: &PgPool,
     category: Option<&str>,
     client_id: Option<Uuid>,
+    global_only: bool,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
     let mut query = format!("SELECT {KNOWLEDGE_COLS} FROM knowledge");
@@ -67,6 +68,9 @@ pub async fn list_knowledge(
     if client_id.is_some() {
         conditions.push(format!("client_id = ${param_idx}"));
         param_idx += 1;
+    }
+    if global_only {
+        conditions.push("client_id IS NULL".to_string());
     }
 
     if !conditions.is_empty() {
@@ -149,11 +153,13 @@ pub async fn delete_knowledge(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Err
 pub async fn search_knowledge(
     pool: &PgPool,
     query: &str,
+    global_only: bool,
     limit: i64,
 ) -> Result<Vec<Knowledge>, sqlx::Error> {
+    let scope = super::global_only_clause(global_only);
     let results = sqlx::query_as::<_, Knowledge>(&format!(
         "SELECT {KNOWLEDGE_COLS} FROM knowledge
-         WHERE search_vector @@ websearch_to_tsquery('english', $1)
+         WHERE search_vector @@ websearch_to_tsquery('english', $1){scope}
          ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC
          LIMIT $2"
     ))
@@ -166,7 +172,7 @@ pub async fn search_knowledge(
         if let Some(or_text) = super::build_or_tsquery_text(query) {
             return sqlx::query_as::<_, Knowledge>(&format!(
                 "SELECT {KNOWLEDGE_COLS} FROM knowledge
-                 WHERE search_vector @@ to_tsquery('english', $1)
+                 WHERE search_vector @@ to_tsquery('english', $1){scope}
                  ORDER BY ts_rank(search_vector, to_tsquery('english', $1)) DESC
                  LIMIT $2"
             ))

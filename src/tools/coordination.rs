@@ -117,10 +117,32 @@ pub struct DeleteHandoffParams {
 
 // ===== HANDOFF HANDLERS =====
 
+/// Gate a by-id handoff operation for a caller whose token excludes client
+/// data. A handoff the caller neither sent nor received reads as not found, so
+/// the reply doesn't confirm that it exists. Unrestricted callers skip the
+/// extra read. Sender and recipient never change after creation, so checking
+/// before the write is not a race.
+async fn ensure_handoff_visible(
+    brain: &super::OpsBrain,
+    id: uuid::Uuid,
+    raw_id: &str,
+    vis: crate::auth::Visibility<'_>,
+) -> Result<(), CallToolResult> {
+    if vis.party().is_none() {
+        return Ok(());
+    }
+    match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
+        Ok(Some(h)) if vis.can_see_handoff(&h.from_agent, h.to_agent.as_deref()) => Ok(()),
+        Ok(_) => Err(not_found("Handoff", raw_id)),
+        Err(e) => Err(error_result(&format!("Database error: {e}"))),
+    }
+}
+
 pub async fn handle_create_handoff(
     brain: &super::OpsBrain,
     p: CreateHandoffParams,
     bound: Option<&str>,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let priority = p.priority.as_deref().unwrap_or("normal");
     let category = p.category.as_deref().unwrap_or("action");
@@ -169,6 +191,12 @@ pub async fn handle_create_handoff(
         },
         None => None,
     };
+    // A restricted caller can only reply into threads it can see.
+    if let (Some(parent), Some(raw)) = (in_reply_to, p.in_reply_to.as_deref()) {
+        if let Err(r) = ensure_handoff_visible(brain, parent, raw, vis).await {
+            return r;
+        }
+    }
 
     // Validate sender + target as free-form agent slugs. v2.0 dropped the
     // CC-fleet allowlist; whatever the caller says it is, it is. Stored
@@ -217,9 +245,14 @@ pub async fn handle_create_handoff(
             )
             .await;
 
+            // The novelty check scans every handoff, so for a restricted
+            // caller its presence and its suggestions would describe traffic
+            // outside the boundary. Skipped for them.
             let warning = match to_agent.as_deref() {
-                Some(target) => unknown_recipient_warning(&brain.pool, target, handoff.id).await,
-                None => None,
+                Some(target) if vis.party().is_none() => {
+                    unknown_recipient_warning(&brain.pool, target, handoff.id).await
+                }
+                _ => None,
             };
             match warning {
                 Some(msg) => {
@@ -272,15 +305,23 @@ async fn unknown_recipient_warning(
     }
 }
 
-pub async fn handle_get_handoff(brain: &super::OpsBrain, p: GetHandoffParams) -> CallToolResult {
+pub async fn handle_get_handoff(
+    brain: &super::OpsBrain,
+    p: GetHandoffParams,
+    vis: crate::auth::Visibility<'_>,
+) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.handoff_id) {
         Ok(id) => id,
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
     };
 
     match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
-        Ok(Some(handoff)) => json_result(&handoff),
-        Ok(None) => not_found("Handoff", &p.handoff_id),
+        Ok(Some(handoff))
+            if vis.can_see_handoff(&handoff.from_agent, handoff.to_agent.as_deref()) =>
+        {
+            json_result(&handoff)
+        }
+        Ok(_) => not_found("Handoff", &p.handoff_id),
         Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
@@ -288,11 +329,15 @@ pub async fn handle_get_handoff(brain: &super::OpsBrain, p: GetHandoffParams) ->
 pub async fn handle_accept_handoff(
     brain: &super::OpsBrain,
     p: UpdateHandoffStatusParams,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.handoff_id) {
         Ok(id) => id,
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
     };
+    if let Err(r) = ensure_handoff_visible(brain, id, &p.handoff_id, vis).await {
+        return r;
+    }
 
     // Atomic accept: the pending precondition is inside the UPDATE, so two
     // agents racing on the same handoff can't both walk away owning it.
@@ -315,11 +360,15 @@ pub async fn handle_accept_handoff(
 pub async fn handle_complete_handoff(
     brain: &super::OpsBrain,
     p: CompleteHandoffParams,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.handoff_id) {
         Ok(id) => id,
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
     };
+    if let Err(r) = ensure_handoff_visible(brain, id, &p.handoff_id, vis).await {
+        return r;
+    }
 
     // Atomic complete: only open (pending/accepted) rows transition, so a
     // concurrent complete can't silently overwrite commit_hash.
@@ -349,6 +398,7 @@ pub async fn handle_list_replies_to_me(
     brain: &super::OpsBrain,
     p: ListRepliesToMeParams,
     bound: Option<&str>,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let agent = match crate::validation::validate_agent_name(&p.agent_name) {
         Ok(n) => n.to_string(),
@@ -357,6 +407,10 @@ pub async fn handle_list_replies_to_me(
     // Read path: an agent normally polls its own thread replies. Querying
     // another slug is legitimate during triage, so it is served — but logged,
     // because "token X reading Y's replies" is a signal worth seeing.
+    // A restricted token has no triage role: its own replies only.
+    if let Err(msg) = vis.check_own_queue(&agent) {
+        return error_result(&msg);
+    }
     crate::auth::warn_identity_mismatch(bound, &agent, "list_replies_to_me");
     let since = match p.since.as_deref() {
         Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
@@ -375,6 +429,7 @@ pub async fn handle_list_replies_to_me(
         &brain.pool,
         &agent,
         since,
+        vis.party(),
         page.fetch_limit(),
     )
     .await
@@ -392,11 +447,18 @@ pub async fn handle_list_replies_to_me(
     }
 }
 
-pub async fn handle_mark_merged(brain: &super::OpsBrain, p: MarkMergedParams) -> CallToolResult {
+pub async fn handle_mark_merged(
+    brain: &super::OpsBrain,
+    p: MarkMergedParams,
+    vis: crate::auth::Visibility<'_>,
+) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.handoff_id) {
         Ok(id) => id,
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
     };
+    if let Err(r) = ensure_handoff_visible(brain, id, &p.handoff_id, vis).await {
+        return r;
+    }
     let merge_commit = p.merge_commit.trim();
     if merge_commit.is_empty() {
         return error_result("merge_commit cannot be empty");
@@ -459,6 +521,7 @@ pub async fn handle_mark_merged(brain: &super::OpsBrain, p: MarkMergedParams) ->
 pub async fn handle_list_handoffs(
     brain: &super::OpsBrain,
     p: ListHandoffsParams,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let page = crate::pagination::PageRequest::new(p.limit, 20);
     let compact = p.compact.unwrap_or(true);
@@ -503,6 +566,7 @@ pub async fn handle_list_handoffs(
         from_agent_filter.as_deref(),
         p.category.as_deref(),
         include_notify,
+        vis.party(),
         page.fetch_limit(),
     )
     .await
@@ -552,11 +616,15 @@ pub async fn handle_list_handoffs(
 pub async fn handle_delete_handoff(
     brain: &super::OpsBrain,
     p: DeleteHandoffParams,
+    vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.handoff_id) {
         Ok(id) => id,
         Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
     };
+    if let Err(r) = ensure_handoff_visible(brain, id, &p.handoff_id, vis).await {
+        return r;
+    }
 
     match crate::repo::handoff_repo::delete_handoff(&brain.pool, id).await {
         Ok(true) => json_result(&serde_json::json!({"deleted": true, "id": p.handoff_id})),

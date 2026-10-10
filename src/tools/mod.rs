@@ -12,6 +12,7 @@ use rmcp::{
 };
 use sqlx::PgPool;
 
+use crate::auth::Visibility;
 use crate::embeddings::EmbeddingClient;
 
 /// Server instructions — the only text every agent on every host is guaranteed
@@ -69,8 +70,10 @@ impl OpsBrain {
         params: Parameters<knowledge::AddKnowledgeParams>,
         ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
         let bound = helpers::bound_agent(&ext);
-        Ok(knowledge::handle_add_knowledge(self, params.0, bound.as_deref()).await)
+        Ok(knowledge::handle_add_knowledge(self, params.0, bound.as_deref(), vis).await)
     }
 
     #[tool(
@@ -86,8 +89,11 @@ impl OpsBrain {
     async fn update_knowledge(
         &self,
         params: Parameters<knowledge::UpdateKnowledgeParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(knowledge::handle_update_knowledge(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(knowledge::handle_update_knowledge(self, params.0, vis).await)
     }
 
     #[tool(
@@ -103,8 +109,11 @@ impl OpsBrain {
     async fn delete_knowledge(
         &self,
         params: Parameters<knowledge::DeleteKnowledgeParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(knowledge::handle_delete_knowledge(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(knowledge::handle_delete_knowledge(self, params.0, vis).await)
     }
 
     #[tool(
@@ -122,8 +131,11 @@ impl OpsBrain {
     async fn search_bus(
         &self,
         params: Parameters<knowledge::SearchKnowledgeParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(knowledge::handle_search_knowledge(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(knowledge::handle_search_knowledge(self, params.0, vis).await)
     }
 
     // ===== HANDOFF TOOLS =====
@@ -146,8 +158,10 @@ impl OpsBrain {
         params: Parameters<coordination::CreateHandoffParams>,
         ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
         let bound = helpers::bound_agent(&ext);
-        Ok(coordination::handle_create_handoff(self, params.0, bound.as_deref()).await)
+        Ok(coordination::handle_create_handoff(self, params.0, bound.as_deref(), vis).await)
     }
 
     #[tool(
@@ -163,8 +177,11 @@ impl OpsBrain {
     async fn get_handoff(
         &self,
         params: Parameters<coordination::GetHandoffParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_get_handoff(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(coordination::handle_get_handoff(self, params.0, vis).await)
     }
 
     #[tool(
@@ -181,8 +198,11 @@ impl OpsBrain {
     async fn accept_handoff(
         &self,
         params: Parameters<coordination::UpdateHandoffStatusParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_accept_handoff(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(coordination::handle_accept_handoff(self, params.0, vis).await)
     }
 
     #[tool(
@@ -200,8 +220,11 @@ impl OpsBrain {
     async fn complete_handoff(
         &self,
         params: Parameters<coordination::CompleteHandoffParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_complete_handoff(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(coordination::handle_complete_handoff(self, params.0, vis).await)
     }
 
     #[tool(
@@ -221,8 +244,10 @@ impl OpsBrain {
         params: Parameters<coordination::ListRepliesToMeParams>,
         ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
         let bound = helpers::bound_agent(&ext);
-        Ok(coordination::handle_list_replies_to_me(self, params.0, bound.as_deref()).await)
+        Ok(coordination::handle_list_replies_to_me(self, params.0, bound.as_deref(), vis).await)
     }
 
     #[tool(
@@ -241,8 +266,11 @@ impl OpsBrain {
     async fn mark_merged(
         &self,
         params: Parameters<coordination::MarkMergedParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_mark_merged(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(coordination::handle_mark_merged(self, params.0, vis).await)
     }
 
     #[tool(
@@ -258,8 +286,11 @@ impl OpsBrain {
     async fn list_handoffs(
         &self,
         params: Parameters<coordination::ListHandoffsParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_list_handoffs(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(coordination::handle_list_handoffs(self, params.0, vis).await)
     }
 
     #[tool(
@@ -275,8 +306,11 @@ impl OpsBrain {
     async fn delete_handoff(
         &self,
         params: Parameters<coordination::DeleteHandoffParams>,
+        ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
-        Ok(coordination::handle_delete_handoff(self, params.0).await)
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
+        Ok(coordination::handle_delete_handoff(self, params.0, vis).await)
     }
 
     // ===== TEAM BUS: pending-work query =====
@@ -301,8 +335,10 @@ impl OpsBrain {
         params: Parameters<check_in::CheckInParams>,
         ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
+        let restricted = helpers::restricted_agent(&ext);
+        let vis = Visibility::from_restricted(restricted.as_deref());
         let bound = helpers::bound_agent(&ext);
-        Ok(check_in::handle_check_in(self, params.0, bound.as_deref()).await)
+        Ok(check_in::handle_check_in(self, params.0, bound.as_deref(), vis).await)
     }
 }
 

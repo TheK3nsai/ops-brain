@@ -157,7 +157,10 @@ pub fn parse_machine_tokens(
 /// identity, so the bus gains a sender guarantee the single shared main bearer
 /// never had: a slug cannot appear on the bus without a token the operator
 /// minted for it, and one exposure rotates one host, not the fleet.
+// Unknown keys abort startup: a misspelled `exclude_client_data` would
+// otherwise default to false and leave the agent unrestricted with no sign.
 #[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentToken {
     /// The bearer secret. Distinct from the main token and every machine token
     /// by construction (validated at parse time).
@@ -172,6 +175,13 @@ pub struct AgentToken {
     /// reserved so a future per-client MCP binding needs no config change.
     #[serde(default)]
     pub client: Option<String>,
+    /// Keep this agent out of client data entirely. The token then reads only
+    /// global knowledge and only handoffs it sent or received, and it cannot
+    /// write client-scoped knowledge. Enforced in the queries themselves, so
+    /// nothing outside the boundary reaches the response, not even a withheld
+    /// notice. For agents whose vendor is not cleared to hold client data.
+    #[serde(default)]
+    pub exclude_client_data: bool,
 }
 
 /// Redacts the bearer secret — this struct flows into rmcp's tool-call `Parts`.
@@ -181,7 +191,22 @@ impl std::fmt::Debug for AgentToken {
             .field("token", &"<redacted>")
             .field("from_agent", &self.from_agent)
             .field("client", &self.client)
+            .field("exclude_client_data", &self.exclude_client_data)
             .finish()
+    }
+}
+
+impl AgentToken {
+    /// One startup-log line per token (never the secret). It names the
+    /// exclusion flag, because the log is how the operator confirms the flag
+    /// took effect.
+    pub fn binding_summary(&self) -> String {
+        format!(
+            "{} (client={}, exclude_client_data={})",
+            self.from_agent,
+            self.client.as_deref().unwrap_or("-"),
+            self.exclude_client_data
+        )
     }
 }
 
@@ -314,7 +339,98 @@ impl CallerClass {
             CallerClass::Full | CallerClass::Machine(_) => None,
         }
     }
+
+    /// The bound agent, if this caller's token sets `exclude_client_data`.
+    /// `None` for every unrestricted caller.
+    pub fn restricted_agent(&self) -> Option<&str> {
+        match self {
+            CallerClass::Agent(t) if t.exclude_client_data => Some(&t.from_agent),
+            _ => None,
+        }
+    }
 }
+
+/// The data boundary a tool call reads and writes inside.
+///
+/// `Full` is every caller except an `exclude_client_data` agent token: all
+/// handoffs, all knowledge, with the `client_slug` disclosure gate applied as
+/// before. `Restricted` carries that token's bound slug and narrows the call
+/// to global knowledge (`client_id IS NULL`) and to handoffs the agent sent or
+/// received. Broadcasts are outside the boundary because anyone may have
+/// written them for anyone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Visibility<'a> {
+    #[default]
+    Full,
+    Restricted(&'a str),
+}
+
+impl<'a> Visibility<'a> {
+    pub fn from_restricted(agent: Option<&'a str>) -> Self {
+        agent.map_or(Visibility::Full, Visibility::Restricted)
+    }
+
+    /// The slug a handoff must name as sender or recipient, if restricted.
+    pub fn party(&self) -> Option<&'a str> {
+        match self {
+            Visibility::Full => None,
+            Visibility::Restricted(agent) => Some(agent),
+        }
+    }
+
+    /// True when only global (unscoped) knowledge is visible.
+    pub fn global_only(&self) -> bool {
+        matches!(self, Visibility::Restricted(_))
+    }
+
+    pub fn can_see_knowledge(&self, client_id: Option<uuid::Uuid>) -> bool {
+        !self.global_only() || client_id.is_none()
+    }
+
+    /// Whether this caller may edit or delete a knowledge row. A restricted
+    /// caller can read every global row but may change only the ones it
+    /// wrote, so it can't rewrite the rules other agents rely on.
+    pub fn can_modify_knowledge(
+        &self,
+        client_id: Option<uuid::Uuid>,
+        author: Option<&str>,
+    ) -> bool {
+        match self {
+            Visibility::Full => true,
+            Visibility::Restricted(agent) => {
+                client_id.is_none() && author.is_some_and(|a| a.eq_ignore_ascii_case(agent))
+            }
+        }
+    }
+
+    pub fn can_see_handoff(&self, from_agent: &str, to_agent: Option<&str>) -> bool {
+        match self {
+            Visibility::Full => true,
+            Visibility::Restricted(agent) => {
+                from_agent.eq_ignore_ascii_case(agent)
+                    || to_agent.is_some_and(|to| to.eq_ignore_ascii_case(agent))
+            }
+        }
+    }
+
+    /// Restricted callers may only query their own queue: another agent's
+    /// queue is exactly the fleet traffic the restriction exists to withhold.
+    /// Unrestricted callers keep the warn-and-serve behavior.
+    pub fn check_own_queue(&self, queried: &str) -> Result<(), String> {
+        match self {
+            Visibility::Restricted(agent) if !agent.eq_ignore_ascii_case(queried) => Err(format!(
+                "this token is excluded from client data and may only query its own agent \
+                 '{agent}', not '{queried}'"
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Error text for a client-scoped request from a restricted caller.
+pub const CLIENT_DATA_EXCLUDED: &str =
+    "this token is excluded from client data: it reads and writes global knowledge only \
+     (omit client_slug)";
 
 #[derive(Clone)]
 pub struct AuthState {
@@ -707,6 +823,7 @@ mod tests {
             token: A.to_string(),
             from_agent: "Claude-Example".to_string(),
             client: None,
+            exclude_client_data: false,
         };
         assert_eq!(
             CallerClass::Agent(Arc::new(agent)).bound_agent(),
@@ -718,5 +835,84 @@ mod tests {
             CallerClass::Machine(Arc::new(machine.into_iter().next().unwrap())).bound_agent(),
             None
         );
+    }
+
+    // exclude_client_data / Visibility
+
+    #[test]
+    fn parse_agent_exclude_client_data_defaults_off() {
+        let raw = format!("[{}]", agent_entry(A));
+        let tokens = parse_agent_tokens(Some(&raw), None, &[]).unwrap();
+        assert!(!tokens[0].exclude_client_data);
+        assert_eq!(
+            CallerClass::Agent(Arc::new(tokens[0].clone())).restricted_agent(),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_agent_exclude_client_data_restricts_the_caller() {
+        let raw =
+            format!(r#"[{{"token":"{A}","from_agent":"Test-Bot","exclude_client_data":true}}]"#);
+        let tokens = parse_agent_tokens(Some(&raw), None, &[]).unwrap();
+        assert!(tokens[0].exclude_client_data);
+        let caller = CallerClass::Agent(Arc::new(tokens[0].clone()));
+        assert_eq!(caller.restricted_agent(), Some("Test-Bot"));
+        // The bound identity is unchanged by the restriction.
+        assert_eq!(caller.bound_agent(), Some("Test-Bot"));
+        assert!(format!("{:?}", tokens[0]).contains("exclude_client_data: true"));
+        assert_eq!(CallerClass::Full.restricted_agent(), None);
+    }
+
+    #[test]
+    fn visibility_full_sees_everything() {
+        let vis = Visibility::from_restricted(None);
+        assert_eq!(vis, Visibility::Full);
+        assert_eq!(vis.party(), None);
+        assert!(!vis.global_only());
+        assert!(vis.can_see_knowledge(Some(uuid::Uuid::now_v7())));
+        assert!(vis.can_see_handoff("Claude-A", Some("Claude-B")));
+        assert!(vis.can_see_handoff("Claude-A", None));
+        assert!(vis.check_own_queue("Claude-B").is_ok());
+    }
+
+    #[test]
+    fn visibility_restricted_sees_global_knowledge_and_own_handoffs() {
+        let vis = Visibility::from_restricted(Some("Test-Bot"));
+        assert_eq!(vis.party(), Some("Test-Bot"));
+        assert!(vis.global_only());
+        assert!(vis.can_see_knowledge(None));
+        assert!(!vis.can_see_knowledge(Some(uuid::Uuid::now_v7())));
+        assert!(vis.can_see_handoff("test-bot", Some("Claude-A")));
+        assert!(vis.can_see_handoff("Claude-A", Some("TEST-BOT")));
+        assert!(!vis.can_see_handoff("Claude-A", Some("Claude-B")));
+        // A broadcast from someone else is outside the boundary.
+        assert!(!vis.can_see_handoff("Claude-A", None));
+        assert!(vis.check_own_queue("test-bot").is_ok());
+        assert!(vis.check_own_queue("Claude-A").is_err());
+        assert!(vis.can_modify_knowledge(None, Some("TEST-BOT")));
+        assert!(!vis.can_modify_knowledge(None, Some("Claude-A")));
+        assert!(!vis.can_modify_knowledge(None, None));
+        assert!(!vis.can_modify_knowledge(Some(uuid::Uuid::now_v7()), Some("Test-Bot")));
+        assert!(Visibility::Full.can_modify_knowledge(Some(uuid::Uuid::now_v7()), None));
+    }
+
+    #[test]
+    fn parse_agent_rejects_unknown_keys() {
+        // A misspelled flag must abort startup, not silently default to false.
+        let raw =
+            format!(r#"[{{"token":"{A}","from_agent":"Test-Bot","excludeClientData":true}}]"#);
+        let err = parse_agent_tokens(Some(&raw), None, &[]).unwrap_err();
+        assert!(err.contains("excludeClientData"), "got: {err}");
+    }
+
+    #[test]
+    fn binding_summary_names_the_flag() {
+        let raw =
+            format!(r#"[{{"token":"{A}","from_agent":"Test-Bot","exclude_client_data":true}}]"#);
+        let tokens = parse_agent_tokens(Some(&raw), None, &[]).unwrap();
+        let line = tokens[0].binding_summary();
+        assert_eq!(line, "Test-Bot (client=-, exclude_client_data=true)");
+        assert!(!line.contains(A), "the secret never reaches the log");
     }
 }

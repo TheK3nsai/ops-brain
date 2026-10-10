@@ -34,6 +34,24 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **`exclude_client_data` on agent tokens.** An agent token can now be kept
+  out of client data on the server, not just by convention. Set
+  `"exclude_client_data": true` on its `OPS_BRAIN_AGENT_TOKENS` entry and that
+  token reads only global knowledge and only handoffs it sent or received.
+  The filter sits in the SQL, so withheld rows never reach the response, not
+  even as a cross-client notice. Broadcasts fall outside the boundary. By-id
+  tools treat foreign rows as not found, and `check_in` and
+  `list_replies_to_me` serve only the token's own slug. The token can't write
+  client-scoped knowledge, and `search_bus` refuses a `client_slug` and marks
+  every response with `_restricted`. It may edit or delete only the global
+  knowledge it authored. It's meant for agents whose vendor isn't cleared to
+  hold client data. Unflagged tokens behave exactly as before.
+- **Agent-token entries reject unknown keys, and startup logs the flag.**
+  A misspelled `exclude_client_data` would have defaulted to off with no sign.
+  It now aborts startup, and the binding summary reads
+  `<slug> (client=…, exclude_client_data=…)`. Check a live
+  `OPS_BRAIN_AGENT_TOKENS` for stray keys before deploying.
+
 - **`scripts/test-operator-notify.sh`**, run in CI's shellcheck job. It fixes
   the script's failure contract: a failed poll or send holds the cursor, every
   real run reports up or down, an unreachable monitor is never fatal,

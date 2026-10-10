@@ -218,23 +218,25 @@ pub async fn list_replies_to_me(
     pool: &PgPool,
     agent: &str,
     since: Option<chrono::DateTime<chrono::Utc>>,
+    party: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let mut q = format!(
         "SELECT {}
            FROM handoffs r
            JOIN handoffs parent ON parent.id = r.in_reply_to
-          WHERE LOWER(parent.from_agent) = LOWER($1)",
-        super::aliased_cols(HANDOFF_COLS, "r")
+          WHERE LOWER(parent.from_agent) = LOWER($1) AND {}",
+        super::aliased_cols(HANDOFF_COLS, "r"),
+        super::party_clause(2, "r.")
     );
     if since.is_some() {
-        q.push_str(" AND r.created_at > $2");
-        q.push_str(" ORDER BY r.created_at DESC LIMIT $3");
+        q.push_str(" AND r.created_at > $3");
+        q.push_str(" ORDER BY r.created_at DESC LIMIT $4");
     } else {
-        q.push_str(" ORDER BY r.created_at DESC LIMIT $2");
+        q.push_str(" ORDER BY r.created_at DESC LIMIT $3");
     }
 
-    let mut query = sqlx::query_as::<_, Handoff>(&q).bind(agent);
+    let mut query = sqlx::query_as::<_, Handoff>(&q).bind(agent).bind(party);
     if let Some(ts) = since {
         query = query.bind(ts);
     }
@@ -278,6 +280,7 @@ async fn list_handoffs_filtered(
     include_notify: bool,
     include_broadcast: bool,
     exclude_self_claims: bool,
+    party: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let mut query = format!("SELECT {HANDOFF_COLS} FROM handoffs");
@@ -330,6 +333,10 @@ async fn list_handoffs_filtered(
     if exclude_self_claims {
         conditions.push(NOT_SELF_CLAIM.to_string());
     }
+    if party.is_some() {
+        conditions.push(super::party_clause(param_idx, ""));
+        param_idx += 1;
+    }
 
     // Read-time pruning: stale notify rows never resurface in operational
     // queries. The row stays in the table; it just stops being noise. This is
@@ -356,6 +363,9 @@ async fn list_handoffs_filtered(
     if let Some(v) = category {
         q = q.bind(v);
     }
+    if let Some(v) = party {
+        q = q.bind(v);
+    }
     q = q.bind(limit);
 
     q.fetch_all(pool).await
@@ -369,6 +379,7 @@ pub async fn list_handoffs(
     from_agent: Option<&str>,
     category: Option<&str>,
     include_notify: bool,
+    party: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let status_filter = match status {
@@ -384,6 +395,7 @@ pub async fn list_handoffs(
         include_notify,
         false,
         false,
+        party,
         limit,
     )
     .await
@@ -401,6 +413,7 @@ pub async fn list_open_handoffs(
     include_notify: bool,
     include_broadcast: bool,
     exclude_self_claims: bool,
+    party: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     list_handoffs_filtered(
@@ -412,6 +425,7 @@ pub async fn list_open_handoffs(
         include_notify,
         include_broadcast,
         exclude_self_claims,
+        party,
         limit,
     )
     .await
@@ -594,16 +608,19 @@ pub async fn delete_handoff(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error
 pub async fn search_handoffs(
     pool: &PgPool,
     query: &str,
+    party: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
+    let scope = super::party_clause(3, "");
     sqlx::query_as::<_, Handoff>(&format!(
         "SELECT {HANDOFF_COLS} FROM handoffs
-         WHERE search_vector @@ plainto_tsquery('english', $1)
+         WHERE search_vector @@ plainto_tsquery('english', $1) AND {scope}
          ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
          LIMIT $2"
     ))
     .bind(query)
     .bind(limit)
+    .bind(party)
     .fetch_all(pool)
     .await
 }

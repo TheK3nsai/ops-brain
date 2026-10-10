@@ -82,6 +82,9 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
 - `client` — informational, logged for audit. Not yet enforced on MCP calls
   (tools carry an explicit `client_slug`); reserved so a future per-client MCP
   binding needs no config change.
+- `exclude_client_data` — optional, default `false`. When `true`, the token
+  is kept out of client data entirely. See "Keeping an agent out of client
+  data" below.
 
 New env var needs **both** `.env` and `docker-compose.prod.yml` (prod compose
 enumerates every var explicitly). The compose line is already wired:
@@ -95,6 +98,66 @@ Startup logs a binding summary (never the secrets):
 ```
 agent tokens configured count=1 bindings=["Claude-Stealth (client=stealth)"]
 ```
+
+## Keeping an agent out of client data
+
+`"exclude_client_data": true` is for an agent you want on the bus but not near
+client data, typically one whose vendor hasn't cleared a data-handling review.
+Without the flag, the client-scope guard is only a disclosure gate: any token
+can read client-scoped knowledge by acknowledging it, and every token can read
+all handoffs. A convention of "don't send it client data" binds the senders,
+not the reader. The flag moves that boundary into the server.
+
+A flagged token:
+
+| Surface | Behavior |
+|---|---|
+| knowledge reads (`search_bus`, browse, duplicate detection on `add_knowledge`) | global rows only (`client_id IS NULL`). A client row stays out even when it is `cross_client_safe`. |
+| handoff reads (`search_bus` handoffs, `list_handoffs`, `check_in`, `list_replies_to_me`) | only rows where the token's slug is `from_agent` or `to_agent`. Broadcasts are excluded, since anyone may have written them for anyone. |
+| `check_in`, `list_replies_to_me` | its own slug only; another agent's queue is rejected |
+| by-id tools (`get_handoff`, `accept_handoff`, `complete_handoff`, `mark_merged`, `delete_handoff`, `update_knowledge`, `delete_knowledge`) | a row outside the boundary returns **not found**, so the reply doesn't confirm it exists |
+| `update_knowledge`, `delete_knowledge` on a global row | allowed only on rows the token authored, so it can't rewrite rules other agents rely on |
+| `create_handoff` with `in_reply_to` | the parent must be inside the boundary |
+| `create_handoff` to a never-seen recipient | no first-recipient `_warning`: that check scans every handoff, so its answer would describe traffic outside the boundary |
+| `add_knowledge`, `search_bus` with `client_slug` | rejected |
+
+The filters run in the SQL, inside each search leg, so nothing outside the
+boundary reaches the response. That includes the cross-client withheld
+notices, which name the owning client. `search_bus` responses carry
+`_restricted` so the agent can tell an empty result from a filtered one. One
+recall caveat: an HNSW vector scan filters after it picks its candidates, so a
+restricted semantic search can come back short when most near neighbours are
+outside the boundary. FTS legs are unaffected.
+
+### Before enabling it
+
+- **Bind a slug with no history.** The handoff filter matches on the slug
+  string, not on the token. Rebinding a retired slug (say a former test seat)
+  makes everything ever written to or from it readable. Check first:
+  `SELECT count(*) FROM handoffs WHERE lower(from_agent) = lower('<slug>') OR lower(to_agent) = lower('<slug>');`
+- **Audit global knowledge.** The boundary is `client_id IS NULL`, so it
+  trusts every global row to be client-free. A row filed without
+  `client_slug` that carries client detail (hostnames, paths, staff) is
+  visible. Browse `search_bus` with `query: "*"` and re-scope or delete those
+  rows first. Also note that `knowledge.client_id` is `ON DELETE SET NULL`:
+  deleting a client row turns that client's knowledge global.
+- **Confirm it took.** Unknown keys in an `OPS_BRAIN_AGENT_TOKENS` entry abort
+  startup, so a misspelled flag can't silently default to off. After
+  recreating the container, the binding summary must show
+  `<slug> (client=…, exclude_client_data=true)`.
+
+### What it does not do
+
+- It doesn't stop *other* agents putting client data into a handoff they
+  address to the flagged agent, or answering one it sends asking for client
+  data. The server doesn't tell senders that a recipient is restricted, so
+  every sender still has to follow the rule. The flag guarantees only that the
+  agent can't go and fetch what wasn't sent to it.
+- A reply into the agent's thread with no `to_agent` is invisible to it,
+  because broadcasts are outside the boundary. Address replies to it
+  explicitly.
+- It isn't tenant isolation. Across a real trust boundary, a separate
+  deployment is still the stronger answer.
 
 ## Client setup
 
