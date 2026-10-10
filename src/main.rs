@@ -191,11 +191,7 @@ async fn main() -> anyhow::Result<()> {
                     count = agent_tokens.len(),
                     bindings = ?agent_tokens
                         .iter()
-                        .map(|t| format!(
-                            "{} (client={})",
-                            t.from_agent,
-                            t.client.as_deref().unwrap_or("-")
-                        ))
+                        .map(auth::AgentToken::binding_summary)
                         .collect::<Vec<_>>(),
                     "agent tokens configured"
                 );

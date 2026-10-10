@@ -49,6 +49,8 @@ One deployment is one trusted coordination domain. Per-agent tokens bind provena
 - Different client + `cross_client_safe = false` + no acknowledgment → **WITHHELD** (notice returned, audit logged)
 - No `client_slug` on the query → gate is inert (all rows returned), but every item carries provenance and the response carries a `_note` saying the gate is off (v4.1.0)
 
+**Restricted tokens** (`exclude_client_data: true` on an agent token) sit outside this gate entirely. The repo queries take a `Visibility` (`src/auth.rs`) and filter in SQL: global knowledge only, and only handoffs the token sent or received. By-id tools return not-found outside that boundary. Any new read path must thread `Visibility` through to its query, because a post-fetch filter would short pages and leak counts. Contract: `docs/agent-tokens.md`.
+
 ## Coordination
 
 **Workflow conventions ship in the server, not here.** Reply-in-thread, blocked-on-a-human, verify-before-comply, the knowledge bar, and action-vs-notify are stated in the MCP `instructions` string and tool descriptions (`src/tools/mod.rs` `get_info`, param docs in `src/tools/*.rs`) — the only text every agent on every host actually sees. Change a convention there; don't restate it in per-host instructions. Every word is paid by every agent each session, so keep it terse. Background and rationale only:

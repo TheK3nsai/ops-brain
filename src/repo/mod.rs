@@ -30,6 +30,28 @@ pub(crate) fn aliased_cols(cols: &str, alias: &str) -> String {
         .join(", ")
 }
 
+/// Knowledge filter for a caller restricted to global rows: a static SQL
+/// fragment (no bind parameter) appended to an existing `WHERE`. Empty when
+/// unrestricted, so the query text is unchanged for everyone else.
+pub(crate) fn global_only_clause(global_only: bool) -> &'static str {
+    if global_only {
+        " AND client_id IS NULL"
+    } else {
+        ""
+    }
+}
+
+/// Handoff filter for a caller restricted to its own traffic: the row must
+/// name `$param` as sender or recipient. The parameter is always bound (as
+/// NULL when unrestricted), so placeholder numbering stays fixed. `prefix` is
+/// a table alias with its dot (`"r."`), or empty.
+pub(crate) fn party_clause(param: u32, prefix: &str) -> String {
+    format!(
+        "(${param}::text IS NULL OR LOWER({prefix}from_agent) = LOWER(${param}) \
+         OR LOWER({prefix}to_agent) = LOWER(${param}))"
+    )
+}
+
 pub mod audit_log_repo;
 pub mod client_repo;
 pub mod embedding_repo;

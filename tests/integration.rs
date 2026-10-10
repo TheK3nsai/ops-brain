@@ -303,6 +303,7 @@ mod coordination_tests {
             None,
             None,
             false,
+            None,
             10,
         )
         .await
@@ -357,6 +358,7 @@ mod coordination_tests {
             None,
             None,
             false,
+            None,
             50,
         )
         .await
@@ -372,6 +374,7 @@ mod coordination_tests {
             None,
             None,
             true,
+            None,
             50,
         )
         .await
@@ -387,6 +390,7 @@ mod coordination_tests {
             None,
             Some("notify"),
             false,
+            None,
             50,
         )
         .await
@@ -491,9 +495,10 @@ mod coordination_tests {
         // Category is preserved — the reply stays `action` even though it's a reply.
         assert_eq!(reply.category, "action");
 
-        let replies = ops_brain::repo::handoff_repo::list_replies_to_me(&pool, &alice, None, 10)
-            .await
-            .unwrap();
+        let replies =
+            ops_brain::repo::handoff_repo::list_replies_to_me(&pool, &alice, None, None, 10)
+                .await
+                .unwrap();
         assert!(replies.iter().any(|h| h.id == reply.id));
         // Parent author asking for *their* replies shouldn't see unrelated rows.
         assert!(replies.iter().all(|h| h.in_reply_to == Some(parent.id)));
@@ -663,6 +668,7 @@ mod v5_surface_tests {
             GetHandoffParams {
                 handoff_id: handoff.id.to_string(),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(false));
@@ -707,6 +713,7 @@ mod v5_surface_tests {
                 limit: Some(20),
                 compact: Some(false),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(false));
@@ -850,6 +857,7 @@ mod check_in_tests {
                 agent_name: "bad agent".to_string(),
             },
             None,
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
@@ -866,6 +874,7 @@ mod check_in_tests {
                 agent_name: "Claude-Stealth".to_string(),
             },
             None,
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(false));
@@ -915,6 +924,7 @@ mod check_in_tests {
             &brain,
             ops_brain::tools::check_in::CheckInParams { agent_name: agent },
             None,
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(false));
@@ -950,6 +960,7 @@ mod check_in_tests {
                 agent_name: agent.to_string(),
             },
             None,
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(false));
@@ -1008,6 +1019,7 @@ mod check_in_tests {
             None,
             None,
             false,
+            None,
             50,
         )
         .await
@@ -1196,6 +1208,7 @@ mod coordination_handler_tests {
                 in_reply_to: Some("not-a-uuid".to_string()),
             },
             None,
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
@@ -1227,6 +1240,7 @@ mod coordination_handler_tests {
             &brain,
             handoff_params("Claude-Cloud"),
             Some("Claude-Stealth"),
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
@@ -1244,6 +1258,7 @@ mod coordination_handler_tests {
             &brain,
             handoff_params("claude-stealth"),
             Some("Claude-Stealth"),
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(
@@ -1258,7 +1273,13 @@ mod coordination_handler_tests {
     async fn create_handoff_unbound_caller_files_any_identity() {
         // The main bearer (bound = None) keeps the pre-tokens behavior.
         let brain = build_brain(pool().await);
-        let result = handle_create_handoff(&brain, handoff_params("Claude-Anything"), None).await;
+        let result = handle_create_handoff(
+            &brain,
+            handoff_params("Claude-Anything"),
+            None,
+            ops_brain::auth::Visibility::Full,
+        )
+        .await;
         assert_eq!(
             result.is_error,
             Some(false),
@@ -1291,11 +1312,14 @@ mod coordination_handler_tests {
         };
 
         // First contact with `known` teaches the bus that slug exists.
-        let first = handle_create_handoff(&brain, to(&known), None).await;
+        let first =
+            handle_create_handoff(&brain, to(&known), None, ops_brain::auth::Visibility::Full)
+                .await;
         assert_eq!(first.is_error, Some(false), "{}", extract_text(&first));
 
         // A near-miss of it is brand new: warn, suggest, and still create.
-        let typoed = handle_create_handoff(&brain, to(&typo), None).await;
+        let typoed =
+            handle_create_handoff(&brain, to(&typo), None, ops_brain::auth::Visibility::Full).await;
         assert_eq!(typoed.is_error, Some(false), "{}", extract_text(&typoed));
         let body = typoed
             .structured_content
@@ -1318,7 +1342,9 @@ mod coordination_handler_tests {
         );
 
         // Second handoff to `known` — now a familiar slug, so no warning.
-        let repeat = handle_create_handoff(&brain, to(&known), None).await;
+        let repeat =
+            handle_create_handoff(&brain, to(&known), None, ops_brain::auth::Visibility::Full)
+                .await;
         assert_eq!(repeat.is_error, Some(false), "{}", extract_text(&repeat));
         let repeat_body = repeat
             .structured_content
@@ -1346,6 +1372,7 @@ mod coordination_handler_tests {
                 handoff_id: missing.to_string(),
                 merge_commit: "abc1234".to_string(),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
@@ -1388,14 +1415,14 @@ mod coordination_handler_tests {
             merge_commit: "merge-abc".to_string(),
         };
 
-        let first = handle_mark_merged(&brain, params()).await;
+        let first = handle_mark_merged(&brain, params(), ops_brain::auth::Visibility::Full).await;
         assert_eq!(
             first.is_error,
             Some(false),
             "first mark_merged should succeed"
         );
 
-        let second = handle_mark_merged(&brain, params()).await;
+        let second = handle_mark_merged(&brain, params(), ops_brain::auth::Visibility::Full).await;
         assert_eq!(
             second.is_error,
             Some(false),
@@ -1442,6 +1469,7 @@ mod coordination_handler_tests {
                 handoff_id: h.id.to_string(),
                 merge_commit: "first-merge".to_string(),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(first.is_error, Some(false));
@@ -1452,6 +1480,7 @@ mod coordination_handler_tests {
                 handoff_id: h.id.to_string(),
                 merge_commit: "different-merge".to_string(),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(
@@ -1498,6 +1527,7 @@ mod coordination_handler_tests {
                 handoff_id: h.id.to_string(),
                 merge_commit: "merge-pending".to_string(),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
@@ -1543,6 +1573,7 @@ mod coordination_handler_tests {
                 handoff_id: h.id.to_string(),
                 merge_commit: "merge-no-work-ref".to_string(),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
@@ -1889,6 +1920,7 @@ mod knowledge_safety_tests {
                 limit: Some(50),
                 compact: Some(false),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(false), "search should not error");
@@ -2076,6 +2108,7 @@ mod knowledge_safety_tests {
                 limit: Some(50),
                 compact: Some(false),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(false));
@@ -2153,6 +2186,7 @@ mod auth_middleware_tests {
             token: AGENT.to_string(),
             from_agent: "Claude-Test".to_string(),
             client: None,
+            exclude_client_data: false,
         }
     }
 
@@ -2437,6 +2471,7 @@ mod pagination_surface_tests {
                 limit: Some(2),
                 compact: Some(false),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await
         .structured_content
@@ -2454,6 +2489,7 @@ mod pagination_surface_tests {
                 limit: Some(500),
             },
             None,
+            ops_brain::auth::Visibility::Full,
         )
         .await
         .structured_content
@@ -2567,6 +2603,7 @@ mod pagination_surface_tests {
                     limit: Some(2),
                     compact: Some(false),
                 },
+                ops_brain::auth::Visibility::Full,
             )
             .await
             .structured_content
@@ -2590,6 +2627,7 @@ mod pagination_surface_tests {
                 limit: Some(2),
                 compact: Some(false),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await
         .structured_content
@@ -2676,6 +2714,7 @@ mod pagination_surface_tests {
                 limit: Some(50),
                 compact: Some(false),
             },
+            ops_brain::auth::Visibility::Full,
         )
         .await
         .structured_content
@@ -2740,6 +2779,7 @@ mod mcp_identity_transport_tests {
                 token: AGENT.to_string(),
                 from_agent: "Codex-Stealth".to_string(),
                 client: None,
+                exclude_client_data: false,
             }]),
         };
         let app = axum::Router::new()
@@ -2800,6 +2840,84 @@ mod mcp_identity_transport_tests {
             body.contains("does not match your token-bound agent")
                 && body.contains("Codex-Stealth"),
             "identity mismatch must be rejected by the tool handler: {body}"
+        );
+
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn client_data_exclusion_survives_transport() {
+        // Same lazy pool: the restricted check_in refusal happens before any
+        // query, so reaching it proves the flag rode the transport.
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgresql://unused:unused@127.0.0.1:1/unused")
+            .unwrap();
+        let mcp_service: StreamableHttpService<OpsBrain, LocalSessionManager> =
+            StreamableHttpService::new(
+                move || Ok(OpsBrain::new(pool.clone(), None)),
+                Default::default(),
+                StreamableHttpServerConfig::default().with_sse_keep_alive(None),
+            );
+        let auth_state = AuthState {
+            main_token: Some(MAIN.to_string()),
+            machine_tokens: Arc::new(vec![]),
+            agent_tokens: Arc::new(vec![AgentToken {
+                token: AGENT.to_string(),
+                from_agent: "Test-Bot".to_string(),
+                client: None,
+                exclude_client_data: true,
+            }]),
+        };
+        let app = axum::Router::new()
+            .nest_service("/mcp", mcp_service)
+            .layer(from_fn_with_state(auth_state, bearer_auth));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let post = |body: &'static str, session: Option<String>| {
+            let mut req = client
+                .post(format!("http://{addr}/mcp"))
+                .bearer_auth(AGENT)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream");
+            if let Some(s) = session {
+                req = req
+                    .header("mcp-session-id", s)
+                    .header("Mcp-Protocol-Version", "2025-06-18");
+            }
+            req.body(body).send()
+        };
+        let init = post(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"restricted-test","version":"1.0"}}}"#, None)
+            .await
+            .unwrap();
+        assert_eq!(init.status(), reqwest::StatusCode::OK);
+        let session_id = init
+            .headers()
+            .get("mcp-session-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let initialized = post(
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            Some(session_id.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(initialized.status(), reqwest::StatusCode::ACCEPTED);
+
+        let response = post(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"check_in","arguments":{"agent_name":"Claude-HSR"}}}"#, Some(session_id))
+            .await
+            .unwrap();
+        let body = response.text().await.unwrap();
+        assert!(
+            body.contains("excluded from client data") && body.contains("Test-Bot"),
+            "restricted token must be refused another agent's queue: {body}"
         );
 
         server.abort();
@@ -2976,6 +3094,7 @@ mod exact_agent_match_tests {
             None,
             None,
             false,
+            None,
             50,
         )
         .await
@@ -3596,5 +3715,722 @@ mod briefing_operator_view_tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "got body {body}");
         assert_eq!(body["field"], "operator");
+    }
+}
+
+// ===== exclude_client_data tokens: the restricted boundary end to end =====
+//
+// A restricted caller sees global knowledge and only the handoffs it sent or
+// received. These drive the real handlers against Postgres, with an
+// unrestricted control on the same rows so a filter that hid everything
+// couldn't pass. FTS with unique terms keeps embeddings out of the picture.
+mod restricted_visibility_tests {
+    use super::*;
+    use ops_brain::auth::Visibility;
+    use ops_brain::tools::check_in::{handle_check_in, CheckInParams};
+    use ops_brain::tools::coordination::{
+        handle_accept_handoff, handle_create_handoff, handle_get_handoff, handle_list_handoffs,
+        CreateHandoffParams, GetHandoffParams, ListHandoffsParams, UpdateHandoffStatusParams,
+    };
+    use ops_brain::tools::knowledge::{
+        handle_add_knowledge, handle_delete_knowledge, handle_search_knowledge,
+        handle_update_knowledge, AddKnowledgeParams, DeleteKnowledgeParams, SearchKnowledgeParams,
+        UpdateKnowledgeParams,
+    };
+
+    fn text(result: &rmcp::model::CallToolResult) -> String {
+        result
+            .content
+            .first()
+            .expect("result has content")
+            .as_text()
+            .expect("content is text")
+            .text
+            .clone()
+    }
+
+    struct Fixture {
+        pool: PgPool,
+        brain: ops_brain::tools::OpsBrain,
+        bot: String,
+        term: String,
+        client_id: Uuid,
+        client_slug: String,
+        global_k: Uuid,
+        client_k: Uuid,
+        to_bot: Uuid,
+        from_bot: Uuid,
+        others: Uuid,
+        broadcast: Uuid,
+    }
+
+    async fn fixture() -> Fixture {
+        let pool = pool().await;
+        let brain = ops_brain::tools::OpsBrain::new(pool.clone(), None);
+        let suffix = Uuid::now_v7().simple().to_string();
+        let bot = format!("Test-Bot-{}", &suffix[..12]);
+        let term = format!("zqxrestrict{suffix}");
+        let client = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Restricted Gate Co",
+            &format!("test-restricted-{suffix}"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let add = |title: String, client_id: Option<Uuid>, safe: bool| {
+            let pool = pool.clone();
+            async move {
+                ops_brain::repo::knowledge_repo::add_knowledge(
+                    &pool,
+                    &title,
+                    "body",
+                    Some("test"),
+                    &[],
+                    client_id,
+                    safe,
+                    Some("Claude-Stealth"),
+                )
+                .await
+                .unwrap()
+                .id
+            }
+        };
+        let global_k = add(format!("global {term}"), None, false).await;
+        // cross_client_safe=true still names a client: outside the boundary.
+        let client_k = add(format!("client {term}"), Some(client.id), true).await;
+
+        let file = |from: String, to: Option<String>, title: String| {
+            let pool = pool.clone();
+            async move {
+                ops_brain::repo::handoff_repo::create_handoff(
+                    &pool,
+                    &from,
+                    to.as_deref(),
+                    "normal",
+                    "action",
+                    &title,
+                    "body",
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .id
+            }
+        };
+        let to_bot = file(
+            "Claude-Stealth".into(),
+            Some(bot.clone()),
+            format!("to bot {term}"),
+        )
+        .await;
+        let from_bot = file(
+            bot.clone(),
+            Some("Claude-Stealth".into()),
+            format!("from bot {term}"),
+        )
+        .await;
+        let others = file(
+            "Claude-HSR".into(),
+            Some("Claude-Stealth".into()),
+            format!("others {term}"),
+        )
+        .await;
+        let broadcast = file("Claude-Cloud".into(), None, format!("broadcast {term}")).await;
+
+        Fixture {
+            pool,
+            brain,
+            bot,
+            term,
+            client_id: client.id,
+            client_slug: client.slug,
+            global_k,
+            client_k,
+            to_bot,
+            from_bot,
+            others,
+            broadcast,
+        }
+    }
+
+    async fn cleanup(f: &Fixture) {
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1) OR from_agent = $2")
+            .bind(vec![f.to_bot, f.from_bot, f.others, f.broadcast])
+            .bind(&f.bot)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM knowledge WHERE id = ANY($1) OR author = $2")
+            .bind(vec![f.global_k, f.client_k])
+            .bind(&f.bot)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM clients WHERE id = $1")
+            .bind(f.client_id)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+    }
+
+    fn search(term: &str, tables: &[&str], client_slug: Option<&str>) -> SearchKnowledgeParams {
+        SearchKnowledgeParams {
+            query: Some(term.to_string()),
+            mode: Some("fts".to_string()),
+            tables: Some(tables.iter().map(|t| t.to_string()).collect()),
+            category: None,
+            client_slug: client_slug.map(str::to_string),
+            acknowledge_cross_client: Some(true),
+            limit: Some(50),
+            compact: Some(true),
+        }
+    }
+
+    fn ids(v: &serde_json::Value, key: &str) -> Vec<Uuid> {
+        v[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("{key} array in {v}"))
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().parse().unwrap())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn search_bus_returns_only_global_knowledge_and_own_handoffs() {
+        let f = fixture().await;
+        let restricted = Visibility::Restricted(&f.bot);
+
+        let r = handle_search_knowledge(
+            &f.brain,
+            search(&f.term, &["knowledge", "handoffs"], None),
+            restricted,
+        )
+        .await;
+        assert_eq!(r.is_error, Some(false), "{}", text(&r));
+        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
+        assert_eq!(ids(&v, "knowledge"), vec![f.global_k]);
+        let mut handoffs = ids(&v, "handoffs");
+        handoffs.sort();
+        let mut expected = vec![f.to_bot, f.from_bot];
+        expected.sort();
+        assert_eq!(handoffs, expected);
+        assert!(v.get("cross_client_withheld").is_none(), "no notice leaks");
+        assert!(v["_restricted"]
+            .as_str()
+            .unwrap()
+            .contains("excluded from client data"));
+        assert!(
+            !v["_note"].as_str().unwrap_or("").contains("unscoped"),
+            "the unscoped caveat would be false for a restricted caller"
+        );
+
+        // Browse takes the list path, not the FTS path.
+        let mut browse = search("*", &["knowledge", "handoffs"], None);
+        browse.limit = Some(200);
+        let r = handle_search_knowledge(&f.brain, browse, restricted).await;
+        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
+        let browsed_k = ids(&v, "knowledge");
+        assert!(browsed_k.contains(&f.global_k) && !browsed_k.contains(&f.client_k));
+        let browsed = ids(&v, "handoffs");
+        assert!(browsed.contains(&f.to_bot) && browsed.contains(&f.from_bot));
+        assert!(!browsed.contains(&f.others) && !browsed.contains(&f.broadcast));
+
+        // Control: the same query unrestricted sees every row.
+        let r = handle_search_knowledge(
+            &f.brain,
+            search(&f.term, &["knowledge", "handoffs"], None),
+            Visibility::Full,
+        )
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
+        assert_eq!(ids(&v, "knowledge").len(), 2);
+        assert_eq!(ids(&v, "handoffs").len(), 4);
+
+        // Naming a client is refused outright.
+        let r = handle_search_knowledge(
+            &f.brain,
+            search(&f.term, &["knowledge"], Some(&f.client_slug)),
+            restricted,
+        )
+        .await;
+        assert_eq!(r.is_error, Some(true));
+        assert!(text(&r).contains("excluded from client data"));
+
+        cleanup(&f).await;
+    }
+
+    #[tokio::test]
+    async fn by_id_handoff_tools_treat_foreign_rows_as_missing() {
+        let f = fixture().await;
+        let restricted = Visibility::Restricted(&f.bot);
+
+        for id in [f.others, f.broadcast] {
+            let r = handle_get_handoff(
+                &f.brain,
+                GetHandoffParams {
+                    handoff_id: id.to_string(),
+                },
+                restricted,
+            )
+            .await;
+            assert!(text(&r).contains("not found"), "{}", text(&r));
+
+            let r = handle_accept_handoff(
+                &f.brain,
+                UpdateHandoffStatusParams {
+                    handoff_id: id.to_string(),
+                },
+                restricted,
+            )
+            .await;
+            assert!(text(&r).contains("not found"), "{}", text(&r));
+        }
+        // The refused accept wrote nothing.
+        let others = ops_brain::repo::handoff_repo::get_handoff(&f.pool, f.others)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(others.status, "pending");
+
+        // Its own handoff is served.
+        let r = handle_get_handoff(
+            &f.brain,
+            GetHandoffParams {
+                handoff_id: f.to_bot.to_string(),
+            },
+            restricted,
+        )
+        .await;
+        assert_eq!(r.is_error, Some(false), "{}", text(&r));
+
+        // No replying into a thread it can't see.
+        let r = handle_create_handoff(
+            &f.brain,
+            CreateHandoffParams {
+                from_agent: f.bot.clone(),
+                to_agent: Some("Claude-HSR".to_string()),
+                priority: None,
+                category: Some("notify".to_string()),
+                title: "reply".to_string(),
+                body: "body".to_string(),
+                context: None,
+                in_reply_to: Some(f.others.to_string()),
+            },
+            Some(&f.bot),
+            restricted,
+        )
+        .await;
+        assert!(text(&r).contains("not found"), "{}", text(&r));
+
+        cleanup(&f).await;
+    }
+
+    #[tokio::test]
+    async fn by_id_writes_refuse_foreign_rows() {
+        use ops_brain::tools::coordination::{
+            handle_complete_handoff, handle_delete_handoff, handle_mark_merged,
+            CompleteHandoffParams, DeleteHandoffParams, MarkMergedParams,
+        };
+        let f = fixture().await;
+        let restricted = Visibility::Restricted(&f.bot);
+        let id = f.others.to_string();
+
+        let r = handle_complete_handoff(
+            &f.brain,
+            CompleteHandoffParams {
+                handoff_id: id.clone(),
+                commit_hash: Some("abc123".to_string()),
+            },
+            restricted,
+        )
+        .await;
+        assert!(text(&r).contains("not found"), "{}", text(&r));
+        let r = handle_mark_merged(
+            &f.brain,
+            MarkMergedParams {
+                handoff_id: id.clone(),
+                merge_commit: "def456".to_string(),
+            },
+            restricted,
+        )
+        .await;
+        assert!(text(&r).contains("not found"), "{}", text(&r));
+        let r = handle_delete_handoff(
+            &f.brain,
+            DeleteHandoffParams {
+                handoff_id: id.clone(),
+            },
+            restricted,
+        )
+        .await;
+        assert!(text(&r).contains("not found"), "{}", text(&r));
+
+        let row = ops_brain::repo::handoff_repo::get_handoff(&f.pool, f.others)
+            .await
+            .unwrap()
+            .expect("foreign handoff survives");
+        assert_eq!(row.status, "pending");
+        assert!(row.commit_hash.is_none());
+
+        // Its own handoff completes normally.
+        let r = handle_complete_handoff(
+            &f.brain,
+            CompleteHandoffParams {
+                handoff_id: f.to_bot.to_string(),
+                commit_hash: None,
+            },
+            restricted,
+        )
+        .await;
+        assert_eq!(r.is_error, Some(false), "{}", text(&r));
+
+        cleanup(&f).await;
+    }
+
+    #[tokio::test]
+    async fn replies_are_party_filtered_with_since() {
+        use ops_brain::tools::coordination::{handle_list_replies_to_me, ListRepliesToMeParams};
+        let f = fixture().await;
+        let reply = |to: &str| {
+            let pool = f.pool.clone();
+            let to = to.to_string();
+            let parent = f.from_bot;
+            async move {
+                ops_brain::repo::handoff_repo::create_handoff(
+                    &pool,
+                    "Claude-Stealth",
+                    Some(&to),
+                    "normal",
+                    "notify",
+                    "reply",
+                    "body",
+                    None,
+                    Some(parent),
+                )
+                .await
+                .unwrap()
+                .id
+            }
+        };
+        let to_bot = reply(&f.bot).await;
+        let elsewhere = reply("Claude-HSR").await;
+
+        let since = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        let r = handle_list_replies_to_me(
+            &f.brain,
+            ListRepliesToMeParams {
+                agent_name: f.bot.clone(),
+                since: Some(since),
+                limit: Some(50),
+            },
+            Some(&f.bot),
+            Visibility::Restricted(&f.bot),
+        )
+        .await;
+        assert_eq!(r.is_error, Some(false), "{}", text(&r));
+        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
+        assert_eq!(ids(&v, "replies"), vec![to_bot]);
+
+        // Control: unrestricted, the same thread shows both replies.
+        let all =
+            ops_brain::repo::handoff_repo::list_replies_to_me(&f.pool, &f.bot, None, None, 50)
+                .await
+                .unwrap();
+        let all: Vec<Uuid> = all.iter().map(|h| h.id).collect();
+        assert!(all.contains(&to_bot) && all.contains(&elsewhere));
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![to_bot, elsewhere])
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        cleanup(&f).await;
+    }
+
+    /// A 768-dim vector unique to this run. Rows stored with it sit at
+    /// distance 0 from the query, ahead of anything else in the table.
+    fn unique_vector() -> Vec<f32> {
+        let mut x = Uuid::now_v7().as_u128() | 1;
+        (0..768)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                ((x % 2000) as f32 / 1000.0) - 1.0
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn vector_and_hybrid_paths_honor_the_boundary() {
+        use ops_brain::repo::embedding_repo as er;
+        let f = fixture().await;
+        let v = unique_vector();
+        for id in [f.global_k, f.client_k] {
+            er::store_knowledge_embedding(&f.pool, id, &v)
+                .await
+                .unwrap();
+        }
+        for id in [f.to_bot, f.others, f.broadcast] {
+            er::store_handoff_embedding(&f.pool, id, &v).await.unwrap();
+        }
+        let k_ids = |rows: Vec<ops_brain::models::knowledge::Knowledge>| -> Vec<Uuid> {
+            rows.into_iter().map(|k| k.id).collect()
+        };
+        let h_ids = |rows: Vec<ops_brain::models::handoff::Handoff>| -> Vec<Uuid> {
+            rows.into_iter().map(|h| h.id).collect()
+        };
+
+        let got = k_ids(
+            er::vector_search_knowledge(&f.pool, &v, true, 5)
+                .await
+                .unwrap(),
+        );
+        assert!(
+            got.contains(&f.global_k) && !got.contains(&f.client_k),
+            "{got:?}"
+        );
+        let got = k_ids(
+            er::vector_search_knowledge(&f.pool, &v, false, 5)
+                .await
+                .unwrap(),
+        );
+        assert!(
+            got.contains(&f.global_k) && got.contains(&f.client_k),
+            "{got:?}"
+        );
+
+        let got = k_ids(
+            er::hybrid_search_knowledge(&f.pool, &f.term, Some(&v), true, 10)
+                .await
+                .unwrap(),
+        );
+        assert!(
+            got.contains(&f.global_k) && !got.contains(&f.client_k),
+            "{got:?}"
+        );
+
+        let similar: Vec<Uuid> = er::find_similar_knowledge(&f.pool, &v, 0.15, true, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert!(similar.contains(&f.global_k) && !similar.contains(&f.client_k));
+
+        let got = h_ids(
+            er::vector_search_handoffs(&f.pool, &v, Some(&f.bot), 5)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(got, vec![f.to_bot]);
+        let got = h_ids(
+            er::hybrid_search_handoffs(&f.pool, &f.term, Some(&v), Some(&f.bot), 10)
+                .await
+                .unwrap(),
+        );
+        assert!(
+            got.contains(&f.to_bot) && got.contains(&f.from_bot),
+            "{got:?}"
+        );
+        assert!(
+            !got.contains(&f.others) && !got.contains(&f.broadcast),
+            "{got:?}"
+        );
+        // Control: unrestricted hybrid sees the foreign rows.
+        let got = h_ids(
+            er::hybrid_search_handoffs(&f.pool, &f.term, Some(&v), None, 10)
+                .await
+                .unwrap(),
+        );
+        assert!(
+            got.contains(&f.others) && got.contains(&f.broadcast),
+            "{got:?}"
+        );
+
+        cleanup(&f).await;
+    }
+
+    #[tokio::test]
+    async fn queues_are_own_only_and_drop_broadcasts() {
+        let f = fixture().await;
+        let restricted = Visibility::Restricted(&f.bot);
+
+        let r = handle_check_in(
+            &f.brain,
+            CheckInParams {
+                agent_name: "Claude-Stealth".to_string(),
+            },
+            Some(&f.bot),
+            restricted,
+        )
+        .await;
+        assert_eq!(r.is_error, Some(true));
+        assert!(text(&r).contains("may only query its own agent"));
+
+        let r = handle_check_in(
+            &f.brain,
+            CheckInParams {
+                agent_name: f.bot.clone(),
+            },
+            Some(&f.bot),
+            restricted,
+        )
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
+        let listed: Vec<Uuid> = v["open_handoffs_to_you"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().parse().unwrap())
+            .collect();
+        assert!(listed.contains(&f.to_bot));
+        assert!(!listed.contains(&f.broadcast), "broadcasts are outside");
+
+        let r = handle_list_handoffs(
+            &f.brain,
+            ListHandoffsParams {
+                status: None,
+                to_agent: None,
+                from_agent: None,
+                category: None,
+                include_notify: Some(true),
+                limit: Some(200),
+                compact: Some(true),
+            },
+            restricted,
+        )
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
+        let listed = ids(&v, "handoffs");
+        assert!(listed.contains(&f.to_bot) && listed.contains(&f.from_bot));
+        for item in v["handoffs"].as_array().unwrap() {
+            let from = item["from_agent"].as_str().unwrap();
+            let to = item["to_agent"].as_str().unwrap_or("");
+            assert!(
+                from.eq_ignore_ascii_case(&f.bot) || to.eq_ignore_ascii_case(&f.bot),
+                "foreign handoff listed: {item}"
+            );
+        }
+
+        cleanup(&f).await;
+    }
+
+    #[tokio::test]
+    async fn knowledge_writes_stay_global() {
+        let f = fixture().await;
+        let restricted = Visibility::Restricted(&f.bot);
+
+        let r = handle_add_knowledge(
+            &f.brain,
+            AddKnowledgeParams {
+                title: format!("bot scoped {}", f.term),
+                content: "body".to_string(),
+                category: None,
+                tags: None,
+                client_slug: Some(f.client_slug.clone()),
+                cross_client_safe: None,
+                force: Some(true),
+                author: f.bot.clone(),
+            },
+            Some(&f.bot),
+            restricted,
+        )
+        .await;
+        assert_eq!(r.is_error, Some(true));
+        assert!(text(&r).contains("excluded from client data"));
+
+        let r = handle_update_knowledge(
+            &f.brain,
+            UpdateKnowledgeParams {
+                id: f.client_k.to_string(),
+                title: None,
+                content: Some("overwritten".to_string()),
+                category: None,
+                tags: None,
+                cross_client_safe: None,
+                verified: None,
+            },
+            restricted,
+        )
+        .await;
+        assert!(text(&r).contains("not found"), "{}", text(&r));
+
+        let r = handle_delete_knowledge(
+            &f.brain,
+            DeleteKnowledgeParams {
+                id: f.client_k.to_string(),
+            },
+            restricted,
+        )
+        .await;
+        assert!(text(&r).contains("not found"), "{}", text(&r));
+
+        let row = ops_brain::repo::knowledge_repo::get_knowledge(&f.pool, f.client_k)
+            .await
+            .unwrap()
+            .expect("client row survives");
+        assert_eq!(row.content, "body");
+
+        // A global row someone else wrote is readable but not editable.
+        let verify = |id: Uuid| UpdateKnowledgeParams {
+            id: id.to_string(),
+            title: None,
+            content: None,
+            category: None,
+            tags: None,
+            cross_client_safe: None,
+            verified: Some(true),
+        };
+        let r = handle_update_knowledge(&f.brain, verify(f.global_k), restricted).await;
+        assert!(
+            text(&r).contains("only knowledge it authored"),
+            "{}",
+            text(&r)
+        );
+        let r = handle_delete_knowledge(
+            &f.brain,
+            DeleteKnowledgeParams {
+                id: f.global_k.to_string(),
+            },
+            restricted,
+        )
+        .await;
+        assert!(
+            text(&r).contains("only knowledge it authored"),
+            "{}",
+            text(&r)
+        );
+
+        // Its own global row is fully writable.
+        let r = handle_add_knowledge(
+            &f.brain,
+            AddKnowledgeParams {
+                title: format!("bot global {}", f.term),
+                content: "body".to_string(),
+                category: None,
+                tags: None,
+                client_slug: None,
+                cross_client_safe: None,
+                force: Some(true),
+                author: f.bot.clone(),
+            },
+            Some(&f.bot),
+            restricted,
+        )
+        .await;
+        assert_eq!(r.is_error, Some(false), "{}", text(&r));
+        let own: Uuid = serde_json::from_str::<serde_json::Value>(&text(&r)).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let r = handle_update_knowledge(&f.brain, verify(own), restricted).await;
+        assert_eq!(r.is_error, Some(false), "{}", text(&r));
+
+        cleanup(&f).await;
     }
 }
