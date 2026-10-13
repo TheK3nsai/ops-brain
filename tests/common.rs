@@ -5,11 +5,9 @@
 //!
 //! Isolation model: each test uses UUID-based unique slugs/names to avoid
 //! conflicts. Tests clean up their own data on success. If a test panics,
-//! orphaned rows are harmless (unique IDs) but accumulate. Run
-//! `cleanup_stale_test_data()` periodically or at the start of test suites
-//! to purge old test artifacts.
+//! orphaned rows are harmless (unique IDs) but accumulate.
 //!
-//! Run: DATABASE_URL=postgres://ops_brain:ops_brain@localhost:5432/ops_brain cargo test
+//! Run: DATABASE_URL=postgres://ops_brain:ops_brain@localhost:5432/ops_brain_test cargo test
 
 use sqlx::PgPool;
 
@@ -35,22 +33,4 @@ pub async fn test_pool() -> PgPool {
         .expect("Failed to run migrations");
 
     pool
-}
-
-/// Remove test artifacts older than 1 hour.
-/// Safe to call at any time — only deletes rows with `test-`-prefixed slugs.
-#[allow(dead_code)]
-pub async fn cleanup_stale_test_data(pool: &PgPool) {
-    // knowledge.client_id is ON DELETE RESTRICT: clear a client's rows first.
-    let _ = sqlx::query(
-        "DELETE FROM knowledge WHERE client_id IN \
-         (SELECT id FROM clients WHERE slug LIKE 'test-%' AND created_at < NOW() - INTERVAL '1 hour')",
-    )
-    .execute(pool)
-    .await;
-    let _ = sqlx::query(
-        "DELETE FROM clients WHERE slug LIKE 'test-%' AND created_at < NOW() - INTERVAL '1 hour'",
-    )
-    .execute(pool)
-    .await;
 }
