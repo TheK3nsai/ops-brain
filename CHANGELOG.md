@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Deleting a client no longer makes its knowledge global.**
+  `knowledge.client_id` was `ON DELETE SET NULL`, and a null `client_id` is
+  global: every caller passes the cross-client gate on it, and it is the one
+  class an `exclude_client_data` token is served. A client delete (operator
+  SQL only) would have published that client's rows fleet-wide. The FK is now
+  `ON DELETE RESTRICT`, so the delete fails until the operator deletes or
+  re-scopes the rows.
 - **`operator-notify.sh` no longer puts secrets in argv.** The machine token
   went to curl as `-H "Authorization: Bearer …"` and the heartbeat's push token
   as part of the URL, so any local user could read both through `ps` or

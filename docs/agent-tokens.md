@@ -139,8 +139,8 @@ outside the boundary. FTS legs are unaffected.
   trusts every global row to be client-free. A row filed without
   `client_slug` that carries client detail (hostnames, paths, staff) is
   visible. Browse `search_bus` with `query: "*"` and re-scope or delete those
-  rows first. Also note that `knowledge.client_id` is `ON DELETE SET NULL`:
-  deleting a client row turns that client's knowledge global.
+  rows first. Deleting a client can't add to that set: `knowledge.client_id`
+  is `ON DELETE RESTRICT`, so the delete fails while the client owns rows.
 - **Confirm it took.** Unknown keys in an `OPS_BRAIN_AGENT_TOKENS` entry abort
   startup, so a misspelled flag can't silently default to off. After
   recreating the container, the binding summary must show

@@ -41,6 +41,13 @@ pub async fn test_pool() -> PgPool {
 /// Safe to call at any time — only deletes rows with `test-`-prefixed slugs.
 #[allow(dead_code)]
 pub async fn cleanup_stale_test_data(pool: &PgPool) {
+    // knowledge.client_id is ON DELETE RESTRICT: clear a client's rows first.
+    let _ = sqlx::query(
+        "DELETE FROM knowledge WHERE client_id IN \
+         (SELECT id FROM clients WHERE slug LIKE 'test-%' AND created_at < NOW() - INTERVAL '1 hour')",
+    )
+    .execute(pool)
+    .await;
     let _ = sqlx::query(
         "DELETE FROM clients WHERE slug LIKE 'test-%' AND created_at < NOW() - INTERVAL '1 hour'",
     )
