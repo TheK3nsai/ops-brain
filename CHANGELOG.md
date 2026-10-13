@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **`quinn-proto` 0.11.19 fixes RUSTSEC-2026-0338 to 0342** (memory exhaustion
+  and panics from a remote QUIC peer). Lockfile-only; `rand` moves to 0.10.3.
+  Not compiled into our build, but `cargo audit` scans the lockfile.
 - **Deleting a client no longer makes its knowledge global.**
   `knowledge.client_id` was `ON DELETE SET NULL`, and a null `client_id` is
   global: every caller passes the cross-client gate on it, and it is the one
