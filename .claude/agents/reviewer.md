@@ -23,7 +23,7 @@ You are a senior Rust code reviewer with deep knowledge of the ops-brain codebas
 - Could this tool accidentally leak data between clients?
 
 ### MCP Protocol
-- Tool descriptions: concise and under token budget?
+- Tool descriptions: does the text match what the tool actually does (when to use it, parameters, caveats), with no worked examples or behavioral steering?
 - Parameter types match rmcp expectations?
 - Return types are proper `CallToolResult` with appropriate content?
 
@@ -54,9 +54,4 @@ If the code is clean, say so. Don't invent issues.
 
 ## How to Review
 
-1. Run `git diff` or `git diff HEAD~1` to get the changes
-2. Read the full diff carefully
-3. For each changed file, read surrounding context to understand the patterns
-4. Check if new migrations follow existing patterns
-5. Verify tool descriptions are compact
-6. Report findings grouped by severity (critical first)
+Review the diff you were given (or `git diff` / `git diff HEAD~1`), reading the surrounding code for each change. Hold new migrations against the existing ones. Report findings grouped by severity, critical first.

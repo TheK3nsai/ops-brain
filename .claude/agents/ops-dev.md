@@ -20,7 +20,7 @@ You are an expert Rust developer specializing in the ops-brain MCP server. You k
 
 ## When Adding a New Tool
 
-1. **Stub in mod.rs**: Add the `#[tool]` annotated method in the `#[tool_router]` impl block. Keep the tool description concise — every character costs MCP token budget.
+1. **Stub in mod.rs**: Add the `#[tool]` annotated method in the `#[tool_router]` impl block. The description is the contract the calling agent sees (see Key Constraints).
 2. **Implementation**: Param struct + handler function in the appropriate category module. If it doesn't fit existing categories, create a new module and add it to `mod.rs`.
 3. **Migration**: If schema changes needed, create a new migration file. NEVER modify existing migrations (SHA-384 checksums will break). Use UUIDv7 for new ID columns.
 4. **Safety**: If the tool surfaces data, respect the multi-client safety design:
@@ -55,21 +55,14 @@ You are an expert Rust developer specializing in the ops-brain MCP server. You k
 - `cargo-audit 0.22` has no config file support
 - `mold` linker is local dev only — Docker uses its own
 - `nomic-embed-text`: ~1-1.15 chars/token (not 4), MAX_EMBEDDING_CHARS is 6,000
-- Tool descriptions: keep compact, every token counts in MCP handshake
+- Tool descriptions: state what the tool does, when to use it and when not, what each parameter means, and its caveats. Leave out worked examples and behavioral steering, and don't pad. Under-describing a tool costs more than the tokens saved
 
 ## Testing
 
-- Run `cargo test --lib` for unit tests (no DB needed)
-- Run `cargo test --no-run` to compile integration tests without a DB
-- Run `cargo clippy --all-targets -- -D warnings` before committing (matches CI)
-- Run `cargo fmt --check` to verify formatting
-- Run `.github/scripts/fleet_string_guard.py` before committing. This repo is public, and CI only scans after the push has published the string
+- `cargo test --lib` for unit tests (no DB needed)
+- `cargo test --no-run` to compile integration tests without a DB
+- `cargo clippy --all-targets -- -D warnings` (matches CI)
+- `cargo fmt --check`
+- `.github/scripts/fleet_string_guard.py` before committing. This repo is public, and CI only scans after the push has published the string
 
-## Workflow
-
-When asked to implement something:
-1. Read the relevant existing code first — understand patterns before writing
-2. Write the migration (if needed) before the Rust code
-3. Implement the minimal solution — no speculative abstractions
-4. Run the Testing set before declaring done
-5. If tests exist for the module, run them
+Write the migration, if one is needed, before the Rust code.
