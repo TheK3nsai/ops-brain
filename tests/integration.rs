@@ -2046,7 +2046,7 @@ mod knowledge_safety_tests {
         );
 
         // Cleanup: audit_log FKs requesting_client_id → clients, so purge it
-        // before the clients. knowledge.client_id is ON DELETE SET NULL.
+        // before the clients. knowledge.client_id is ON DELETE RESTRICT.
         sqlx::query("DELETE FROM audit_log WHERE entity_id = ANY($1)")
             .bind(vec![secret.id, safe.id])
             .execute(&pool)
@@ -2138,6 +2138,65 @@ mod knowledge_safety_tests {
             .unwrap();
         sqlx::query("DELETE FROM clients WHERE id = $1")
             .bind(client_a.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// Global is `client_id IS NULL`, so a client delete that nulled its
+    /// knowledge would publish those rows to every caller. The FK refuses.
+    #[tokio::test]
+    async fn deleting_a_client_with_knowledge_is_refused() {
+        let pool = pool().await;
+        let suffix = Uuid::now_v7().simple().to_string();
+
+        let client = ops_brain::repo::client_repo::upsert_client(
+            &pool,
+            "Retiring Co",
+            &format!("retiring-{suffix}"),
+            None,
+        )
+        .await
+        .unwrap();
+        let entry = ops_brain::repo::knowledge_repo::add_knowledge(
+            &pool,
+            &format!("scoped {suffix} entry"),
+            "client-only body",
+            None,
+            &[],
+            Some(client.id),
+            false,
+            Some("Claude-Stealth"),
+        )
+        .await
+        .unwrap();
+
+        let err = sqlx::query("DELETE FROM clients WHERE id = $1")
+            .bind(client.id)
+            .execute(&pool)
+            .await
+            .expect_err("client delete must be refused while it owns knowledge");
+        assert_eq!(
+            err.as_database_error().and_then(|e| e.code()).as_deref(),
+            Some("23001"),
+            "expected restrict_violation, got {err}"
+        );
+
+        let client_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT client_id FROM knowledge WHERE id = $1")
+                .bind(entry.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(client_id, Some(client.id), "entry must stay client-scoped");
+
+        sqlx::query("DELETE FROM knowledge WHERE id = $1")
+            .bind(entry.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM clients WHERE id = $1")
+            .bind(client.id)
             .execute(&pool)
             .await
             .unwrap();
