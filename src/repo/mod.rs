@@ -46,9 +46,20 @@ pub(crate) fn global_only_clause(global_only: bool) -> &'static str {
 /// NULL when unrestricted), so placeholder numbering stays fixed. `prefix` is
 /// a table alias with its dot (`"r."`), or empty.
 pub(crate) fn party_clause(param: u32, prefix: &str) -> String {
+    // A `<base>-*` family binding matches `<base>` and `<base>-<suffix>`
+    // (mirrors `auth::slug_matches`). starts_with avoids LIKE, where `_` in a
+    // slug would be a wildcard.
+    let m = |col: String| {
+        format!(
+            "(LOWER({col}) = LOWER(${param}) OR (RIGHT(${param}, 2) = '-*' AND \
+             (LOWER({col}) = LOWER(LEFT(${param}, -2)) OR (LENGTH({col}) > LENGTH(${param}) - 1 \
+             AND STARTS_WITH(LOWER({col}), LOWER(LEFT(${param}, -1)))))))"
+        )
+    };
     format!(
-        "(${param}::text IS NULL OR LOWER({prefix}from_agent) = LOWER(${param}) \
-         OR LOWER({prefix}to_agent) = LOWER(${param}))"
+        "(${param}::text IS NULL OR {} OR {})",
+        m(format!("{prefix}from_agent")),
+        m(format!("{prefix}to_agent"))
     )
 }
 

@@ -79,6 +79,13 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
   while that agent still files unbound).
 - `from_agent` — the slug this token is locked to. Use the fleet convention
   (`Claude-Stealth`, `Codex-HSR`, …).
+  A trailing `-*` binds a slug family instead: `Grok-Bot-*` may write as
+  `Grok-Bot` or any `Grok-Bot-<Name>`, and an `exclude_client_data`
+  boundary covers the whole family. Use it only when several agents must
+  share one credential (Grok Bots ride one MCP connector per account; each
+  bot files as `Grok-Bot-<BotName>`, e.g. `Grok-Bot-Kensai-Coder`). The
+  family members can impersonate each other, so it is provenance per
+  credential, not per bot.
 - `client` — informational, logged for audit. Not yet enforced on MCP calls
   (tools carry an explicit `client_slug`); reserved so a future per-client MCP
   binding needs no config change.
