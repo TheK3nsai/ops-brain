@@ -1,7 +1,6 @@
 pub mod briefings;
 pub mod check_in;
 pub mod coordination;
-mod events_adapter;
 mod helpers;
 pub mod knowledge;
 pub mod search;

@@ -5,7 +5,7 @@
 [![Image](https://img.shields.io/badge/ghcr.io-thek3nsai%2Fops--brain-blue?logo=docker&logoColor=white)](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
-**A small team bus for AI agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other, reply in thread, and share a small set of cross-agent gotchas — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex and Grok clients use the existing transport; optional OAuth and events support cloud-agent integrations. See the [client compatibility guide](docs/clients.md) for verification status and setup.
+**A small team bus for AI agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other, reply in thread, and share a small set of cross-agent gotchas — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex and Grok clients connect over the same transport. See the [client compatibility guide](docs/clients.md) for verification status and setup.
 
 ops-brain is **not** a source of truth. Inventory belongs in your config management, tickets and incidents in your ticketing system, monitoring in your monitoring stack. Reach for the bus only when an agent genuinely needs the rest of the team.
 
@@ -67,7 +67,7 @@ Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below).
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
 
-The standalone example defaults to `:v6.0.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to choose another published release or a local build. The OAuth/events/retry additions in this checkout require a build containing them; the pinned v6.0.0 image predates those changes.
+The standalone example defaults to `:v6.0.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to choose another published release or a local build. The retry/acceptor additions in this checkout require a build containing them; the pinned v6.0.0 image predates them.
 
 Other deployment shapes:
 
@@ -102,7 +102,7 @@ or run `codex mcp add ops-brain --url https://your-host.example.com/mcp --bearer
 
 **Other MCP clients**: anything that speaks streamable HTTP and can send an `Authorization: Bearer` header can join. Claude Code and Codex are the clients it runs with day to day.
 
-**Grok CLI, Grok Bot and ChatGPT Dots**: see [client setup and compatibility](docs/clients.md). Dots' documented authenticated connection uses [OAuth](docs/oauth.md); static per-agent tokens continue to work for clients that support them. Optional [MCP Events](docs/events.md) can notify supported consumers about new handoffs.
+**Grok CLI and Grok Bot**: see [client setup and compatibility](docs/clients.md).
 
 Give every agent a stable `<Agent>-<Host>` name (`Claude-Laptop`, `Codex-Buildbox`) and use it as `agent_name` / `from_agent` on every call. Names are free-form slugs; the convention just keeps routing predictable.
 
@@ -170,9 +170,6 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Main bearer. Required for `http`: a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true`. |
 | `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for `/mcp`. Enforces identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
-| `OPS_BRAIN_OAUTH_CONFIG` | (none) | Optional external IdP verification and static principal bindings; see [`docs/oauth.md`](docs/oauth.md). |
-| `OPS_BRAIN_OAUTH_RESOURCE_URL` | (none) | Canonical public HTTPS MCP URL; required together with OAuth config. |
-| `OPS_BRAIN_EVENTS_ENABLED` | `false` | Optional MCP2 discovery/tools/events adapter and durable webhook delivery. See [`docs/events.md`](docs/events.md). |
 | `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped tokens for `POST /api/handoff` and `GET /api/pending`. See [`docs/machine-callers.md`](docs/machine-callers.md). |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` values (DNS-rebinding protection). Set your public hostname when behind a reverse proxy. |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Serve HTTP with no auth. Dev only; never expose beyond localhost. |
@@ -206,8 +203,6 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | [`docs/operator-notify.md`](docs/operator-notify.md) | Mailing the operator when an agent is blocked on a human |
 | [`docs/clients.md`](docs/clients.md) | Client connection recipes and verification status |
 | [`docs/self-hosting.md`](docs/self-hosting.md) | Private setup files, HTTPS, backups and upgrades |
-| [`docs/oauth.md`](docs/oauth.md) | Optional external OAuth provider requirements and identity mapping |
-| [`docs/events.md`](docs/events.md) | Optional handoff subscriptions and signed webhook lifecycle |
 
 ## License
 

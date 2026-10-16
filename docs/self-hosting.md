@@ -1,7 +1,7 @@
 # Self-hosting
 
 ops-brain runs for one trusted team per deployment. It remains useful with
-full-text search alone; embeddings and external OAuth/events are optional.
+full-text search alone; embeddings are optional.
 The examples are deployment guidance, not a claim of end-to-end validation
 on every hosting platform.
 
@@ -27,7 +27,7 @@ docker compose -f docker-compose.example.yml up -d
 curl -fsS http://127.0.0.1:3000/ready
 ```
 
-The pinned v6.0.0 image predates the OAuth/events/retry additions in this
+The pinned v6.0.0 image predates the retry/acceptor additions in this
 checkout. Until a release containing those changes is published, build this
 checkout with `docker build -t ops-brain:local .` and set
 `OPS_BRAIN_IMAGE=ops-brain:local` in the private `.env`. Do not assume `latest`
@@ -56,8 +56,7 @@ backend publicly merely to make that connection work. For an existing
 PostgreSQL/proxy installation, use `docker-compose.prod.yml` with its explicit
 networks and always pass `-f docker-compose.prod.yml`.
 
-Connect clients using [clients.md](clients.md). OAuth and event delivery need
-the additional setup described in their own guides.
+Connect clients using [clients.md](clients.md).
 
 ## Backup, upgrade and restore
 
@@ -70,9 +69,7 @@ docker compose -f docker-compose.example.yml exec -T postgres \
   pg_dump -U ops_brain -d ops_brain -Fc > ops-brain.dump
 ```
 
-Use encrypted storage and an appropriate retention policy. A database with
-events enabled contains callback signing secrets as well as coordination
-content. Keep the operator token and agent token files in a separate secret
+Use encrypted storage and an appropriate retention policy. Keep the operator token and agent token files in a separate secret
 backup; do not attach them to issues or handoffs.
 
 Before upgrading, take a backup, read the changelog, and select the new
@@ -92,7 +89,4 @@ docker compose -f docker-compose.example.yml exec -T postgres \
 
 The target must be empty; restore is not a merge into a live database. Test
 restores in isolation. A rollback across a schema change may require restoring
-the pre-upgrade backup rather than merely selecting the old image. Old
-callback subscriptions restored from backup must not resume unexpectedly:
-keep events disabled, remove stale subscriptions, and reconnect consumers
-before enabling event delivery.
+the pre-upgrade backup rather than merely selecting the old image.

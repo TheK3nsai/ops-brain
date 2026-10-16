@@ -11,14 +11,11 @@ which model or background worker is using it.
 |---|---|---|---|
 | Claude Code | Streamable HTTP `/mcp`, or trusted local stdio | Per-agent bearer | Existing fleet use |
 | Codex CLI | Streamable HTTP `/mcp`, or trusted local stdio | Per-agent bearer | Existing fleet use |
-| Grok CLI | Streamable HTTP `/mcp` | Per-agent bearer | Existing fleet use; vendor supports HTTP and OAuth |
-| Grok Bot | Remote HTTPS `/mcp` | Bot credential, or individual OAuth sign-in | Existing fleet round trip with a restricted token |
-| ChatGPT Dots | Remote MCP through a connected plugin | OAuth | Implementation tested locally; account linking and Dot execution not verified |
-| Other clients | Streamable HTTP `/mcp` | Bearer or supported OAuth | Check with the smoke script; no blanket compatibility claim |
+| Grok CLI | Streamable HTTP `/mcp` | Per-agent bearer | Existing fleet use |
+| Grok Bot | Remote HTTPS `/mcp` | Bot credential | Existing fleet round trip with a restricted token |
+| Other clients | Streamable HTTP `/mcp` | Bearer | Check with the smoke script; no blanket compatibility claim |
 
-The original 13 tools remain available. Legacy clients use the existing MCP
-initialization flow. Optional events use the separate MCP2 discovery flow on
-the same endpoint; see [events](events.md).
+All clients see the same 13 tools over the standard MCP initialization flow.
 
 ## Claude Code and Codex
 
@@ -45,9 +42,8 @@ arguments. [Vendor MCP documentation](https://docs.x.ai/build/features/mcp-serve
 ## Grok Bot
 
 Choose a custom MCP server using **Remote HTTPS**, set the public `/mcp` URL,
-and supply the seat's credential through the secure connection setup. For
-team use, OAuth can identify the person connecting; a shared Bot key gives
-everyone the same ops-brain seat. [Team Bot connection documentation](https://docs.x.ai/grok-bot/team-bots).
+and supply the seat's credential through the secure connection setup. A
+shared Bot key gives everyone the same ops-brain seat. [Team Bot connection documentation](https://docs.x.ai/grok-bot/team-bots).
 
 Personal Bots share a computer, files, command-line credentials and
 account-wide connectors. Different Bot names or screens do not isolate
@@ -63,26 +59,13 @@ For routing several Bots through a shared credential, an operator can bind a
 authority and restricted visibility; the names provide routing within that
 shared boundary. See [agent token families](agent-tokens.md).
 
-Grok Bot does not subscribe to [MCP events](events.md). To wake a Bot, run a
+ops-brain sends nothing to a Bot. To wake one, run a
 [wake shim](machine-callers.md) that polls `GET /api/pending` with a
 machine token listing each member slug and triggers the Bot's own routine
 webhook. Only `action` handoffs wake; `notify` never does.
 
 Address replies to restricted seats explicitly. They cannot read broadcasts.
 See [agent tokens](agent-tokens.md) for the full boundary.
-
-## ChatGPT Dots
-
-Configure [OAuth](oauth.md), connect the remote MCP server through a plugin,
-complete account linking, and enable the plugin for the Dot. The documented
-OpenAI authenticated integration expects OAuth rather than a custom static
-API key. Existing ChatGPT/plugin permissions and approvals still apply.
-[Authentication](https://developers.openai.com/plugins/build/auth),
-[Dots](https://learn.chatgpt.com/docs/dots).
-
-One OAuth subject/client binding maps to one ops-brain seat. If multiple Dots
-or workers share that connection, they share that identity. Do not infer a
-unique Dot identity from the name supplied in tool arguments.
 
 ## Connection smoke check
 

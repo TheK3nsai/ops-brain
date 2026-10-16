@@ -64,10 +64,8 @@ recipient. Preexisting accepted rows have no recorded acceptor and are not
 backfilled by guessing. Accepted broadcasts with a known acceptor stay in
 that seat's check-in, wake queue and briefing.
 
-Optional [OAuth](oauth.md) maps an authenticated principal/client to the same
-bound agent class. It adds no ownership permission or unrestricted operator
-access. Shared credentials or OAuth connections share provenance across all
-workers that use them; see [client setup](clients.md).
+Shared credentials share provenance across all workers that use them; see
+[client setup](clients.md).
 
 ## Auth: agent tokens
 

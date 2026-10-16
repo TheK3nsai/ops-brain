@@ -2,7 +2,7 @@ use clap::Parser;
 use ops_brain::{
     api, auth,
     config::{Command, Config},
-    db, embeddings, events, oauth,
+    db, embeddings,
     tools::OpsBrain,
 };
 use rmcp::service::ServiceExt;
@@ -134,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_default();
             if !parsed_hosts.is_empty() {
                 tracing::info!("HTTP allowed_hosts: {:?}", parsed_hosts);
-                http_config = http_config.with_allowed_hosts(parsed_hosts.clone());
+                http_config = http_config.with_allowed_hosts(parsed_hosts);
             } else if config.allowed_hosts.is_some() {
                 tracing::warn!(
                     "OPS_BRAIN_ALLOWED_HOSTS set but empty/whitespace; using loopback default. \
@@ -147,8 +147,6 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let embedding_client_http = embedding_client.clone();
-            let event_brain = OpsBrain::new(pool.clone(), embedding_client.clone());
-            let events_pool = pool.clone();
             let mcp_service = StreamableHttpService::new(
                 move || Ok(OpsBrain::new(pool.clone(), embedding_client_http.clone())),
                 session_manager,
@@ -221,35 +219,6 @@ async fn main() -> anyhow::Result<()> {
                 agent_tokens: Arc::new(agent_tokens),
             };
 
-            let oauth = match (
-                config
-                    .oauth_config
-                    .as_deref()
-                    .filter(|v| !v.trim().is_empty()),
-                config
-                    .oauth_resource_url
-                    .as_deref()
-                    .filter(|v| !v.trim().is_empty()),
-            ) {
-                (Some(raw), Some(resource)) => {
-                    if auth_state.main_token.is_none() {
-                        anyhow::bail!(
-                            "OAuth requires authenticated HTTP mode; disable --dev-no-auth"
-                        );
-                    }
-                    Some(Arc::new(
-                        oauth::OAuthState::from_json(raw, resource).map_err(anyhow::Error::msg)?,
-                    ))
-                }
-                (None, None) => None,
-                _ => anyhow::bail!(
-                    "set both OPS_BRAIN_OAUTH_CONFIG and OPS_BRAIN_OAUTH_RESOURCE_URL"
-                ),
-            };
-            if config.events_enabled && auth_state.main_token.is_none() {
-                anyhow::bail!("MCP Events requires authenticated HTTP mode");
-            }
-
             let api_routes = axum::Router::new()
                 .route("/briefing", axum::routing::post(api::generate_briefing))
                 .route("/handoff", axum::routing::post(api::create_handoff))
@@ -264,31 +233,11 @@ async fn main() -> anyhow::Result<()> {
                 .route("/ready", axum::routing::get(api::ready))
                 .with_state(api_state)
                 .nest("/api", api_routes)
-                .nest_service("/mcp", mcp_service);
-
-            let app = if config.events_enabled {
-                let state = Arc::new(events::EventsState::new(
-                    events_pool,
-                    event_brain,
-                    auth_state.clone(),
-                    oauth.clone(),
-                    parsed_hosts,
+                .nest_service("/mcp", mcp_service)
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_state,
+                    auth::bearer_auth,
                 ));
-                tokio::spawn(events::run_worker(state.clone()));
-                app.layer(axum::middleware::from_fn_with_state(
-                    state,
-                    events::mcp_events,
-                ))
-            } else {
-                app
-            };
-            let app = app.layer(axum::middleware::from_fn_with_state(
-                oauth::OAuthAuthState {
-                    auth: auth_state,
-                    oauth,
-                },
-                oauth::oauth_bearer_auth,
-            ));
 
             let listener = tokio::net::TcpListener::bind(&config.listen).await?;
             tracing::info!("Listening on http://{}", config.listen);

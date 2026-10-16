@@ -59,9 +59,6 @@ services:
       # See docs/machine-callers.md and docs/agent-tokens.md in the repository.
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
-      - OPS_BRAIN_OAUTH_CONFIG=${OPS_BRAIN_OAUTH_CONFIG:-}
-      - OPS_BRAIN_OAUTH_RESOURCE_URL=${OPS_BRAIN_OAUTH_RESOURCE_URL:-}
-      - OPS_BRAIN_EVENTS_ENABLED=${OPS_BRAIN_EVENTS_ENABLED:-false}
       - OPS_BRAIN_MIGRATE=true
       # Public deployments behind a reverse proxy must add the public hostname
       # here (comma-separated). Defaults to loopback-only when unset.

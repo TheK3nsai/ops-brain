@@ -25,7 +25,20 @@ All notable changes to this project will be documented in this file.
 - Client compatibility, OAuth, events and self-hosting guides, private setup
   file generation and a read-only-by-default MCP connection smoke script.
 
+### Removed
+
+- **MCP Events and OAuth are parked** on branch `parked/events-oauth`. Both
+  shipped in #153 for ChatGPT Dots, but no live client had used either, and
+  Grok Bots cannot subscribe to events. Dropped: `src/events.rs`,
+  `src/oauth.rs`, the MCP2 adapter, their docs, env vars and crates. Migration
+  `20261016000003_drop_mcp_events` drops the event tables, trigger and function
+  (the applied `20261016000002` stays as is). The roadmap's no-webhooks-out
+  call stands again. `accepted_by` and `idempotency_key` stay.
+
 ### Changed
+
+- `accept_handoff` on a family token without `agent_name` now names the fix:
+  `family token <base>-* must pass agent_name (your member name, e.g. <base>-<Bot>)`.
 
 - Release ownership is explicit in agent guidance and MCP instructions:
   originating agents finish review/PR/green CI/merge; the configured cloud
