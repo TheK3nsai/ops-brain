@@ -25,6 +25,7 @@ Traps in this repo: the rule, why it bites, and the check. History lives in `git
 
 ## Production deploy checks
 
+- **Pushed, merged and deployed are separate states.** The originating agent owns PR/green CI/merge, then Cloud deploys the exact merged SHA and reports verification. Full ownership and fallback rules: `CLAUDE.md` → *Development Workflow*. A branch-head SHA or a pending-PR handoff is not a deployment-ready release.
 - **Port 3000, the prod smoke commands, and `-f docker-compose.prod.yml`:** see `CLAUDE.md` → *Gotchas*.
 - **`/health` and `/ready` are unauthenticated on purpose.** `bearer_auth` in `src/auth.rs` skips both so Docker and the reverse proxy can probe without a bearer. `/ready` runs a minimal database check and returns no detail. `/api` and `/mcp` stay protected.
 - **The `## Surface (N tools)` heading in `CLAUDE.md` is machine-parsed.** An external deploy procedure extracts `N` with `sed -n 's/^## Surface (\([0-9]\+\) tools).*/\1/p' CLAUDE.md` and compares it with the live MCP `tools/list`. Nothing in this repo parses it, so it looks decorative. Keep the heading format exact and keep `N` equal to the number of `#[tool(` stubs in `src/tools/mod.rs`.

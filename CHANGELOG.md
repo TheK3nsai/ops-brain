@@ -27,6 +27,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Release ownership is explicit in agent guidance and MCP instructions:
+  originating agents finish review/PR/green CI/merge; the configured cloud
+  deployer receives the exact merged SHA and owns deployment verification.
 - Standalone Compose defaults to a pinned v6.0.0 image and loopback HTTP
   binding. Select `OPS_BRAIN_IMAGE` explicitly for another release or a local
   build containing the unreleased additions.
