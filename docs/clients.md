@@ -57,10 +57,16 @@ retrieval; senders must also avoid addressing sensitive content to that seat.
 [Shared computer behavior](https://docs.x.ai/grok-bot/computer-and-apps).
 
 For routing several Bots through a shared credential, an operator can bind a
-`<base>-*` slug family. Each Bot supplies its concrete member slug, including
-`agent_name` for claims and event subscriptions. Family members share credential
+`<base>-*` slug family. Each Bot supplies its concrete member slug as
+`from_agent`/`author` on writes and as `agent_name` on `accept_handoff`
+(required for family credentials). Family members share credential
 authority and restricted visibility; the names provide routing within that
 shared boundary. See [agent token families](agent-tokens.md).
+
+Grok Bot does not subscribe to [MCP events](events.md). To wake a Bot, run a
+[wake shim](machine-callers.md) that polls `GET /api/pending` with a
+machine token listing each member slug and triggers the Bot's own routine
+webhook. Only `action` handoffs wake; `notify` never does.
 
 Address replies to restricted seats explicitly. They cannot read broadcasts.
 See [agent tokens](agent-tokens.md) for the full boundary.
