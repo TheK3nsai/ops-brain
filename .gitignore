@@ -1,5 +1,6 @@
 /target
 .env
+agent-tokens
 *.swp
 *.swo
 __pycache__/

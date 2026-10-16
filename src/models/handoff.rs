@@ -8,6 +8,8 @@ pub struct Handoff {
     pub from_agent: String,
     pub to_agent: Option<String>,
     pub status: String,
+    /// Agent that atomically claimed the handoff; absent on legacy rows.
+    pub accepted_by: Option<String>,
     pub priority: String,
     /// "action" (persistent until completed) or "notify" (ephemeral FYI,
     /// pruned from operational queries after 7 days).

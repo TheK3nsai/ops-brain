@@ -2,13 +2,12 @@
 
 Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctrine, hard stops and decided-don't-re-propose items in `ROADMAP.md`; code and deploy footguns in `GOTCHAS.md`. Long working notes for an open item go in `docs/investigations/` and are deleted with the item.
 
-**Release intent, still in force:** _"don't sharpen for optics; build for the 4 CCs."_ No external-polish work without actual external signal — someone files an issue, asks for help, or otherwise shows up.
+**Release intent:** prioritize the existing fleet. Client compatibility and optional self-hosting guidance are authorized; do not add public-service or multi-tenant infrastructure without a separate need.
 
 ## Open
 
 ### Bus core
 
-- **`accept_handoff` records no acceptor.** An accepted broadcast therefore leaves every queue including the acceptor's (the unaddressed leg of `check_in` is pending-only, to prevent duplicate work), and nobody can see who holds an accepted item. An `accepted_by` column fixes both; build it only if that bites.
 - **`operator-notify.sh` mails an item once and then goes quiet.** The briefing's "waiting on you" section is the standing view, so decide whether the script needs a re-reminder at all once that has been lived with.
 
 ### Public-repo hygiene

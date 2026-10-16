@@ -22,8 +22,9 @@ the main bearer and from each other.
 
 | Path | Tool | Behavior on a bound token |
 |---|---|---|
-| write | `create_handoff` | `from_agent` **must** equal the token's slug (case-insensitive), else the call is rejected |
-| write | `add_knowledge` | `author` **must** equal the token's slug, else rejected |
+| write | `create_handoff` | `from_agent` must match the token's slug or configured `-*` family, else rejected |
+| write | `add_knowledge` | `author` must match the token's slug or family, else rejected |
+| claim | `accept_handoff` | records `accepted_by`; family credentials require a concrete matching `agent_name` |
 | read | `check_in` | served for any `agent_name`, but a mismatch is **warn-logged** |
 | read | `list_replies_to_me` | served for any `agent_name`, but a mismatch is **warn-logged** |
 
@@ -39,17 +40,17 @@ deployed, no agent host keeps a copy, not even a dormant one for emergencies.
 
 ### Scope boundary: provenance, not per-object ownership
 
-The binding guarantees **provenance on create** — a handoff's `from_agent` and a
-knowledge entry's `author` cannot be forged. It does **not** make each object
-private to its author. The mutation-by-id tools — `accept_handoff`,
-`complete_handoff`, `delete_handoff`, `mark_merged`, `update_knowledge`,
-`delete_knowledge` — carry no identity parameter and are **not** ownership-
-checked: any valid token (agent or main) may accept, complete, delete, or edit
-any object. That is deliberate — the bus is collaborative (you accept a handoff
+The binding guarantees **provenance on creation and claim** — a handoff's
+`from_agent` and `accepted_by`, and a knowledge entry's `author`, cannot be
+forged outside the credential's bound slug or family. Object mutations remain collaborative:
+`accept_handoff`, `complete_handoff`, `delete_handoff`, `mark_merged`,
+`update_knowledge` and `delete_knowledge` are not ownership-checked. An
+unrestricted token may act on any object; restricted tokens retain the
+visibility and author boundaries below. That is deliberate (you accept a handoff
 another agent addressed *to* you; an integrator script marks others' work
 merged) and enforcing per-object ownership there would break normal workflow.
 
-The consequence to hold in mind: a stolen agent token is still a fleet-wide
+The consequence to hold in mind: a stolen unrestricted agent token is still a fleet-wide
 *mutate/delete* primitive — it just can't *forge new provenance*. This is no
 worse than today's shared bearer (which grants exactly the same), and rotation
 of a per-agent token is now per-host. If tamper-containment ever becomes a real
@@ -57,7 +58,16 @@ need, it is a separate, deliberate design step (ownership checks against the
 bound identity), not a silent extension of this feature.
 
 Over the **stdio transport** (local dev) there is no HTTP auth layer, so durable
-write bindings are inert — correct, because stdio is trusted-local.
+write bindings are inert. Unbound callers can supply `agent_name` when claiming
+a handoff; broadcasts require it, while addressed handoffs default to their
+recipient. Preexisting accepted rows have no recorded acceptor and are not
+backfilled by guessing. Accepted broadcasts with a known acceptor stay in
+that seat's check-in, wake queue and briefing.
+
+Optional [OAuth](oauth.md) maps an authenticated principal/client to the same
+bound agent class. It adds no ownership permission or unrestricted operator
+access. Shared credentials or OAuth connections share provenance across all
+workers that use them; see [client setup](clients.md).
 
 ## Auth: agent tokens
 
@@ -120,8 +130,8 @@ A flagged token:
 | Surface | Behavior |
 |---|---|
 | knowledge reads (`search_bus`, browse, duplicate detection on `add_knowledge`) | global rows only (`client_id IS NULL`). A client row stays out even when it is `cross_client_safe`. |
-| handoff reads (`search_bus` handoffs, `list_handoffs`, `check_in`, `list_replies_to_me`) | only rows where the token's slug is `from_agent` or `to_agent`. Broadcasts are excluded, since anyone may have written them for anyone. |
-| `check_in`, `list_replies_to_me` | its own slug only; another agent's queue is rejected |
+| handoff reads (`search_bus` handoffs, `list_handoffs`, `check_in`, `list_replies_to_me`) | only rows whose sender or recipient matches the token's slug or family. Broadcasts are excluded, since anyone may have written them for anyone. |
+| `check_in`, `list_replies_to_me` | its bound slug or a concrete family member only; other queues are rejected |
 | by-id tools (`get_handoff`, `accept_handoff`, `complete_handoff`, `mark_merged`, `delete_handoff`, `update_knowledge`, `delete_knowledge`) | a row outside the boundary returns **not found**, so the reply doesn't confirm it exists |
 | `update_knowledge`, `delete_knowledge` on a global row | allowed only on rows the token authored, so it can't rewrite rules other agents rely on |
 | `create_handoff` with `in_reply_to` | the parent must be inside the boundary |

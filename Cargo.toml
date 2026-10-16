@@ -60,6 +60,13 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-feature
 # Error handling
 anyhow = "1"
 
+# Optional OAuth resource server and signed MCP event delivery.
+jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+
 [dev-dependencies]
 # tower::ServiceExt::oneshot for driving the axum auth middleware + REST
 # handlers in integration tests without binding a TCP listener.

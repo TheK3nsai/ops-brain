@@ -4,7 +4,7 @@
 #  GHCR and bundles its own PostgreSQL.
 #
 #    curl -O https://raw.githubusercontent.com/TheK3nsai/ops-brain/main/docker-compose.example.yml
-#    echo "OPS_BRAIN_AUTH_TOKEN=$(openssl rand -hex 32)" > .env
+#    (umask 077; echo "OPS_BRAIN_AUTH_TOKEN=$(openssl rand -hex 32)" > .env)
 #    docker compose -f docker-compose.example.yml up -d
 #    curl -fsS http://localhost:3000/ready && echo "ready"
 #
@@ -42,14 +42,14 @@ services:
       retries: 5
 
   ops-brain:
-    image: ghcr.io/thek3nsai/ops-brain:latest
+    image: ${OPS_BRAIN_IMAGE:-ghcr.io/thek3nsai/ops-brain:v6.0.0}
     container_name: ops-brain
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "${OPS_BRAIN_PORT:-3000}:3000"
+      - "${OPS_BRAIN_BIND:-127.0.0.1}:${OPS_BRAIN_PORT:-3000}:3000"
     environment:
       - DATABASE_URL=postgresql://ops_brain:${POSTGRES_PASSWORD:-ops_brain}@postgres:5432/ops_brain
       - OPS_BRAIN_TRANSPORT=http
@@ -59,6 +59,9 @@ services:
       # See docs/machine-callers.md and docs/agent-tokens.md in the repository.
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
+      - OPS_BRAIN_OAUTH_CONFIG=${OPS_BRAIN_OAUTH_CONFIG:-}
+      - OPS_BRAIN_OAUTH_RESOURCE_URL=${OPS_BRAIN_OAUTH_RESOURCE_URL:-}
+      - OPS_BRAIN_EVENTS_ENABLED=${OPS_BRAIN_EVENTS_ENABLED:-false}
       - OPS_BRAIN_MIGRATE=true
       # Public deployments behind a reverse proxy must add the public hostname
       # here (comma-separated). Defaults to loopback-only when unset.

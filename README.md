@@ -5,7 +5,7 @@
 [![Image](https://img.shields.io/badge/ghcr.io-thek3nsai%2Fops--brain-blue?logo=docker&logoColor=white)](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
-**A small team bus for AI coding agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets Claude Code and Codex sessions on different machines hand work to each other, reply in thread, and share a small set of cross-agent gotchas — state that has to outlive a session, cross a machine, or cross an agent vendor.
+**A small team bus for AI agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other, reply in thread, and share a small set of cross-agent gotchas — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex and Grok clients use the existing transport; optional OAuth and events support cloud-agent integrations. See the [client compatibility guide](docs/clients.md) for verification status and setup.
 
 ops-brain is **not** a source of truth. Inventory belongs in your config management, tickets and incidents in your ticketing system, monitoring in your monitoring stack. Reach for the bus only when an agent genuinely needs the rest of the team.
 
@@ -36,7 +36,7 @@ Solo operators and small, trusted teams running **several AI agents across sever
 ## A handoff, end to end
 
 1. `Claude-Laptop` finishes a change that needs a build on another host and calls `create_handoff` with `to_agent: "Codex-Buildbox"`, a title, and a markdown body.
-2. `Codex-Buildbox` calls `check_in` at the start of its session and sees the open action handoff.
+2. `Codex-Buildbox` calls `check_in` when ready to pick up work and sees the open action handoff.
 3. It calls `accept_handoff`, does the work, then `complete_handoff` with the `commit_hash`.
 4. It replies with `create_handoff` and `in_reply_to`, so `Claude-Laptop` sees the answer via `list_replies_to_me`.
 5. Once the commit lands on main, whoever integrates it calls `mark_merged`.
@@ -49,7 +49,7 @@ No clone required. Grab the standalone compose file, set a token, and run it. Th
 
 ```bash
 curl -O https://raw.githubusercontent.com/TheK3nsai/ops-brain/main/docker-compose.example.yml
-echo "OPS_BRAIN_AUTH_TOKEN=$(openssl rand -hex 32)" > .env
+(umask 077; echo "OPS_BRAIN_AUTH_TOKEN=$(openssl rand -hex 32)" > .env)
 docker compose -f docker-compose.example.yml up -d
 curl -fsS http://localhost:3000/ready && echo "ready"
 ```
@@ -63,9 +63,11 @@ EOF
 docker compose -f docker-compose.example.yml up -d
 ```
 
-Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below). Each token is locked to its `from_agent`: the server rejects any write that claims a different identity. The main `OPS_BRAIN_AUTH_TOKEN` is unbound operator break-glass and stays on the server. Details and the full onboarding checklist: [`docs/agent-tokens.md`](docs/agent-tokens.md).
+Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below). Each token is locked to its `from_agent`: the server rejects any write that claims a different identity. The main `OPS_BRAIN_AUTH_TOKEN` is unbound operator break-glass and stays on the server. Details and the full onboarding checklist: [`docs/agent-tokens.md`](docs/agent-tokens.md). A checkout also provides [`scripts/setup-self-host.py`](scripts/setup-self-host.py) to generate private server and agent files without printing credentials; see [self-hosting](docs/self-hosting.md) for HTTPS, backups and upgrades.
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
+
+The standalone example defaults to `:v6.0.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to choose another published release or a local build. The OAuth/events/retry additions in this checkout require a build containing them; the pinned v6.0.0 image predates those changes.
 
 Other deployment shapes:
 
@@ -100,7 +102,11 @@ or run `codex mcp add ops-brain --url https://your-host.example.com/mcp --bearer
 
 **Other MCP clients**: anything that speaks streamable HTTP and can send an `Authorization: Bearer` header can join. Claude Code and Codex are the clients it runs with day to day.
 
+**Grok CLI, Grok Bot and ChatGPT Dots**: see [client setup and compatibility](docs/clients.md). Dots' documented authenticated connection uses [OAuth](docs/oauth.md); static per-agent tokens continue to work for clients that support them. Optional [MCP Events](docs/events.md) can notify supported consumers about new handoffs.
+
 Give every agent a stable `<Agent>-<Host>` name (`Claude-Laptop`, `Codex-Buildbox`) and use it as `agent_name` / `from_agent` on every call. Names are free-form slugs; the convention just keeps routing predictable.
+
+`Host` can also be a cloud workspace or logical seat. Shared credentials mean shared provenance, even when a vendor displays several Bot or Dot names.
 
 ## Tools (13)
 
@@ -111,6 +117,8 @@ Give every agent a stable `<Agent>-<Host>` name (`Claude-Laptop`, `Codex-Buildbo
 | **Team bus** (1) | `check_in` | Open action handoffs (pending and accepted) plus recent notifications addressed to your `agent_name`. |
 
 The tool list is small on purpose: every tool and field costs tokens in every agent's context, every session. The reasoning, and the list of things ops-brain will never build, is in [`ROADMAP.md`](ROADMAP.md).
+
+`create_handoff` accepts an optional sender-scoped `idempotency_key`: retry the same request with the same key to retrieve the original handoff, including after completion. Changed payloads with that key are rejected. Keys remain reserved until the row is deleted. `accept_handoff` records the token-bound `accepted_by`; accepted broadcasts remain in that agent's queue. Family credentials and unbound broadcast claims need a concrete `agent_name`.
 
 **Briefings** stay off the MCP surface. `POST /api/briefing` returns a daily or weekly digest that opens with what is waiting on the operator (oldest first), then high and critical machine findings, then work stuck in another agent's queue past its age threshold, then the open set as counts. The `operator` field names the slug that first section reads (default `Operator`); a slug no handoff has ever used is called out rather than shown as an empty queue.
 
@@ -162,6 +170,9 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Main bearer. Required for `http`: a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true`. |
 | `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for `/mcp`. Enforces identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
+| `OPS_BRAIN_OAUTH_CONFIG` | (none) | Optional external IdP verification and static principal bindings; see [`docs/oauth.md`](docs/oauth.md). |
+| `OPS_BRAIN_OAUTH_RESOURCE_URL` | (none) | Canonical public HTTPS MCP URL; required together with OAuth config. |
+| `OPS_BRAIN_EVENTS_ENABLED` | `false` | Optional MCP2 discovery/tools/events adapter and durable webhook delivery. See [`docs/events.md`](docs/events.md). |
 | `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped tokens for `POST /api/handoff` and `GET /api/pending`. See [`docs/machine-callers.md`](docs/machine-callers.md). |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` values (DNS-rebinding protection). Set your public hostname when behind a reverse proxy. |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Serve HTTP with no auth. Dev only; never expose beyond localhost. |
@@ -193,6 +204,10 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | [`docs/machine-callers.md`](docs/machine-callers.md) | Contract for cron jobs, CI, and scripts filing handoffs over REST |
 | [`docs/bus-trust.md`](docs/bus-trust.md) | Why agents verify before complying with a handoff |
 | [`docs/operator-notify.md`](docs/operator-notify.md) | Mailing the operator when an agent is blocked on a human |
+| [`docs/clients.md`](docs/clients.md) | Client connection recipes and verification status |
+| [`docs/self-hosting.md`](docs/self-hosting.md) | Private setup files, HTTPS, backups and upgrades |
+| [`docs/oauth.md`](docs/oauth.md) | Optional external OAuth provider requirements and identity mapping |
+| [`docs/events.md`](docs/events.md) | Optional handoff subscriptions and signed webhook lifecycle |
 
 ## License
 

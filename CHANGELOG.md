@@ -13,9 +13,30 @@ All notable changes to this project will be documented in this file.
   Bots), so each can be addressed by its own slug. Plain bindings are
   unchanged.
 
+- Optional external OAuth resource-server support: protected-resource
+  discovery, bounded JWT/JWKS validation and operator-configured principal
+  bindings preserve the existing identity and restricted-data rules.
+- Optional MCP2 discovery/tools/events adapter and signed `handoff.created`
+  pointer webhooks, with verified public HTTPS callbacks, expiring grants,
+  durable delivery, bounded retries and revocation checks.
+- Sender-scoped MCP handoff retry keys return the original record across its
+  lifecycle and reject changed requests. Atomic claims now record
+  `accepted_by`; claimed broadcasts stay in the acceptor's operational queue.
+- Client compatibility, OAuth, events and self-hosting guides, private setup
+  file generation and a read-only-by-default MCP connection smoke script.
+
+### Changed
+
+- Standalone Compose defaults to a pinned v6.0.0 image and loopback HTTP
+  binding. Select `OPS_BRAIN_IMAGE` explicitly for another release or a local
+  build containing the unreleased additions.
+
 ### Fixed
 
 - **`rustls` 0.23.46 fixes RUSTSEC-2026-0347 to 0350.** Lockfile-only.
+- Event maintenance clears expired rotation keys at a five-minute cadence.
+  MCP2 tool requests allow escaped text up to the existing decoded input
+  limits; the separate webhook delivery limit remains 256 KiB.
 - **`quinn-proto` 0.11.19 fixes RUSTSEC-2026-0338 to 0342** (memory exhaustion
   and panics from a remote QUIC peer). Lockfile-only; `rand` moves to 0.10.3.
   Not compiled into our build, but `cargo audit` scans the lockfile.
