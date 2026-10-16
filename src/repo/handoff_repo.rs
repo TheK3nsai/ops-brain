@@ -9,7 +9,7 @@ use crate::models::handoff::Handoff;
 /// `SELECT *` (or `SELECT h.*` via `aliased_cols`) so vectors never cross the
 /// wire on read paths. Writes keep `RETURNING *`.
 pub const HANDOFF_COLS: &str =
-    "id, from_agent, to_agent, status, priority, category, title, body, context, \
+    "id, from_agent, to_agent, status, accepted_by, priority, category, title, body, context, \
      in_reply_to, commit_hash, merge_commit, merged_at, origin, dedupe_key, \
      repeat_count, created_at, updated_at";
 
@@ -56,6 +56,171 @@ pub async fn create_handoff(
     .bind(in_reply_to)
     .fetch_one(pool)
     .await
+}
+
+/// A successful create distinguishes the first write from a replay so callers
+/// do not repeat embedding or publish another creation notification.
+pub struct CreateHandoffOutcome {
+    pub handoff: Handoff,
+    pub created: bool,
+}
+
+#[derive(Debug)]
+pub enum CreateHandoffError {
+    Database(sqlx::Error),
+    IdempotencyConflict,
+}
+
+impl From<sqlx::Error> for CreateHandoffError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
+/// Effective immutable create payload, shared by the optimistic replay read and
+/// the serialized insertion path. Agent routing is case-insensitive.
+pub(crate) fn handoff_create_request(
+    to_agent: Option<&str>,
+    priority: &str,
+    category: &str,
+    title: &str,
+    body: &str,
+    context: Option<&serde_json::Value>,
+    in_reply_to: Option<Uuid>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "to_agent": to_agent.map(str::to_ascii_lowercase),
+        "priority": priority, "category": category, "title": title,
+        "body": body, "context": context, "in_reply_to": in_reply_to,
+    })
+}
+
+/// Read a complete replay in one snapshot. Never use an existence-only check
+/// to skip parent visibility checks: deletion between that check and insertion
+/// would otherwise permit a restricted caller to file into an invisible thread.
+pub(crate) async fn find_handoff_replay(
+    pool: &PgPool,
+    from_agent: &str,
+    key: &str,
+    request: &serde_json::Value,
+) -> Result<Option<Handoff>, CreateHandoffError> {
+    #[derive(sqlx::FromRow)]
+    struct Replay {
+        #[sqlx(flatten)]
+        handoff: Handoff,
+        same_request: bool,
+    }
+    let existing = sqlx::query_as::<_, Replay>(&format!(
+        "SELECT {HANDOFF_COLS}, idempotency_request = $3 AS same_request FROM handoffs
+         WHERE LOWER(from_agent) = LOWER($1) AND idempotency_key = $2"
+    ))
+    .bind(from_agent)
+    .bind(key)
+    .bind(request)
+    .fetch_optional(pool)
+    .await?;
+    match existing {
+        Some(row) if row.same_request => Ok(Some(row.handoff)),
+        Some(_) => Err(CreateHandoffError::IdempotencyConflict),
+        None => Ok(None),
+    }
+}
+
+/// Replay a sender-scoped request without mutating its lifecycle or timestamps.
+/// A transaction lock serializes equal keys even before the row exists. The
+/// database index is a second guard; hash collisions only serialize unrelated
+/// requests. JSONB compares objects independent of key order and preserves the
+/// original parent ID even when deleting a parent later clears in_reply_to.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_handoff_idempotent(
+    pool: &PgPool,
+    from_agent: &str,
+    to_agent: Option<&str>,
+    priority: &str,
+    category: &str,
+    title: &str,
+    body: &str,
+    context: Option<&serde_json::Value>,
+    in_reply_to: Option<Uuid>,
+    idempotency_key: Option<&str>,
+) -> Result<CreateHandoffOutcome, CreateHandoffError> {
+    let Some(key) = idempotency_key else {
+        return Ok(CreateHandoffOutcome {
+            handoff: create_handoff(
+                pool,
+                from_agent,
+                to_agent,
+                priority,
+                category,
+                title,
+                body,
+                context,
+                in_reply_to,
+            )
+            .await?,
+            created: true,
+        });
+    };
+    let request = handoff_create_request(
+        to_agent,
+        priority,
+        category,
+        title,
+        body,
+        context,
+        in_reply_to,
+    );
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(jsonb_build_array(LOWER($1::text), $2::text)::text, 0))")
+        .bind(from_agent).bind(key).execute(&mut *tx).await?;
+    let existing: Option<(Uuid, bool)> = sqlx::query_as(
+        "SELECT id, idempotency_request = $3 FROM handoffs
+         WHERE LOWER(from_agent) = LOWER($1) AND idempotency_key = $2",
+    )
+    .bind(from_agent)
+    .bind(key)
+    .bind(&request)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((id, same_request)) = existing {
+        if !same_request {
+            return Err(CreateHandoffError::IdempotencyConflict);
+        }
+        let handoff = sqlx::query_as::<_, Handoff>(&format!(
+            "SELECT {HANDOFF_COLS} FROM handoffs WHERE id = $1"
+        ))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        return Ok(CreateHandoffOutcome {
+            handoff,
+            created: false,
+        });
+    }
+    let handoff = sqlx::query_as::<_, Handoff>(
+        "INSERT INTO handoffs (id, from_agent, to_agent, priority, category, title, body,
+                               context, in_reply_to, idempotency_key, idempotency_request)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *",
+    )
+    .bind(Uuid::now_v7())
+    .bind(from_agent)
+    .bind(to_agent)
+    .bind(priority)
+    .bind(category)
+    .bind(title)
+    .bind(body)
+    .bind(context)
+    .bind(in_reply_to)
+    .bind(key)
+    .bind(&request)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(CreateHandoffOutcome {
+        handoff,
+        created: true,
+    })
 }
 
 /// Insert a machine-filed handoff (`origin = 'machine'`), idempotent on
@@ -127,7 +292,8 @@ pub async fn list_pending_for_agent(
         "SELECT {HANDOFF_COLS} FROM handoffs
           WHERE status IN ('pending', 'accepted')
             AND category = 'action'
-            AND LOWER(to_agent) = LOWER($1)
+            AND (LOWER(to_agent) = LOWER($1)
+                 OR (to_agent IS NULL AND status = 'accepted' AND LOWER(accepted_by) = LOWER($1)))
             AND {NOT_SELF_CLAIM}"
     );
     if since.is_some() {
@@ -148,12 +314,24 @@ pub async fn list_pending_for_agent(
 /// the UPDATE itself so two agents racing on the same handoff can't both
 /// win — the loser gets `None` and must re-read to see who beat them.
 pub async fn accept_handoff(pool: &PgPool, id: Uuid) -> Result<Option<Handoff>, sqlx::Error> {
+    accept_handoff_as(pool, id, None).await
+}
+
+/// Authenticated callers pass their bound identity. Legacy repository callers
+/// may omit it; addressed rows then belong to their recipient.
+pub async fn accept_handoff_as(
+    pool: &PgPool,
+    id: Uuid,
+    accepted_by: Option<&str>,
+) -> Result<Option<Handoff>, sqlx::Error> {
     sqlx::query_as::<_, Handoff>(
-        "UPDATE handoffs SET status = 'accepted', updated_at = now()
+        "UPDATE handoffs SET status = 'accepted',
+                            accepted_by = COALESCE($2, to_agent), updated_at = now()
          WHERE id = $1 AND status = 'pending'
          RETURNING *",
     )
     .bind(id)
+    .bind(accepted_by)
     .fetch_optional(pool)
     .await
 }
@@ -269,7 +447,7 @@ enum StatusFilter<'a> {
 /// omitted `to_agent` as "any agent can pick it up", so somebody has to see
 /// those rows — but only `check_in` opts in. `list_handoffs`' explicit
 /// `to_agent` filter stays literal, and `list_pending_for_agent` (wake shims)
-/// stays narrow so a broadcast doesn't wake every host.
+/// includes only claimed broadcasts, so a new broadcast cannot wake every host.
 #[allow(clippy::too_many_arguments)]
 async fn list_handoffs_filtered(
     pool: &PgPool,
@@ -303,14 +481,14 @@ async fn list_handoffs_filtered(
     // reasoning as list_pending_for_agent).
     if to_agent.is_some() {
         if include_broadcast {
-            // Same bound parameter, used twice: addressed to me, or addressed
-            // to nobody by someone other than me. The unaddressed leg is
-            // pending-only: accept records no acceptor, so an accepted
-            // broadcast left in every queue would invite duplicate work.
+            // Pending broadcasts go to everyone except the sender. Once
+            // claimed, only the recorded acceptor keeps the broadcast.
             conditions.push(format!(
                 "(LOWER(to_agent) = LOWER(${param_idx}) \
                  OR (to_agent IS NULL AND status = 'pending' \
-                     AND LOWER(from_agent) <> LOWER(${param_idx})))"
+                     AND LOWER(from_agent) <> LOWER(${param_idx})) \
+                 OR (to_agent IS NULL AND status = 'accepted' \
+                     AND LOWER(accepted_by) = LOWER(${param_idx})))"
             ));
         } else {
             conditions.push(format!("LOWER(to_agent) = LOWER(${param_idx})"));
@@ -499,6 +677,7 @@ pub struct OpenActionBrief {
     pub id: Uuid,
     pub from_agent: String,
     pub to_agent: Option<String>,
+    pub accepted_by: Option<String>,
     pub status: String,
     pub priority: String,
     pub title: String,
@@ -532,9 +711,10 @@ pub async fn list_open_action_briefs(
     // and ILIKE would treat it as a wildcard (same reasoning as
     // list_pending_for_agent).
     sqlx::query_as::<_, OpenActionBrief>(
-        "SELECT id, from_agent, to_agent, status, priority, title, origin,
+        "SELECT id, from_agent, to_agent, accepted_by, status, priority, title, origin,
                 repeat_count, created_at,
-                (to_agent IS NOT NULL AND LOWER(to_agent) = LOWER($1)) AS is_operator,
+                COALESCE(LOWER(COALESCE(to_agent, CASE WHEN status = 'accepted'
+                    THEN accepted_by END)) = LOWER($1), false) AS is_operator,
                 (to_agent IS NOT NULL AND LOWER(to_agent) = LOWER(from_agent))
                     AS is_self_addressed
            FROM handoffs

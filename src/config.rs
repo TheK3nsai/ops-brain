@@ -60,6 +60,18 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_AGENT_TOKENS")]
     pub agent_tokens: Option<String>,
 
+    /// Optional external OAuth resource-server config (JSON); see docs/oauth.md.
+    #[arg(long, env = "OPS_BRAIN_OAUTH_CONFIG")]
+    pub oauth_config: Option<String>,
+
+    /// Canonical public HTTPS MCP URL used for OAuth resource discovery.
+    #[arg(long, env = "OPS_BRAIN_OAUTH_RESOURCE_URL")]
+    pub oauth_resource_url: Option<String>,
+
+    /// Enable optional MCP Events subscriptions and signed handoff notifications.
+    #[arg(long, env = "OPS_BRAIN_EVENTS_ENABLED", default_value_t = false)]
+    pub events_enabled: bool,
+
     /// Comma-separated allowed Host header values for HTTP transport (DNS-rebind mitigation
     /// added in rmcp 1.4). Defaults to loopback only — public deployments behind a reverse
     /// proxy must list their public hostname (e.g. `ops.example.com,ops.example.com:443`).

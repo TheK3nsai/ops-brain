@@ -72,6 +72,7 @@ pub struct BriefItem {
     pub title: String,
     pub from_agent: String,
     pub to_agent: Option<String>,
+    pub accepted_by: Option<String>,
     pub status: String,
     pub priority: String,
     /// Whole days between `created_at` and the briefing's `now`.
@@ -237,11 +238,24 @@ fn to_item(row: &OpenActionBrief, now: &DateTime<Utc>) -> BriefItem {
         title: row.title.clone(),
         from_agent: row.from_agent.clone(),
         to_agent: row.to_agent.clone(),
+        accepted_by: row.accepted_by.clone(),
         status: row.status.clone(),
         priority: row.priority.clone(),
         age_days: age_days(now, &row.created_at),
         repeat_count: row.repeat_count,
     }
+}
+
+/// Addressed recipient, falling back to the acceptor of a claimed broadcast.
+fn recipient(row: &OpenActionBrief) -> &str {
+    row.to_agent
+        .as_deref()
+        .or_else(|| {
+            (row.status == "accepted")
+                .then_some(row.accepted_by.as_deref())
+                .flatten()
+        })
+        .unwrap_or(UNADDRESSED)
 }
 
 /// A machine finding its producer rated as a failure rather than a warning.
@@ -336,7 +350,7 @@ fn triage(
             continue;
         }
         stuck_shown += 1;
-        let key = row.to_agent.as_deref().unwrap_or(UNADDRESSED);
+        let key = recipient(row);
         // Case-insensitive, matching how the SQL compares agents: `Claude-Cloud`
         // and `claude-cloud` are one agent and must not split into two groups.
         // First spelling seen wins as the display name.
@@ -375,7 +389,7 @@ fn triage(
         repeating: Some(0),
     };
     for row in rows {
-        let key = row.to_agent.as_deref().unwrap_or(UNADDRESSED);
+        let key = recipient(row);
         match by_recipient
             .iter_mut()
             .find(|c| c.to_agent.eq_ignore_ascii_case(key))
@@ -641,6 +655,7 @@ mod tests {
             id: Uuid::parse_str(id).unwrap(),
             from_agent: from.to_string(),
             to_agent: to_agent.clone(),
+            accepted_by: None,
             status: status.to_string(),
             priority: priority.to_string(),
             title: title.to_string(),
@@ -1082,6 +1097,29 @@ No high-priority machine finding is open.
         assert_eq!(s.stuck.groups[0].items.len(), 2);
         assert_eq!(s.counts.by_recipient.len(), 1, "one agent, one count line");
         assert_eq!(s.counts.by_recipient[0].open, 2);
+    }
+
+    #[test]
+    fn accepted_broadcasts_group_under_the_claimant() {
+        let mut claimed = row(
+            "019c3333-0000-7000-8000-000000000099",
+            "Sender-Laptop",
+            None,
+            "accepted",
+            "normal",
+            "claimed broadcast",
+            "agent",
+            0,
+            "2026-09-01T12:00:00Z",
+            "Operator",
+        );
+        claimed.accepted_by = Some("Worker-Buildbox".into());
+        let sections = triage(&[claimed], "Operator", true, &now());
+        assert_eq!(sections.stuck.groups[0].to_agent, "Worker-Buildbox");
+        assert_eq!(sections.counts.by_recipient[0].to_agent, "Worker-Buildbox");
+        let item = &sections.stuck.groups[0].items[0];
+        assert!(item.to_agent.is_none());
+        assert_eq!(item.accepted_by.as_deref(), Some("Worker-Buildbox"));
     }
 
     /// Machine and self-addressed rows are counts-only *elsewhere*. Addressed

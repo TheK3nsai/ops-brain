@@ -1,6 +1,7 @@
 pub mod briefings;
 pub mod check_in;
 pub mod coordination;
+mod events_adapter;
 mod helpers;
 pub mod knowledge;
 pub mod search;
@@ -23,7 +24,7 @@ pub const INSTRUCTIONS: &str = "ops-brain is the team bus. Your local instructio
      git history are the source of truth — reach for ops-brain only when you need the rest of the \
      team. Identify yourself with a free-form `agent_name` (slug, e.g. 'Claude-Stealth', 'Codex-HSR').\n\
      • check_in when you want to know what's pending — there is no startup ritual.\n\
-     • Creating a handoff IS the notification; nothing else is sent. Reply into the existing \
+     • Creating a handoff is sufficient notification. Reply into the existing \
      thread with `in_reply_to` instead of opening a parallel handoff.\n\
      • Blocked on a human: reply in-thread to the operator's slug with category `action` (notify \
      is never mailed), and complete it yourself once unblocked.\n\
@@ -142,8 +143,8 @@ impl OpsBrain {
 
     #[tool(
         name = "create_handoff",
-        description = "Create a handoff for another agent — this IS the notification, \
-        nothing else is sent. Category `action` = the recipient must do it; `notify` = FYI, \
+        description = "Create a handoff for another agent; this is sufficient notification. \
+        Category `action` = the recipient must do it; `notify` = FYI, \
         pruned from operational queries after 7 days. Replying? Pass `in_reply_to` to stay \
         in the existing thread instead of opening a parallel handoff.",
         annotations(
@@ -186,8 +187,9 @@ impl OpsBrain {
 
     #[tool(
         name = "accept_handoff",
-        description = "Claim a pending handoff so others see it is being worked; \
-        follow with complete_handoff.",
+        description = "Claim a pending handoff and record its acceptor. Bound tokens use their \
+        own identity; family credentials and unbound broadcast claims require a concrete \
+        agent_name. Follow with complete_handoff.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -202,7 +204,8 @@ impl OpsBrain {
     ) -> Result<CallToolResult, McpError> {
         let restricted = helpers::restricted_agent(&ext);
         let vis = Visibility::from_restricted(restricted.as_deref());
-        Ok(coordination::handle_accept_handoff(self, params.0, vis).await)
+        let bound = helpers::bound_agent(&ext);
+        Ok(coordination::handle_accept_handoff(self, params.0, bound.as_deref(), vis).await)
     }
 
     #[tool(

@@ -39,6 +39,10 @@ pub struct CreateHandoffParams {
     /// `category` is preserved as written — a reply can legitimately be
     /// `action` (it requires a response) or `notify` (pure FYI).
     pub in_reply_to: Option<String>,
+    /// Retry key (1–200 bytes), scoped to this sender. Reusing it with the
+    /// same request returns the original row even after completion; changed
+    /// payloads fail. Keys remain reserved until the handoff is deleted.
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -51,6 +55,10 @@ pub struct GetHandoffParams {
 pub struct UpdateHandoffStatusParams {
     /// Handoff ID (UUID)
     pub handoff_id: String,
+    /// Concrete acceptor identity. Required for family credentials and for
+    /// unbound/stdio broadcast claims. Fixed agent tokens record their bound
+    /// identity; a supplied name must match the fixed identity or family.
+    pub agent_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -191,12 +199,6 @@ pub async fn handle_create_handoff(
         },
         None => None,
     };
-    // A restricted caller can only reply into threads it can see.
-    if let (Some(parent), Some(raw)) = (in_reply_to, p.in_reply_to.as_deref()) {
-        if let Err(r) = ensure_handoff_visible(brain, parent, raw, vis).await {
-            return r;
-        }
-    }
 
     // Validate sender + target as free-form agent slugs. v2.0 dropped the
     // CC-fleet allowlist; whatever the caller says it is, it is. Stored
@@ -221,7 +223,48 @@ pub async fn handle_create_handoff(
         None => None,
     };
 
-    match crate::repo::handoff_repo::create_handoff(
+    if let Some(key) = p.idempotency_key.as_deref() {
+        if key.trim().is_empty() || key.len() > 200 {
+            return error_result("idempotency_key must contain 1–200 bytes and cannot be blank");
+        }
+    }
+    // A complete replay can survive parent deletion. A missing retry always
+    // goes through the ordinary parent visibility gate before any insertion.
+    if let Some(key) = p.idempotency_key.as_deref() {
+        let request = crate::repo::handoff_repo::handoff_create_request(
+            to_agent.as_deref(),
+            priority,
+            category,
+            &p.title,
+            &p.body,
+            p.context.as_ref(),
+            in_reply_to,
+        );
+        match crate::repo::handoff_repo::find_handoff_replay(
+            &brain.pool,
+            &from_agent,
+            key,
+            &request,
+        )
+        .await
+        {
+            Ok(Some(handoff)) => return json_result(&handoff),
+            Ok(None) => {}
+            Err(crate::repo::handoff_repo::CreateHandoffError::IdempotencyConflict) => {
+                return error_result("idempotency_key was already used with a different request")
+            }
+            Err(crate::repo::handoff_repo::CreateHandoffError::Database(e)) => {
+                return error_result(&format!("Database error: {e}"))
+            }
+        }
+    }
+    if let (Some(parent), Some(raw)) = (in_reply_to, p.in_reply_to.as_deref()) {
+        if let Err(r) = ensure_handoff_visible(brain, parent, raw, vis).await {
+            return r;
+        }
+    }
+
+    match crate::repo::handoff_repo::create_handoff_idempotent(
         &brain.pool,
         &from_agent,
         to_agent.as_deref(),
@@ -231,10 +274,15 @@ pub async fn handle_create_handoff(
         &p.body,
         p.context.as_ref(),
         in_reply_to,
+        p.idempotency_key.as_deref(),
     )
     .await
     {
-        Ok(handoff) => {
+        Ok(outcome) => {
+            let handoff = outcome.handoff;
+            if !outcome.created {
+                return json_result(&handoff);
+            }
             let text = crate::embeddings::prepare_handoff_text(&handoff);
             embed_and_store(
                 &brain.pool,
@@ -268,7 +316,12 @@ pub async fn handle_create_handoff(
                 None => json_result(&handoff),
             }
         }
-        Err(e) => error_result(&format!("Database error: {e}")),
+        Err(crate::repo::handoff_repo::CreateHandoffError::IdempotencyConflict) => {
+            error_result("idempotency_key was already used with a different request")
+        }
+        Err(crate::repo::handoff_repo::CreateHandoffError::Database(e)) => {
+            error_result(&format!("Database error: {e}"))
+        }
     }
 }
 
@@ -329,6 +382,7 @@ pub async fn handle_get_handoff(
 pub async fn handle_accept_handoff(
     brain: &super::OpsBrain,
     p: UpdateHandoffStatusParams,
+    bound: Option<&str>,
     vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.handoff_id) {
@@ -339,9 +393,40 @@ pub async fn handle_accept_handoff(
         return r;
     }
 
-    // Atomic accept: the pending precondition is inside the UPDATE, so two
-    // agents racing on the same handoff can't both walk away owning it.
-    match crate::repo::handoff_repo::accept_handoff(&brain.pool, id).await {
+    let supplied = match p.agent_name.as_deref() {
+        Some(raw) => match crate::validation::validate_agent_name(raw) {
+            Ok(name) => Some(name),
+            Err(e) => return error_result(&format!("agent_name: {e}")),
+        },
+        None => None,
+    };
+    if let Some(name) = supplied {
+        if let Err(msg) = crate::auth::check_bound_identity(bound, name) {
+            return error_result(&msg);
+        }
+    }
+    let acceptor = match bound {
+        Some(binding) if binding.ends_with("-*") => match supplied {
+            Some(name) => Some(name),
+            None => return error_result(
+                "agent_name is required for family credentials; supply a concrete member identity",
+            ),
+        },
+        _ => bound.or(supplied),
+    };
+    if acceptor.is_none() {
+        match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
+            Ok(Some(h)) if h.to_agent.is_none() => {
+                return error_result(
+                    "agent_name is required to accept a broadcast with an unbound connection",
+                )
+            }
+            Ok(_) => {}
+            Err(e) => return error_result(&format!("Database error: {e}")),
+        }
+    }
+    // Atomic accept records the winner alongside the pending precondition.
+    match crate::repo::handoff_repo::accept_handoff_as(&brain.pool, id, acceptor).await {
         Ok(Some(handoff)) => json_result(&handoff),
         Ok(None) => {
             // Lost the race or bad id — re-read to say which.

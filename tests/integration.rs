@@ -1206,6 +1206,7 @@ mod coordination_handler_tests {
                 body: "body".to_string(),
                 context: None,
                 in_reply_to: Some("not-a-uuid".to_string()),
+                idempotency_key: None,
             },
             None,
             ops_brain::auth::Visibility::Full,
@@ -1229,6 +1230,7 @@ mod coordination_handler_tests {
             body: "body".to_string(),
             context: None,
             in_reply_to: None,
+            idempotency_key: None,
         }
     }
 
@@ -1309,6 +1311,7 @@ mod coordination_handler_tests {
             body: "body".to_string(),
             context: None,
             in_reply_to: None,
+            idempotency_key: None,
         };
 
         // First contact with `known` teaches the bus that slug exists.
@@ -4092,7 +4095,9 @@ mod restricted_visibility_tests {
                 &f.brain,
                 UpdateHandoffStatusParams {
                     handoff_id: id.to_string(),
+                    agent_name: None,
                 },
+                None,
                 restricted,
             )
             .await;
@@ -4128,6 +4133,7 @@ mod restricted_visibility_tests {
                 body: "body".to_string(),
                 context: None,
                 in_reply_to: Some(f.others.to_string()),
+                idempotency_key: None,
             },
             Some(&f.bot),
             restricted,
