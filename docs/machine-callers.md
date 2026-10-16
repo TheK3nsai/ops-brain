@@ -57,7 +57,9 @@ Configured server-side via `OPS_BRAIN_MACHINE_TOKENS` (JSON array):
   handoffs **to** and poll pending queues **for**. Case-insensitive exact
   match, no wildcard, must be non-empty.
   An agent token's `-*` slug family does not apply here: list each
-  family member (`Grok-Bot`, `Grok-Bot-Kensai-Coder`, …) explicitly.
+  family member (`Grok-Bot`, `Grok-Bot-Kensai-Coder`, …) explicitly. A new
+  member stays unpollable until it is added here by hand and the container
+  recreated.
 - `scopes` — `create` and/or `read`, matching the endpoint table above.
 
 Never put the agents' full-surface bearer in a scheduled task. That token
@@ -191,6 +193,8 @@ Open **action** handoffs addressed to `agent` (which must be in a machine
 token's `agents` allowlist). `since` filters on `updated_at` — dedupe bumps
 re-surface past the cursor, so a still-firing monitor shows up even if the
 handoff predates it. `limit` defaults to 50 (max 200).
+`notify` handoffs are never returned, so a notify never wakes anyone: file
+`action` when the recipient must be woken.
 
 Accepted rows the agent filed **to itself** are omitted: they are lock records
 (claims), and returning them would spend a wake on work that is already being
