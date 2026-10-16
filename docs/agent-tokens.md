@@ -95,7 +95,9 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
   share one credential (Grok Bots ride one MCP connector per account; each
   bot files as `Grok-Bot-<BotName>`, e.g. `Grok-Bot-Kensai-Coder`). The
   family members can impersonate each other, so it is provenance per
-  credential, not per bot.
+  credential, not per bot. Each member writes as its own slug
+  (`from_agent`, `author`), not the bare base, and passes it as `agent_name`
+  to `accept_handoff`, which rejects a family claim without one.
 - `client` — informational, logged for audit. Not yet enforced on MCP calls
   (tools carry an explicit `client_slug`); reserved so a future per-client MCP
   binding needs no config change.
