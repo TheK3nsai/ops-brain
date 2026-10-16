@@ -30,10 +30,6 @@ services:
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       # Per-agent tokens (JSON array): identity-bound /mcp sessions (see docs/agent-tokens.md)
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
-      # Optional external OAuth provider and handoff event subscriptions.
-      - OPS_BRAIN_OAUTH_CONFIG=${OPS_BRAIN_OAUTH_CONFIG:-}
-      - OPS_BRAIN_OAUTH_RESOURCE_URL=${OPS_BRAIN_OAUTH_RESOURCE_URL:-}
-      - OPS_BRAIN_EVENTS_ENABLED=${OPS_BRAIN_EVENTS_ENABLED:-false}
       - OPS_BRAIN_MIGRATE=true
       # rmcp 1.4+ Host header allowlist (DNS-rebind mitigation, default loopback-only)
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}

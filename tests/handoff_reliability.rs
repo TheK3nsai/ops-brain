@@ -366,6 +366,7 @@ async fn family_accepts_require_explicit_concrete_identity() {
             Some("Outside-Family".to_string()),
             Some(binding.clone()),
         ] {
+            let missing = supplied.is_none();
             let refused =
                 handle_accept_handoff(&brain, params(supplied), Some(&binding), Visibility::Full)
                     .await;
@@ -374,6 +375,14 @@ async fn family_accepts_require_explicit_concrete_identity() {
                 "{}",
                 response_text(&refused)
             );
+            if missing {
+                let text = response_text(&refused);
+                assert!(
+                    text.contains(&format!("family token {binding} must pass agent_name"))
+                        && text.contains(&format!("{base}-<Bot>")),
+                    "{text}"
+                );
+            }
             let unchanged = repo::get_handoff(&pool, row.id).await.unwrap().unwrap();
             assert_eq!(unchanged.status, "pending");
             assert_eq!(unchanged.accepted_by, None);

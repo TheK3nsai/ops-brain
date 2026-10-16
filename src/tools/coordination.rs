@@ -325,6 +325,15 @@ pub async fn handle_create_handoff(
     }
 }
 
+/// Error for a family credential that claims without naming its member.
+fn family_claim_hint(binding: &str) -> String {
+    let base = binding.trim_end_matches("-*");
+    format!(
+        "family token {binding} must pass agent_name (your member name, e.g. {base}-<Bot>) \
+         to accept_handoff"
+    )
+}
+
 /// Soft warning for a recipient slug the bus has never seen before. There is no
 /// agent registry by design — new agents must be addressable, so this never
 /// refuses the write. It exists because the alternative failure mode is silent:
@@ -408,9 +417,7 @@ pub async fn handle_accept_handoff(
     let acceptor = match bound {
         Some(binding) if binding.ends_with("-*") => match supplied {
             Some(name) => Some(name),
-            None => return error_result(
-                "agent_name is required for family credentials; supply a concrete member identity",
-            ),
+            None => return error_result(&family_claim_hint(binding)),
         },
         _ => bound.or(supplied),
     };

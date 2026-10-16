@@ -18,11 +18,6 @@ Operator maintenance: `ops-brain backfill-embeddings [--table knowledge|handoffs
 
 Identity: interactive sessions authenticate with **per-agent tokens** (`OPS_BRAIN_AGENT_TOKENS`) that bind `from_agent` server-side — MCP write tools reject mismatching identity. Agent tokens reach `/mcp` only, never REST. The main bearer stays unbound as operator break-glass. Contract in `docs/agent-tokens.md`.
 
-Optional external OAuth maps verified principals to the same bound agent class
-(`docs/oauth.md`). Optional MCP2 events wrap the existing HTTP transport and
-reuse its tool stubs; callbacks deliver IDs only (`docs/events.md`). Both are
-disabled until configured. Keep legacy transport and the 13-tool surface intact.
-
 ## Architecture Constraints
 
 - All `#[tool]` stubs MUST remain in the single `#[tool_router] impl OpsBrain` block in `src/tools/mod.rs` — rmcp macro requirement. Each stub delegates to a `handle_*` function in the appropriate category module.

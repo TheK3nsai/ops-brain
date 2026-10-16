@@ -164,10 +164,10 @@ question from first principles.
   producer bleeds from prose-parsing); polling `GET /api/pending` covers wake
   (webhooks are an additive upgrade if sub-minute latency ever hurts).
   Contract: `docs/machine-callers.md`.
-  Narrow exception authorized for cloud-agent compatibility: optional MCP
-  Events delivers handoff IDs to verified, expiring callbacks for the
-  authenticated seat's own queue. It owns delivery retries, not task execution
-  or recurrence. Contract: `docs/events.md`.
+- **MCP Events webhooks and OAuth.** Built in #153 for ChatGPT Dots, parked
+  2026-10-16 on branch `parked/events-oauth`: no live consumer had used
+  either, and Grok Bots can't subscribe. Restore from that branch only for a
+  client that is actually connected and needs it.
 - **An operator web view, event log, or `accepted_at` timing.** The handoffs
   table already is the log. Operator visibility is a section in the briefing
   that already gets read; "how long did this sit on a human" is a metric
