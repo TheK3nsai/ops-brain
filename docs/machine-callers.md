@@ -56,6 +56,8 @@ Configured server-side via `OPS_BRAIN_MACHINE_TOKENS` (JSON array):
 - `agents` — the routing allowlist: which agents this token may file
   handoffs **to** and poll pending queues **for**. Case-insensitive exact
   match, no wildcard, must be non-empty.
+  An agent token's `-*` slug family does not apply here: list each
+  family member (`Grok-Bot`, `Grok-Bot-Kensai-Coder`, …) explicitly.
 - `scopes` — `create` and/or `read`, matching the endpoint table above.
 
 Never put the agents' full-surface bearer in a scheduled task. That token

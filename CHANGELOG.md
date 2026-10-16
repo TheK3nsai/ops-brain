@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Agent-token slug families.** An `OPS_BRAIN_AGENT_TOKENS` entry whose
+  `from_agent` ends in `-*` (e.g. `Grok-Bot-*`) may write as the base slug or
+  any `<base>-<name>`, and its `exclude_client_data` boundary covers the
+  family. For clients that share one credential across several agents (Grok
+  Bots), so each can be addressed by its own slug. Plain bindings are
+  unchanged.
+
 ### Fixed
 
 - **`quinn-proto` 0.11.19 fixes RUSTSEC-2026-0338 to 0342** (memory exhaustion

@@ -4022,6 +4022,57 @@ mod restricted_visibility_tests {
     }
 
     #[tokio::test]
+    async fn slug_family_boundary_covers_members_only() {
+        let f = fixture().await;
+        let family = format!("{}-*", f.bot);
+        let file = |from: String, to: String| {
+            let pool = f.pool.clone();
+            let term = f.term.clone();
+            async move {
+                ops_brain::repo::handoff_repo::create_handoff(
+                    &pool,
+                    &from,
+                    Some(&to),
+                    "normal",
+                    "action",
+                    &format!("family {term}"),
+                    "body",
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .id
+            }
+        };
+        let member = file(format!("{}-Mail", f.bot), format!("{}-Coder", f.bot)).await;
+        // Shares the base as a raw prefix but not as `<base>-`: outside.
+        let lookalike = file(format!("{}x-Mail", f.bot), "Claude-Stealth".into()).await;
+
+        let mut browse = search("*", &["handoffs"], None);
+        browse.limit = Some(200);
+        let r = handle_search_knowledge(&f.brain, browse, Visibility::Restricted(&family)).await;
+        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
+        let seen = ids(&v, "handoffs");
+        for id in [f.to_bot, f.from_bot, member] {
+            assert!(seen.contains(&id), "family member row {id} missing");
+        }
+        for id in [f.others, f.broadcast, lookalike] {
+            assert!(
+                !seen.contains(&id),
+                "row {id} leaked past the family boundary"
+            );
+        }
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![member, lookalike])
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        cleanup(&f).await;
+    }
+
+    #[tokio::test]
     async fn by_id_handoff_tools_treat_foreign_rows_as_missing() {
         let f = fixture().await;
         let restricted = Visibility::Restricted(&f.bot);

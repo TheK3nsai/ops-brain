@@ -258,9 +258,21 @@ pub fn parse_agent_tokens(
         // against the trimmed claimed value with no further trimming, so a
         // padded config value would otherwise lock the agent out of filing as
         // itself.
-        t.from_agent = crate::validation::validate_agent_name(&t.from_agent)
-            .map_err(|e| format!("agent token [{i}] from_agent: {e}"))?
-            .to_string();
+        // A trailing `-*` binds a slug family: `Grok-Bot-*` lets one token
+        // write as `Grok-Bot` or any `Grok-Bot-<name>`. The base is validated
+        // like any slug; `*` is legal only as that suffix.
+        let raw = t.from_agent.trim();
+        let (base, family) = match raw.strip_suffix("-*") {
+            Some(b) => (b, true),
+            None => (raw, false),
+        };
+        let base = crate::validation::validate_agent_name(base)
+            .map_err(|e| format!("agent token [{i}] from_agent: {e}"))?;
+        t.from_agent = if family {
+            format!("{base}-*")
+        } else {
+            base.to_string()
+        };
     }
 
     // Duplicate secrets would make the first-match lookup ambiguous.
@@ -277,6 +289,22 @@ pub fn parse_agent_tokens(
     Ok(tokens)
 }
 
+/// Whether `slug` falls under a token binding. A plain binding matches its
+/// slug case-insensitively; a `<base>-*` family binding matches `<base>` and
+/// any `<base>-<suffix>`. Mirrors `repo::party_clause` in SQL.
+pub fn slug_matches(binding: &str, slug: &str) -> bool {
+    match binding.strip_suffix("-*") {
+        None => binding.eq_ignore_ascii_case(slug),
+        Some(base) => {
+            if slug.eq_ignore_ascii_case(base) {
+                return true;
+            }
+            let (b, s) = (base.to_ascii_lowercase(), slug.to_ascii_lowercase());
+            s.len() > b.len() + 1 && s.starts_with(&b) && s.as_bytes()[b.len()] == b'-'
+        }
+    }
+}
+
 /// Enforce a write tool's claimed identity against the caller's server-bound
 /// agent, if any.
 ///
@@ -284,13 +312,13 @@ pub fn parse_agent_tokens(
 ///   `Ok`; unbound callers keep the pre-tokens behavior. On the public HTTP
 ///   listener every authenticated request carries a class, so `None` here only
 ///   arises in trusted-local contexts.
-/// - `bound = Some(id)` and the claim matches (case-insensitive) → `Ok`.
+/// - `bound = Some(id)` and the claim matches (case-insensitive, or a member of a `-*` family) → `Ok`.
 /// - `bound = Some(id)` and the claim differs → rejected: a per-agent token may
 ///   only write as the slug it was minted for.
 pub fn check_bound_identity(bound: Option<&str>, claimed: &str) -> Result<(), String> {
     match bound {
         None => Ok(()),
-        Some(id) if id.eq_ignore_ascii_case(claimed) => Ok(()),
+        Some(id) if slug_matches(id, claimed) => Ok(()),
         Some(id) => Err(format!(
             "identity '{claimed}' does not match your token-bound agent '{id}'. A per-agent \
              token may only write as itself — set the field to '{id}' (or omit it)."
@@ -304,7 +332,7 @@ pub fn check_bound_identity(bound: Option<&str>, claimed: &str) -> Result<(), St
 /// surfacing in logs. No-op for unbound callers and for self-queries.
 pub fn warn_identity_mismatch(bound: Option<&str>, queried: &str, tool: &str) {
     if let Some(id) = bound {
-        if !id.eq_ignore_ascii_case(queried) {
+        if !slug_matches(id, queried) {
             tracing::warn!(
                 bound = %id,
                 queried = %queried,
@@ -398,7 +426,7 @@ impl<'a> Visibility<'a> {
         match self {
             Visibility::Full => true,
             Visibility::Restricted(agent) => {
-                client_id.is_none() && author.is_some_and(|a| a.eq_ignore_ascii_case(agent))
+                client_id.is_none() && author.is_some_and(|a| slug_matches(agent, a))
             }
         }
     }
@@ -407,8 +435,8 @@ impl<'a> Visibility<'a> {
         match self {
             Visibility::Full => true,
             Visibility::Restricted(agent) => {
-                from_agent.eq_ignore_ascii_case(agent)
-                    || to_agent.is_some_and(|to| to.eq_ignore_ascii_case(agent))
+                slug_matches(agent, from_agent)
+                    || to_agent.is_some_and(|to| slug_matches(agent, to))
             }
         }
     }
@@ -418,7 +446,7 @@ impl<'a> Visibility<'a> {
     /// Unrestricted callers keep the warn-and-serve behavior.
     pub fn check_own_queue(&self, queried: &str) -> Result<(), String> {
         match self {
-            Visibility::Restricted(agent) if !agent.eq_ignore_ascii_case(queried) => Err(format!(
+            Visibility::Restricted(agent) if !slug_matches(agent, queried) => Err(format!(
                 "this token is excluded from client data and may only query its own agent \
                  '{agent}', not '{queried}'"
             )),
@@ -914,5 +942,36 @@ mod tests {
         let line = tokens[0].binding_summary();
         assert_eq!(line, "Test-Bot (client=-, exclude_client_data=true)");
         assert!(!line.contains(A), "the secret never reaches the log");
+    }
+
+    #[test]
+    fn family_binding_matches_base_and_suffixes_only() {
+        assert!(slug_matches("Grok-Bot-*", "Grok-Bot"));
+        assert!(slug_matches("Grok-Bot-*", "grok-bot-Coder"));
+        assert!(!slug_matches("Grok-Bot-*", "Grok-Bot-"));
+        assert!(!slug_matches("Grok-Bot-*", "Grok-Botnet"));
+        assert!(!slug_matches("Grok-Bot-*", "Claude-HSR"));
+        assert!(!slug_matches("Grok-Bot", "Grok-Bot-Coder"));
+        assert!(check_bound_identity(Some("Grok-Bot-*"), "Grok-Bot-Mail").is_ok());
+        assert!(check_bound_identity(Some("Grok-Bot-*"), "Claude-Stealth").is_err());
+        let vis = Visibility::Restricted("Grok-Bot-*");
+        assert!(vis.can_see_handoff("Grok-Bot-Mail", Some("Grok-Bot-Coder")));
+        assert!(!vis.can_see_handoff("Claude-A", Some("Claude-B")));
+        assert!(vis.check_own_queue("Grok-Bot-Coder").is_ok());
+        assert!(vis.check_own_queue("Claude-HSR").is_err());
+    }
+
+    #[test]
+    fn family_binding_parses_and_rejects_bare_star() {
+        let ok = format!(
+            r#"[{{"token":"{}","from_agent":"Grok-Bot-*"}}]"#,
+            "b".repeat(32)
+        );
+        assert_eq!(
+            parse_agent_tokens(Some(&ok), None, &[]).unwrap()[0].from_agent,
+            "Grok-Bot-*"
+        );
+        let bad = format!(r#"[{{"token":"{}","from_agent":"Grok*"}}]"#, "b".repeat(32));
+        assert!(parse_agent_tokens(Some(&bad), None, &[]).is_err());
     }
 }
