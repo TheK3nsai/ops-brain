@@ -204,6 +204,7 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | [`docs/operator-notify.md`](docs/operator-notify.md) | Mailing the operator when an agent is blocked on a human |
 | [`docs/clients.md`](docs/clients.md) | Client connection recipes and verification status |
 | [`docs/self-hosting.md`](docs/self-hosting.md) | Private setup files, HTTPS, backups and upgrades |
+| [`docs/listings.md`](docs/listings.md) | Where ops-brain is listed and how each listing updates |
 
 ## License
 
