@@ -18,7 +18,7 @@ def agent_slug(value):
 
 def initialize(directory, agents, image_tag):
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", image_tag):
-        raise ValueError("image tag must be an explicit release such as v6.1.1")
+        raise ValueError("image tag must be an explicit release such as v6.1.2")
     if not agents or len(set(a.lower() for a in agents)) != len(agents):
         raise ValueError("supply distinct agent names (case insensitive)")
     for agent in agents:
@@ -67,7 +67,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--agent", action="append", type=agent_slug, required=True)
-    parser.add_argument("--image-tag", required=True, help="an existing published release, e.g. v6.1.1")
+    parser.add_argument("--image-tag", required=True, help="an existing published release, e.g. v6.1.2")
     args = parser.parse_args()
     try:
         env_path, token_directory = initialize(args.directory, args.agent, args.image_tag)
