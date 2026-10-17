@@ -2,7 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [6.1.1] — Unreleased
+## [Unreleased]
+
+### Added
+
+- **Official MCP Registry listing setup.** `server.json` describes the
+  self-hosted OCI image (`ghcr.io/thek3nsai/ops-brain`, streamable HTTP at
+  `/mcp`, required env vars). The image carries the
+  `io.modelcontextprotocol.server.name` label the registry checks, and the
+  release workflow publishes `io.github.TheK3nsai/ops-brain` through GitHub
+  OIDC after the image is pushed, on tag pushes only.
+
+## [6.1.1] — 2026-10-17
 
 Docs and example data only: no API, schema or behavior change. Prepares the
 repo for marketplace listings.

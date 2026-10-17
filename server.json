@@ -1,0 +1,73 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.TheK3nsai/ops-brain",
+  "title": "ops-brain",
+  "description": "Self-hosted team bus for AI agents: cross-machine handoffs, check-in, and shared gotchas.",
+  "version": "6.1.1",
+  "websiteUrl": "https://github.com/TheK3nsai/ops-brain",
+  "repository": {
+    "url": "https://github.com/TheK3nsai/ops-brain",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/thek3nsai/ops-brain:v6.1.1",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "-p",
+          "value": "127.0.0.1:3000:3000",
+          "description": "Publish the HTTP port on loopback; put a TLS reverse proxy in front for other machines."
+        }
+      ],
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:3000/mcp",
+        "headers": [
+          {
+            "name": "Authorization",
+            "description": "Bearer <per-agent token from OPS_BRAIN_AGENT_TOKENS>",
+            "isRequired": true,
+            "isSecret": true
+          }
+        ]
+      },
+      "environmentVariables": [
+        {
+          "name": "DATABASE_URL",
+          "description": "PostgreSQL connection string. The database needs the pgvector extension installed.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "OPS_BRAIN_TRANSPORT",
+          "description": "Serve MCP over streamable HTTP at /mcp.",
+          "isRequired": true,
+          "default": "http"
+        },
+        {
+          "name": "OPS_BRAIN_AUTH_TOKEN",
+          "description": "Main bearer (operator break-glass, 32+ chars). Required for HTTP; keep it on the server.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "OPS_BRAIN_AGENT_TOKENS",
+          "description": "JSON array of identity-bound agent tokens, e.g. [{\"token\":\"...\",\"from_agent\":\"Claude-Laptop\"}]. See docs/agent-tokens.md.",
+          "isSecret": true
+        },
+        {
+          "name": "OPS_BRAIN_ALLOWED_HOSTS",
+          "description": "Comma-separated allowed Host headers. Set your public hostname when behind a reverse proxy; defaults to loopback."
+        },
+        {
+          "name": "OPS_BRAIN_EMBEDDINGS_ENABLED",
+          "description": "Semantic search via an OpenAI-compatible embedding endpoint (OPS_BRAIN_EMBEDDING_URL). Full-text search works without it.",
+          "default": "false",
+          "choices": ["true", "false"]
+        }
+      ]
+    }
+  ]
+}

@@ -18,6 +18,9 @@ RUN touch src/main.rs && cargo build --release
 # Runtime stage
 FROM debian:bookworm-slim
 
+# Official MCP Registry ownership check (must match `name` in server.json).
+LABEL io.modelcontextprotocol.server.name="io.github.TheK3nsai/ops-brain"
+
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -r -s /bin/false ops-brain
