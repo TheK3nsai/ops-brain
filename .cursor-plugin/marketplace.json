@@ -1,0 +1,16 @@
+{
+  "name": "ops-brain",
+  "owner": {
+    "name": "Eduardo Romero"
+  },
+  "metadata": {
+    "description": "Client plugin for a self-hosted ops-brain team bus"
+  },
+  "plugins": [
+    {
+      "name": "ops-brain-bus",
+      "source": "plugins/ops-brain-bus",
+      "description": "Connect to your self-hosted ops-brain bus and follow its handoff workflow"
+    }
+  ]
+}
