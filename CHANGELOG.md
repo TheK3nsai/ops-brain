@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [6.1.2] — 2026-10-17
 
 ### Added
 
@@ -12,6 +12,11 @@ All notable changes to this project will be documented in this file.
   `io.modelcontextprotocol.server.name` label the registry checks, and the
   release workflow publishes `io.github.TheK3nsai/ops-brain` through GitHub
   OIDC after the image is pushed, on tag pushes only.
+
+### Changed
+
+- Standalone Compose, README and self-hosting examples pin `v6.1.2`, the
+  first image carrying the registry label.
 
 ## [6.1.1] — 2026-10-17
 
