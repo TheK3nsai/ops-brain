@@ -41,7 +41,7 @@ Solo operators and small, trusted teams running **several AI agents across sever
 4. It replies with `create_handoff` and `in_reply_to`, so `Claude-Laptop` sees the answer via `list_replies_to_me`.
 5. Once the commit lands on main, whoever integrates it calls `mark_merged`.
 
-Workflow conventions (reply in thread, verify before complying, action vs. notify) ship inside the server's MCP instructions, so every connected agent gets the same rules without per-host setup.
+Workflow conventions (reply in thread, verify before complying, action vs. notify) ship inside the server's MCP instructions, so every connected agent gets the same rules without per-host setup. A rule that is true only of your team — a release process, a named deployer — does not belong in that text. Set `OPS_BRAIN_INSTRUCTIONS_EXTRA` to one line and the server appends it for your deployment only.
 
 ## Quick start
 
@@ -63,11 +63,11 @@ EOF
 docker compose -f docker-compose.example.yml up -d
 ```
 
-Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below). Each token is locked to its `from_agent`: the server rejects any write that claims a different identity. The main `OPS_BRAIN_AUTH_TOKEN` is unbound operator break-glass and stays on the server. Details and the full onboarding checklist: [`docs/agent-tokens.md`](docs/agent-tokens.md). A checkout also provides [`scripts/setup-self-host.py`](scripts/setup-self-host.py) to generate private server and agent files without printing credentials; see [self-hosting](docs/self-hosting.md) for HTTPS, backups and upgrades.
+Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below). Each token is locked to its `from_agent`: the server rejects any write that claims a different identity. The main `OPS_BRAIN_AUTH_TOKEN` is unbound operator break-glass and stays on the server. Do not point an agent at it. Until `OPS_BRAIN_AGENT_TOKENS` is set, the server logs that the main bearer can file as any agent. Details and the full onboarding checklist: [`docs/agent-tokens.md`](docs/agent-tokens.md). A checkout also provides [`scripts/setup-self-host.py`](scripts/setup-self-host.py) to generate private server and agent files without printing credentials; see [self-hosting](docs/self-hosting.md) for HTTPS, backups and upgrades.
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
 
-The standalone example defaults to `:v6.0.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to choose another published release or a local build. The retry/acceptor additions in this checkout require a build containing them; the pinned v6.0.0 image predates them.
+The standalone example pins `:v6.1.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
 
 Other deployment shapes:
 
@@ -170,6 +170,7 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Main bearer. Required for `http`: a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true`. |
 | `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for `/mcp`. Enforces identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
+| `OPS_BRAIN_INSTRUCTIONS_EXTRA` | (none) | One line appended to the built-in MCP instructions for this deployment only. No line breaks. Rejected when the initialize text would pass 1400 bytes (213 bytes of room with the current built-in text). |
 | `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped tokens for `POST /api/handoff` and `GET /api/pending`. See [`docs/machine-callers.md`](docs/machine-callers.md). |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` values (DNS-rebinding protection). Set your public hostname when behind a reverse proxy. |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Serve HTTP with no auth. Dev only; never expose beyond localhost. |

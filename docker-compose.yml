@@ -57,6 +57,7 @@ services:
       # Optional scoped identities for machine REST callers and MCP agents.
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
+      - OPS_BRAIN_INSTRUCTIONS_EXTRA=${OPS_BRAIN_INSTRUCTIONS_EXTRA:-}
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}
       - OPS_BRAIN_MIGRATE=true
       # Embeddings (optional — run ollama with nomic-embed-text for semantic search)

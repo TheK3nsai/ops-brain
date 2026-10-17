@@ -67,10 +67,20 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let instructions = ops_brain::tools::resolve_instructions(config.instructions_extra.as_deref())
+        .map_err(anyhow::Error::msg)?;
+    if instructions != ops_brain::tools::INSTRUCTIONS {
+        tracing::info!(
+            bytes = instructions.len(),
+            "MCP instructions include a deployment addendum"
+        );
+    }
+
     match config.transport.as_str() {
         "stdio" => {
             tracing::info!("Starting ops-brain MCP server (stdio transport)");
-            let server = OpsBrain::new(pool.clone(), embedding_client.clone());
+            let server =
+                OpsBrain::with_instructions(pool.clone(), embedding_client.clone(), instructions);
             let transport = rmcp::transport::io::stdio();
             let service = server.serve(transport).await?;
             service.waiting().await?;
@@ -147,8 +157,15 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let embedding_client_http = embedding_client.clone();
+            let session_instructions = instructions;
             let mcp_service = StreamableHttpService::new(
-                move || Ok(OpsBrain::new(pool.clone(), embedding_client_http.clone())),
+                move || {
+                    Ok(OpsBrain::with_instructions(
+                        pool.clone(),
+                        embedding_client_http.clone(),
+                        session_instructions.clone(),
+                    ))
+                },
                 session_manager,
                 http_config,
             );
@@ -218,6 +235,17 @@ async fn main() -> anyhow::Result<()> {
                 machine_tokens: Arc::new(machine_tokens),
                 agent_tokens: Arc::new(agent_tokens),
             };
+
+            // The curl quick start is "ready" as soon as the main bearer
+            // exists. That bearer can file as any agent. Say so until the
+            // operator mints per-agent tokens.
+            if auth_state.main_token.is_some() && auth_state.agent_tokens.is_empty() {
+                tracing::warn!(
+                    "No per-agent tokens configured. The main bearer can file as any agent. \
+                     Set OPS_BRAIN_AGENT_TOKENS before connecting agents, and keep the main \
+                     bearer on the server."
+                );
+            }
 
             let api_routes = axum::Router::new()
                 .route("/briefing", axum::routing::post(api::generate_briefing))

@@ -60,6 +60,12 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_AGENT_TOKENS")]
     pub agent_tokens: Option<String>,
 
+    /// One deployment-local line appended to the built-in MCP instructions.
+    /// Use it for a rule that is true of this operator's team and false of
+    /// every other deployment. Blank omits it. See `tools::resolve_instructions`.
+    #[arg(long, env = "OPS_BRAIN_INSTRUCTIONS_EXTRA")]
+    pub instructions_extra: Option<String>,
+
     /// Comma-separated allowed Host header values for HTTP transport (DNS-rebind mitigation
     /// added in rmcp 1.4). Defaults to loopback only — public deployments behind a reverse
     /// proxy must list their public hostname (e.g. `ops.example.com,ops.example.com:443`).

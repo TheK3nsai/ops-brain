@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [6.1.0] — 2026-10-17
 
 ### Added
 
@@ -13,17 +13,11 @@ All notable changes to this project will be documented in this file.
   Bots), so each can be addressed by its own slug. Plain bindings are
   unchanged.
 
-- Optional external OAuth resource-server support: protected-resource
-  discovery, bounded JWT/JWKS validation and operator-configured principal
-  bindings preserve the existing identity and restricted-data rules.
-- Optional MCP2 discovery/tools/events adapter and signed `handoff.created`
-  pointer webhooks, with verified public HTTPS callbacks, expiring grants,
-  durable delivery, bounded retries and revocation checks.
 - Sender-scoped MCP handoff retry keys return the original record across its
   lifecycle and reject changed requests. Atomic claims now record
   `accepted_by`; claimed broadcasts stay in the acceptor's operational queue.
-- Client compatibility, OAuth, events and self-hosting guides, private setup
-  file generation and a read-only-by-default MCP connection smoke script.
+- Client compatibility and self-hosting guides, private setup file generation,
+  and a read-only-by-default MCP connection smoke script.
 
 ### Removed
 
@@ -39,20 +33,27 @@ All notable changes to this project will be documented in this file.
 
 - `accept_handoff` on a family token without `agent_name` now names the fix:
   `family token <base>-* must pass agent_name (your member name, e.g. <base>-<Bot>)`.
-
-- Release ownership is explicit in agent guidance and MCP instructions:
-  originating agents finish review/PR/green CI/merge; the configured cloud
-  deployer receives the exact merged SHA and owns deployment verification.
-- Standalone Compose defaults to a pinned v6.0.0 image and loopback HTTP
-  binding. Select `OPS_BRAIN_IMAGE` explicitly for another release or a local
-  build containing the unreleased additions.
+- Built-in MCP instructions no longer carry one deployment's release process.
+  That rule is a single optional line, `OPS_BRAIN_INSTRUCTIONS_EXTRA`, empty
+  unless the host sets it. Neither compose file supplies a sentence. HTTP
+  startup warns when the main bearer is the only credential, because that
+  bearer can file as any agent.
+- Release ownership stays explicit in agent guidance. Originating agents
+  finish review/PR/green CI/merge; the configured cloud deployer receives the
+  exact merged SHA and owns deployment verification. A deployment that wants
+  its agents to see that rule sets `OPS_BRAIN_INSTRUCTIONS_EXTRA` in the host
+  environment.
+- CI no longer runs the parked events lifecycle test.
+- Standalone Compose pins `ghcr.io/thek3nsai/ops-brain:v6.1.0` and binds
+  loopback HTTP. Set `OPS_BRAIN_IMAGE` for another published release or a
+  local build. Startup from a v6.0.0 database applies the migrations since
+  that image. The net schema change is the knowledge-delete restriction plus
+  handoff retry keys and `accepted_by`. The parked events tables are created
+  and then dropped in that upgrade.
 
 ### Fixed
 
 - **`rustls` 0.23.46 fixes RUSTSEC-2026-0347 to 0350.** Lockfile-only.
-- Event maintenance clears expired rotation keys at a five-minute cadence.
-  MCP2 tool requests allow escaped text up to the existing decoded input
-  limits; the separate webhook delivery limit remains 256 KiB.
 - **`quinn-proto` 0.11.19 fixes RUSTSEC-2026-0338 to 0342** (memory exhaustion
   and panics from a remote QUIC peer). Lockfile-only; `rand` moves to 0.10.3.
   Not compiled into our build, but `cargo audit` scans the lockfile.
