@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ops-brain": {
+      "type": "http",
+      "url": "${OPS_BRAIN_URL}",
+      "headers": {
+        "Authorization": "Bearer ${OPS_BRAIN_AGENT_TOKEN}"
+      }
+    }
+  }
+}

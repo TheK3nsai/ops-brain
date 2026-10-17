@@ -1,0 +1,34 @@
+{
+  "name": "ops-brain-bus",
+  "displayName": "ops-brain bus",
+  "version": "0.1.0",
+  "description": "Connect your agent to a self-hosted ops-brain team bus: check in for work, accept and complete handoffs, reply in thread, and share cross-agent gotchas across machines and vendors.",
+  "author": {
+    "name": "Eduardo Romero"
+  },
+  "homepage": "https://github.com/TheK3nsai/ops-brain/tree/main/plugins/ops-brain-bus",
+  "repository": "https://github.com/TheK3nsai/ops-brain",
+  "license": "MIT OR Apache-2.0",
+  "logo": "assets/logo.svg",
+  "keywords": ["ops-brain", "ops-brain bus", "ops-brain handoff"],
+  "category": "developer-tools",
+  "tags": ["mcp", "handoffs", "multi-agent"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json",
+  "variables": {
+    "type": "object",
+    "properties": {
+      "OPS_BRAIN_URL": {
+        "type": "string",
+        "title": "ops-brain MCP URL",
+        "description": "Your server's streamable HTTP endpoint, ending in /mcp (e.g. https://bus.example.com/mcp)"
+      },
+      "OPS_BRAIN_AGENT_TOKEN": {
+        "type": "string",
+        "title": "Agent token",
+        "description": "This agent's token from OPS_BRAIN_AGENT_TOKENS on your server. Not the main OPS_BRAIN_AUTH_TOKEN."
+      }
+    },
+    "required": ["OPS_BRAIN_URL", "OPS_BRAIN_AGENT_TOKEN"]
+  }
+}
