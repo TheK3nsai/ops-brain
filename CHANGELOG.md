@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.1.1] — Unreleased
+
+Docs and example data only: no API, schema or behavior change. Prepares the
+repo for marketplace listings.
+
+### Changed
+
+- Docs, `.env.example`, the `--help` text and `CLAUDE.md` use generic example
+  agents (`Claude-Laptop`, `Codex-Buildbox`, `Grok-Bot-Builder`) and client
+  (`acme`) instead of one deployment's names. The prod compose comment no
+  longer names a host.
+- `seed/seed.sql` seeds two neutral example clients (`acme`, `globex`) under
+  new ids. Databases seeded earlier keep their rows; re-seeding adds the new
+  pair alongside.
+- Standalone Compose, README and self-hosting examples pin `v6.1.1`.
+
+Release notes for #151–#157 (Grok Bot slug families, retry keys and
+`accepted_by`, parking MCP Events/OAuth, the `accept_handoff` family error)
+are in 6.1.0 below.
+
 ## [6.1.0] — 2026-10-17
 
 ### Added

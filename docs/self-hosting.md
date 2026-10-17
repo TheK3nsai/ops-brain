@@ -11,7 +11,7 @@ From a checkout, choose a published release explicitly:
 
 ```bash
 python3 scripts/setup-self-host.py --directory /path/to/deployment \
-  --image-tag v6.1.0 --agent Claude-Laptop --agent Codex-Buildbox
+  --image-tag v6.1.1 --agent Claude-Laptop --agent Codex-Buildbox
 ```
 
 The helper writes `.env` with mode 0600 and an `agent-tokens/` directory with
