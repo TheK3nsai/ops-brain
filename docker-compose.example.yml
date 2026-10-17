@@ -42,7 +42,7 @@ services:
       retries: 5
 
   ops-brain:
-    image: ${OPS_BRAIN_IMAGE:-ghcr.io/thek3nsai/ops-brain:v6.0.0}
+    image: ${OPS_BRAIN_IMAGE:-ghcr.io/thek3nsai/ops-brain:v6.1.0}
     container_name: ops-brain
     restart: unless-stopped
     depends_on:
@@ -59,6 +59,10 @@ services:
       # See docs/machine-callers.md and docs/agent-tokens.md in the repository.
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
+      # One line of this deployment's own rules, appended to the built-in
+      # MCP instructions. Leave empty unless you have a rule that is not
+      # true of every team running ops-brain.
+      - OPS_BRAIN_INSTRUCTIONS_EXTRA=${OPS_BRAIN_INSTRUCTIONS_EXTRA:-}
       - OPS_BRAIN_MIGRATE=true
       # Public deployments behind a reverse proxy must add the public hostname
       # here (comma-separated). Defaults to loopback-only when unset.

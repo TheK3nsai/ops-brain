@@ -12,7 +12,7 @@ use rmcp::model::*;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateHandoffParams {
     /// Sender agent (free-form slug, 1–80 chars, [a-zA-Z0-9._-]).
-    /// Examples: "Claude-Stealth", "Codex-HSR".
+    /// Examples: "Claude-Laptop", "Codex-Buildbox".
     #[serde(alias = "from_machine")]
     pub from_agent: String,
     /// Target agent (free-form slug, same form as `from_agent`). Omit to

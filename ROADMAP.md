@@ -59,7 +59,10 @@ Non-negotiable. Any idea that violates one of these is DOA.
 - **Conventions ship in the server.** The MCP `instructions` string and tool
   descriptions are the only text every agent on every host sees. A workflow
   convention that lives only in a repo or per-host instruction file reaches
-  one agent and rots in the others.
+  one agent and rots in the others. A convention true of every deployment
+  belongs in the built-in string. A convention true of one operator's team
+  belongs in `OPS_BRAIN_INSTRUCTIONS_EXTRA`, not in the built-in string and
+  not only in a per-host file.
 - **No structured-evidence handoff types.** Handoffs stay freeform markdown
   forever.
 - **No workflow chains on handoffs.** No `workflow_id`, no `list_workflows`,

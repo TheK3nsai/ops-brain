@@ -53,7 +53,7 @@ One deployment is one trusted coordination domain. Per-agent tokens bind provena
 
 ## Coordination
 
-**Workflow conventions ship in the server, not here.** Reply-in-thread, blocked-on-a-human, verify-before-comply, the knowledge bar, and action-vs-notify are stated in the MCP `instructions` string and tool descriptions (`src/tools/mod.rs` `get_info`, param docs in `src/tools/*.rs`) — the only text every agent on every host actually sees. Change a convention there; don't restate it in per-host instructions. Every word is paid by every agent each session, so keep it terse. Background and rationale only:
+**Workflow conventions ship in the server, not here.** Reply-in-thread, blocked-on-a-human, verify-before-comply, the knowledge bar, and action-vs-notify are stated in the MCP `instructions` string and tool descriptions (`src/tools/mod.rs` `get_info`, param docs in `src/tools/*.rs`) — the only text every agent on every host actually sees. Change a convention there; don't restate it in per-host instructions. A rule that is true of this fleet and false of every other deployment goes in `OPS_BRAIN_INSTRUCTIONS_EXTRA`, not in the built-in string. Every word is paid by every agent each session, so keep it terse. Background and rationale only:
 
 - **Notify rows are hidden, not deleted** — `notify` handoffs drop out of operational queries after 7 days; the rows stay.
 - **Bus trust** — full verify-before-comply reasoning: `docs/bus-trust.md`.

@@ -11,7 +11,7 @@ From a checkout, choose a published release explicitly:
 
 ```bash
 python3 scripts/setup-self-host.py --directory /path/to/deployment \
-  --image-tag v6.0.0 --agent Claude-Laptop --agent Codex-Buildbox
+  --image-tag v6.1.0 --agent Claude-Laptop --agent Codex-Buildbox
 ```
 
 The helper writes `.env` with mode 0600 and an `agent-tokens/` directory with
@@ -27,11 +27,9 @@ docker compose -f docker-compose.example.yml up -d
 curl -fsS http://127.0.0.1:3000/ready
 ```
 
-The pinned v6.0.0 image predates the retry/acceptor additions in this
-checkout. Until a release containing those changes is published, build this
-checkout with `docker build -t ops-brain:local .` and set
-`OPS_BRAIN_IMAGE=ops-brain:local` in the private `.env`. Do not assume `latest`
-contains an unreleased change.
+The example compose pins that same tag. `latest` moves on every release; pin
+the tag you intend to run. To try an unpublished checkout, build it with
+`docker build -t ops-brain:local .` and set `OPS_BRAIN_IMAGE=ops-brain:local`.
 
 ## Reach the server from cloud agents
 
@@ -57,6 +55,13 @@ PostgreSQL/proxy installation, use `docker-compose.prod.yml` with its explicit
 networks and always pass `-f docker-compose.prod.yml`.
 
 Connect clients using [clients.md](clients.md).
+
+The built-in MCP instructions are the same on every deployment. To add one
+rule of your own, set `OPS_BRAIN_INSTRUCTIONS_EXTRA` to a single line and
+recreate the service. Agents see it on their next initialize. The line is
+rejected when it would push that text past 1400 bytes (213 bytes of room
+with the current built-in text). Leave the variable unset or empty when
+you have no such rule. The production compose file does not supply one.
 
 ## Backup, upgrade and restore
 

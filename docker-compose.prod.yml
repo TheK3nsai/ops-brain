@@ -30,6 +30,10 @@ services:
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       # Per-agent tokens (JSON array): identity-bound /mcp sessions (see docs/agent-tokens.md)
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
+      # One deployment-local line. Empty here, same as the example file, so a
+      # copy does not instruct agents in someone else's release process.
+      # This deployment sets the variable in the host environment.
+      - OPS_BRAIN_INSTRUCTIONS_EXTRA=${OPS_BRAIN_INSTRUCTIONS_EXTRA:-}
       - OPS_BRAIN_MIGRATE=true
       # rmcp 1.4+ Host header allowlist (DNS-rebind mitigation, default loopback-only)
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}
