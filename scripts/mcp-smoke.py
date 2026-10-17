@@ -31,7 +31,7 @@ class MCP:
             self.sequence += 1
             payload["id"] = self.sequence
         headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json",
-                   "Accept": "application/json, text/event-stream"}
+                   "Accept": "application/json, text/event-stream", "User-Agent": "ops-brain-mcp-smoke"}
         if self.session:
             headers["Mcp-Session-Id"] = self.session
             headers["MCP-Protocol-Version"] = "2025-11-25"

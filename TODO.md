@@ -12,7 +12,7 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 
 ### Distribution
 
-- **Phase 2 listings:** the `ops-brain-bus` plugin is in `plugins/ops-brain-bus/`; next is testing it in-app, then the Grok Bot marketplace form (Grok Bot + Cursor) and a Grok Build catalog PR pinned to a merged SHA. Current listings: `docs/listings.md`.
+- **Phase 2 listings are submitted; follow up on review.** Marketplace form and the Grok Build catalog PR are pending (`docs/listings.md`). Drop this item once both are live or declined.
 
 ### Public-repo hygiene
 
