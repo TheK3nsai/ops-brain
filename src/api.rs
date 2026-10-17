@@ -105,7 +105,7 @@ pub struct ApiErrorBody {
 /// JSON. A producer that parses every response as JSON drops that text body on
 /// the floor, so a 400 that *did* name its field and its limit arrived looking
 /// like a bodyless one — that is how a one-line client bug went 5 days as a
-/// dark backup dead-man on HSR (handoff `01a0206b`, measured against
+/// dark backup dead-man on a client host (handoff `01a0206b`, measured against
 /// production 2026-08-20). Errors now match the content-type of success.
 #[derive(Debug)]
 pub struct ApiError {

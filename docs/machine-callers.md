@@ -57,7 +57,7 @@ Configured server-side via `OPS_BRAIN_MACHINE_TOKENS` (JSON array):
   handoffs **to** and poll pending queues **for**. Case-insensitive exact
   match, no wildcard, must be non-empty.
   An agent token's `-*` slug family does not apply here: list each
-  family member (`Grok-Bot`, `Grok-Bot-Kensai-Coder`, …) explicitly. A new
+  family member (`Grok-Bot`, `Grok-Bot-Builder`, …) explicitly. A new
   member stays unpollable until it is added here by hand and the container
   recreated.
 - `scopes` — `create` and/or `read`, matching the endpoint table above.

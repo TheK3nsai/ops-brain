@@ -13,7 +13,7 @@
 # Then bump EXPECTED_CLASSES in the guard script to match.
 #
 # Three client-private classes. The deploy-host class was removed
-# 2026-08-24 (CC-HSR ruling 01a03571): it is publicly resolvable, serves
+# 2026-08-24 (ruling 01a03571): it is publicly resolvable, serves
 # public HTTPS, and is enumerated in Certificate Transparency logs — it
 # was never confidential, and guarding it produced churn for no gain.
 6:0ca3dac0c444d352bdb4b822664846bba6a0454600c57a629bca6e893cbfaaab

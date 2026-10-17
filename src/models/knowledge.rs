@@ -12,8 +12,8 @@ pub struct Knowledge {
     pub client_id: Option<Uuid>,
     pub cross_client_safe: bool,
     pub last_verified_at: Option<DateTime<Utc>>,
-    /// Agent that authored this entry (free-form slug, e.g. "Claude-Stealth",
-    /// "Codex-HSR"). NULL for rows created before v1.6. Required on new
+    /// Agent that authored this entry (free-form slug, e.g. "Claude-Laptop",
+    /// "Codex-Buildbox"). NULL for rows created before v1.6. Required on new
     /// entries; immutable once set via the tool surface.
     pub author: Option<String>,
     pub created_at: DateTime<Utc>,

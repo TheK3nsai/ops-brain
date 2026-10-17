@@ -114,14 +114,14 @@ mod knowledge_tests {
             &["ci".to_string()],
             None,
             false,
-            Some("Claude-Stealth"),
+            Some("Claude-Laptop"),
         )
         .await
         .unwrap();
 
         assert_eq!(k.title, "Test Knowledge Entry");
         assert!(!k.cross_client_safe);
-        assert_eq!(k.author.as_deref(), Some("Claude-Stealth"));
+        assert_eq!(k.author.as_deref(), Some("Claude-Laptop"));
 
         let fetched = ops_brain::repo::knowledge_repo::get_knowledge(&pool, k.id)
             .await
@@ -149,7 +149,7 @@ mod knowledge_tests {
             &[],
             None,
             true,
-            Some("Claude-Stealth"),
+            Some("Claude-Laptop"),
         )
         .await
         .unwrap();
@@ -176,7 +176,7 @@ mod knowledge_tests {
             &[],
             None,
             false,
-            Some("Claude-Stealth"),
+            Some("Claude-Laptop"),
         )
         .await
         .unwrap();
@@ -414,8 +414,8 @@ mod coordination_tests {
         let pool = pool().await;
 
         let cases = [
-            ("Claude-Stealth", Some("Claude-Cloud")),
-            ("Codex-HSR", Some("Gemini-HSR")),
+            ("Claude-Laptop", Some("Claude-Cloud")),
+            ("Codex-Buildbox", Some("Gemini-Buildbox")),
             ("opencode.local", None),
         ];
         let mut ids = Vec::new();
@@ -651,8 +651,8 @@ mod v5_surface_tests {
         let brain = OpsBrain::new(pool.clone(), None);
         let handoff = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "Codex-Stealth",
-            Some("Claude-HSR"),
+            "Codex-Laptop",
+            Some("Claude-Buildbox"),
             "normal",
             "action",
             "exact v5 retrieval",
@@ -696,7 +696,7 @@ mod v5_surface_tests {
             &[],
             None,
             false,
-            Some("Codex-Stealth"),
+            Some("Codex-Laptop"),
         )
         .await
         .unwrap();
@@ -871,7 +871,7 @@ mod check_in_tests {
         let result = ops_brain::tools::check_in::handle_check_in(
             &brain,
             ops_brain::tools::check_in::CheckInParams {
-                agent_name: "Claude-Stealth".to_string(),
+                agent_name: "Claude-Laptop".to_string(),
             },
             None,
             ops_brain::auth::Visibility::Full,
@@ -904,7 +904,7 @@ mod check_in_tests {
 
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "Claude-Stealth",
+            "Claude-Laptop",
             Some(&agent),
             "normal",
             "action",
@@ -970,7 +970,7 @@ mod check_in_tests {
             .expect("check_in returns structured JSON")
     }
 
-    /// A handoff an agent files to itself and accepts is a lock record (HSR's
+    /// A handoff an agent files to itself and accepts is a lock record (a host's
     /// row claims). It must not take an action slot or spend a wake, but it
     /// stays counted, and a *pending* self-addressed row is still work.
     #[tokio::test]
@@ -984,7 +984,7 @@ mod check_in_tests {
             .unwrap()
             .expect("accept should succeed");
         let note = file_action(&pool, &agent, Some(&agent), "pending note to self").await;
-        let inbound = file_action(&pool, "Claude-Stealth", Some(&agent), "accepted inbound").await;
+        let inbound = file_action(&pool, "Claude-Laptop", Some(&agent), "accepted inbound").await;
         ops_brain::repo::handoff_repo::accept_handoff(&pool, inbound)
             .await
             .unwrap()
@@ -1044,13 +1044,7 @@ mod check_in_tests {
         let mut ids = Vec::new();
         for i in 0..21 {
             ids.push(
-                file_action(
-                    &pool,
-                    "Claude-Stealth",
-                    Some(&agent),
-                    &format!("capped {i}"),
-                )
-                .await,
+                file_action(&pool, "Claude-Laptop", Some(&agent), &format!("capped {i}")).await,
             );
         }
 
@@ -1087,8 +1081,8 @@ mod check_in_tests {
         );
 
         let ids = vec![
-            file_action(&pool, "Claude-Stealth", Some(&agent), "one").await,
-            file_action(&pool, "Claude-Stealth", Some(&agent), "two").await,
+            file_action(&pool, "Claude-Laptop", Some(&agent), "one").await,
+            file_action(&pool, "Claude-Laptop", Some(&agent), "two").await,
         ];
 
         let json = check_in_json(pool.clone(), &agent).await;
@@ -1198,7 +1192,7 @@ mod coordination_handler_tests {
         let result = handle_create_handoff(
             &brain,
             CreateHandoffParams {
-                from_agent: "Claude-Stealth".to_string(),
+                from_agent: "Claude-Laptop".to_string(),
                 to_agent: None,
                 priority: None,
                 category: None,
@@ -1236,19 +1230,19 @@ mod coordination_handler_tests {
 
     #[tokio::test]
     async fn create_handoff_bound_token_rejects_mismatched_from_agent() {
-        // A per-agent token bound to Claude-Stealth cannot file as Claude-Cloud.
+        // A per-agent token bound to Claude-Laptop cannot file as Claude-Cloud.
         let brain = build_brain(pool().await);
         let result = handle_create_handoff(
             &brain,
             handoff_params("Claude-Cloud"),
-            Some("Claude-Stealth"),
+            Some("Claude-Laptop"),
             ops_brain::auth::Visibility::Full,
         )
         .await;
         assert_eq!(result.is_error, Some(true));
         let text = extract_text(&result);
         assert!(
-            text.contains("Claude-Stealth") && text.contains("Claude-Cloud"),
+            text.contains("Claude-Laptop") && text.contains("Claude-Cloud"),
             "expected identity-mismatch error naming both slugs, got: {text}"
         );
     }
@@ -1258,8 +1252,8 @@ mod coordination_handler_tests {
         let brain = build_brain(pool().await);
         let result = handle_create_handoff(
             &brain,
-            handoff_params("claude-stealth"),
-            Some("Claude-Stealth"),
+            handoff_params("claude-laptop"),
+            Some("Claude-Laptop"),
             ops_brain::auth::Visibility::Full,
         )
         .await;
@@ -1303,7 +1297,7 @@ mod coordination_handler_tests {
         let typo = format!("Codex-Orian{suffix}");
 
         let to = |agent: &str| CreateHandoffParams {
-            from_agent: "Claude-Stealth".to_string(),
+            from_agent: "Claude-Laptop".to_string(),
             to_agent: Some(agent.to_string()),
             priority: None,
             category: Some("notify".to_string()),
@@ -1966,7 +1960,7 @@ mod knowledge_safety_tests {
             &[],
             Some(client_a.id),
             false,
-            Some("Claude-Stealth"),
+            Some("Claude-Laptop"),
         )
         .await
         .unwrap();
@@ -1980,7 +1974,7 @@ mod knowledge_safety_tests {
             &[],
             Some(client_a.id),
             true,
-            Some("Claude-Stealth"),
+            Some("Claude-Laptop"),
         )
         .await
         .unwrap();
@@ -2093,7 +2087,7 @@ mod knowledge_safety_tests {
             &[],
             Some(client_a.id),
             false,
-            Some("Claude-Stealth"),
+            Some("Claude-Laptop"),
         )
         .await
         .unwrap();
@@ -2169,7 +2163,7 @@ mod knowledge_safety_tests {
             &[],
             Some(client.id),
             false,
-            Some("Claude-Stealth"),
+            Some("Claude-Laptop"),
         )
         .await
         .unwrap();
@@ -2633,7 +2627,7 @@ mod pagination_surface_tests {
                 &[],
                 None,
                 false,
-                Some("Codex-Stealth"),
+                Some("Codex-Laptop"),
             )
             .await
             .unwrap();
@@ -2734,7 +2728,7 @@ mod pagination_surface_tests {
                 &[],
                 None,
                 false,
-                Some("Codex-Stealth"),
+                Some("Codex-Laptop"),
             )
             .await
             .unwrap();
@@ -2839,7 +2833,7 @@ mod mcp_identity_transport_tests {
             machine_tokens: Arc::new(vec![]),
             agent_tokens: Arc::new(vec![AgentToken {
                 token: AGENT.to_string(),
-                from_agent: "Codex-Stealth".to_string(),
+                from_agent: "Codex-Laptop".to_string(),
                 client: None,
                 exclude_client_data: false,
             }]),
@@ -2892,15 +2886,14 @@ mod mcp_identity_transport_tests {
             .header("Accept", "application/json, text/event-stream")
             .header("mcp-session-id", &session_id)
             .header("Mcp-Protocol-Version", "2025-06-18")
-            .body(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_handoff","arguments":{"from_agent":"Forged-Agent","to_agent":"Claude-HSR","title":"must reject","body":"must not reach the database"}}}"#)
+            .body(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_handoff","arguments":{"from_agent":"Forged-Agent","to_agent":"Claude-Buildbox","title":"must reject","body":"must not reach the database"}}}"#)
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::OK);
         let body = response.text().await.unwrap();
         assert!(
-            body.contains("does not match your token-bound agent")
-                && body.contains("Codex-Stealth"),
+            body.contains("does not match your token-bound agent") && body.contains("Codex-Laptop"),
             "identity mismatch must be rejected by the tool handler: {body}"
         );
 
@@ -2973,7 +2966,7 @@ mod mcp_identity_transport_tests {
         .unwrap();
         assert_eq!(initialized.status(), reqwest::StatusCode::ACCEPTED);
 
-        let response = post(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"check_in","arguments":{"agent_name":"Claude-HSR"}}}"#, Some(session_id))
+        let response = post(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"check_in","arguments":{"agent_name":"Claude-Buildbox"}}}"#, Some(session_id))
             .await
             .unwrap();
         let body = response.text().await.unwrap();
@@ -3017,7 +3010,7 @@ mod api_handoff_tests {
                 token: MACH.to_string(),
                 from_agent: "Test-Producer".to_string(),
                 client: None,
-                agents: vec!["Codex-HSR".to_string()],
+                agents: vec!["Codex-Buildbox".to_string()],
                 scopes: vec!["create".to_string(), "read".to_string()],
             }]),
             agent_tokens: Arc::new(vec![]),
@@ -3042,7 +3035,7 @@ mod api_handoff_tests {
         let resp = app(pool().await)
             .oneshot(post_handoff(serde_json::json!({
                 "from_agent": "Someone-Else",
-                "to_agent": "Codex-HSR",
+                "to_agent": "Codex-Buildbox",
                 "title": "t",
                 "body": "b"
             })))
@@ -3082,7 +3075,7 @@ mod api_handoff_tests {
         let title = format!("machine handoff {}", Uuid::now_v7().simple());
         let resp = app(pool.clone())
             .oneshot(post_handoff(serde_json::json!({
-                "to_agent": "Codex-HSR",
+                "to_agent": "Codex-Buildbox",
                 "title": title,
                 "body": "filed via REST"
             })))
@@ -3124,7 +3117,7 @@ mod exact_agent_match_tests {
 
         let h_under = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "Claude-Stealth",
+            "Claude-Laptop",
             Some(&underscore_agent),
             "normal",
             "action",
@@ -3137,7 +3130,7 @@ mod exact_agent_match_tests {
         .unwrap();
         let h_wild = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "Claude-Stealth",
+            "Claude-Laptop",
             Some(&wildcard_agent),
             "normal",
             "action",
@@ -3182,7 +3175,7 @@ mod exact_agent_match_tests {
 
 // ===== REST error envelope =====
 //
-// Regression cover for handoff `01a0206b`: HSR's nightly sweep went dark for 5
+// Regression cover for handoff `01a0206b`: a client host's nightly sweep went dark for 5
 // days because a rejected POST looked bodyless from the client. The rejection
 // always named its field — it just rendered as `text/plain` while success
 // rendered as JSON, so a JSON-parsing producer dropped it. These assert the
@@ -3234,7 +3227,7 @@ mod api_error_envelope_tests {
         .unwrap()
     }
 
-    /// HSR's exact payload shape: 200 characters, 202 bytes because of one em
+    /// That host's exact payload shape: 200 characters, 202 bytes because of one em
     /// dash. Rejected — and the rejection has to say which field and how big.
     #[tokio::test]
     async fn oversized_title_names_the_field_and_the_byte_count() {
@@ -3448,7 +3441,7 @@ mod briefing_operator_view_tests {
         let old = format!("older operator item {uniq}");
         let new = format!("newer operator item {uniq}");
 
-        let id_old = file(&pool, "Claude-Stealth", Some(&operator), &old, 26).await;
+        let id_old = file(&pool, "Claude-Laptop", Some(&operator), &old, 26).await;
         let id_new = file(&pool, "Claude-Cloud", Some(&operator), &new, 3).await;
 
         let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
@@ -3482,7 +3475,7 @@ mod briefing_operator_view_tests {
         // Deliberately same-day: the default-operator leg below asserts this
         // title is absent, which would also fail if the item were old enough
         // to surface under Stuck instead.
-        let id = file(&pool, "Claude-Stealth", Some(&operator), &title, 0).await;
+        let id = file(&pool, "Claude-Laptop", Some(&operator), &title, 0).await;
 
         let (status, value) = post_briefing(
             pool.clone(),
@@ -3566,8 +3559,8 @@ mod briefing_operator_view_tests {
         let aged = format!("four days waiting {uniq}");
         let fresh = format!("filed today {uniq}");
 
-        let id_aged = file(&pool, "Claude-Stealth", Some(&target), &aged, 4).await;
-        let id_fresh = file(&pool, "Claude-Stealth", Some(&target), &fresh, 0).await;
+        let id_aged = file(&pool, "Claude-Laptop", Some(&target), &aged, 4).await;
+        let id_fresh = file(&pool, "Claude-Laptop", Some(&target), &fresh, 0).await;
 
         let value = briefings::generate_briefing_inner(&pool, "daily", &operator)
             .await
@@ -3612,7 +3605,7 @@ mod briefing_operator_view_tests {
         let requested_as = filed_as.to_lowercase();
         assert_ne!(filed_as, requested_as, "the test needs the cases to differ");
         let title = format!("case-folded operator item {uniq}");
-        let id = file(&pool, "Claude-Stealth", Some(&filed_as), &title, 1).await;
+        let id = file(&pool, "Claude-Laptop", Some(&filed_as), &title, 1).await;
 
         let value = briefings::generate_briefing_inner(&pool, "daily", &requested_as)
             .await
@@ -3680,7 +3673,7 @@ mod briefing_operator_view_tests {
         let title = format!("notify FYI {uniq}");
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "Claude-Stealth",
+            "Claude-Laptop",
             Some(&operator),
             "normal",
             "notify",
@@ -3730,7 +3723,7 @@ mod briefing_operator_view_tests {
         // Seen on the bus, but with nothing open: a completed handoff.
         let h = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
-            "Claude-Stealth",
+            "Claude-Laptop",
             Some(&operator),
             "normal",
             "action",
@@ -3852,7 +3845,7 @@ mod restricted_visibility_tests {
                     &[],
                     client_id,
                     safe,
-                    Some("Claude-Stealth"),
+                    Some("Claude-Laptop"),
                 )
                 .await
                 .unwrap()
@@ -3883,20 +3876,20 @@ mod restricted_visibility_tests {
             }
         };
         let to_bot = file(
-            "Claude-Stealth".into(),
+            "Claude-Laptop".into(),
             Some(bot.clone()),
             format!("to bot {term}"),
         )
         .await;
         let from_bot = file(
             bot.clone(),
-            Some("Claude-Stealth".into()),
+            Some("Claude-Laptop".into()),
             format!("from bot {term}"),
         )
         .await;
         let others = file(
-            "Claude-HSR".into(),
-            Some("Claude-Stealth".into()),
+            "Claude-Buildbox".into(),
+            Some("Claude-Laptop".into()),
             format!("others {term}"),
         )
         .await;
@@ -4050,7 +4043,7 @@ mod restricted_visibility_tests {
         };
         let member = file(format!("{}-Mail", f.bot), format!("{}-Coder", f.bot)).await;
         // Shares the base as a raw prefix but not as `<base>-`: outside.
-        let lookalike = file(format!("{}x-Mail", f.bot), "Claude-Stealth".into()).await;
+        let lookalike = file(format!("{}x-Mail", f.bot), "Claude-Laptop".into()).await;
 
         let mut browse = search("*", &["handoffs"], None);
         browse.limit = Some(200);
@@ -4126,7 +4119,7 @@ mod restricted_visibility_tests {
             &f.brain,
             CreateHandoffParams {
                 from_agent: f.bot.clone(),
-                to_agent: Some("Claude-HSR".to_string()),
+                to_agent: Some("Claude-Buildbox".to_string()),
                 priority: None,
                 category: Some("notify".to_string()),
                 title: "reply".to_string(),
@@ -4217,7 +4210,7 @@ mod restricted_visibility_tests {
             async move {
                 ops_brain::repo::handoff_repo::create_handoff(
                     &pool,
-                    "Claude-Stealth",
+                    "Claude-Laptop",
                     Some(&to),
                     "normal",
                     "notify",
@@ -4232,7 +4225,7 @@ mod restricted_visibility_tests {
             }
         };
         let to_bot = reply(&f.bot).await;
-        let elsewhere = reply("Claude-HSR").await;
+        let elsewhere = reply("Claude-Buildbox").await;
 
         let since = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
         let r = handle_list_replies_to_me(
@@ -4378,7 +4371,7 @@ mod restricted_visibility_tests {
         let r = handle_check_in(
             &f.brain,
             CheckInParams {
-                agent_name: "Claude-Stealth".to_string(),
+                agent_name: "Claude-Laptop".to_string(),
             },
             Some(&f.bot),
             restricted,

@@ -75,8 +75,8 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
 [
   {
     "token": "<32+ char minted secret>",
-    "from_agent": "Claude-Stealth",
-    "client": "stealth"
+    "from_agent": "Claude-Laptop",
+    "client": "acme"
   }
 ]
 ```
@@ -86,12 +86,12 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
   malformed entry (a silently dropped token would read as "identity enforced"
   while that agent still files unbound).
 - `from_agent` — the slug this token is locked to. Use the fleet convention
-  (`Claude-Stealth`, `Codex-HSR`, …).
+  (`Claude-Laptop`, `Codex-Buildbox`, …).
   A trailing `-*` binds a slug family instead: `Grok-Bot-*` may write as
   `Grok-Bot` or any `Grok-Bot-<Name>`, and an `exclude_client_data`
   boundary covers the whole family. Use it only when several agents must
   share one credential (Grok Bots ride one MCP connector per account; each
-  bot files as `Grok-Bot-<BotName>`, e.g. `Grok-Bot-Kensai-Coder`). The
+  bot files as `Grok-Bot-<BotName>`, e.g. `Grok-Bot-Builder`). The
   family members can impersonate each other, so it is provenance per
   credential, not per bot. Each member writes as its own slug
   (`from_agent`, `author`), not the bare base, and passes it as `agent_name`
@@ -113,7 +113,7 @@ host out-of-band through the operator's channel, exactly like a machine token.
 Startup logs a binding summary (never the secrets):
 
 ```
-agent tokens configured count=1 bindings=["Claude-Stealth (client=stealth)"]
+agent tokens configured count=1 bindings=["Claude-Laptop (client=acme)"]
 ```
 
 ## Keeping an agent out of client data

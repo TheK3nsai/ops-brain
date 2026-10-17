@@ -61,7 +61,7 @@ services:
       # journald puts the stream under the host journal (capped 500M / 1 month),
       # where it survives recreate and is queryable by tag.
       #
-      # Verified on kensai-cloud 2026-08-31 against a throwaway container before
+      # Verified on the prod host 2026-08-31 against a throwaway container before
       # this was applied to prod: `docker logs`, including the `--tail N
       # --since Nm` forms the deploy skill and kuma-watchdog use, behaves
       # identically; and `journalctl -t ops-brain` still returns the stream

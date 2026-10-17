@@ -52,7 +52,7 @@ pub struct Config {
 
     /// Per-agent tokens for interactive MCP sessions (http only).
     /// JSON array of identity-bound token bindings, e.g.:
-    /// `[{"token":"...","from_agent":"Claude-Stealth","client":"stealth"}]`
+    /// `[{"token":"...","from_agent":"Claude-Laptop","client":"acme"}]`
     /// Each token reaches `/mcp` only (never REST)
     /// with its `from_agent` bound server-side: MCP write tools reject a
     /// mismatching claimed identity. The main bearer stays unbound as operator

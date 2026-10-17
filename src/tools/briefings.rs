@@ -677,7 +677,7 @@ mod tests {
         vec![
             row(
                 "019e0d79-3a7f-7902-86cc-db4a573c1071",
-                "Claude-Stealth",
+                "Claude-Laptop",
                 Some(operator),
                 "pending",
                 "high",
@@ -713,7 +713,7 @@ mod tests {
             ),
             row(
                 "019c3333-0000-7000-8000-000000000003",
-                "Claude-Stealth",
+                "Claude-Laptop",
                 Some("Claude-Cloud"),
                 "accepted",
                 "normal",
@@ -725,7 +725,7 @@ mod tests {
             ),
             row(
                 "019d4444-0000-7000-8000-000000000004",
-                "Codex-HSR",
+                "Codex-Buildbox",
                 None,
                 "pending",
                 "low",
@@ -750,8 +750,8 @@ mod tests {
             // Fresh: below the pending threshold, must not reach Stuck.
             row(
                 "019f6666-0000-7000-8000-000000000006",
-                "Claude-Stealth",
-                Some("Codex-HSR"),
+                "Claude-Laptop",
+                Some("Codex-Buildbox"),
                 "pending",
                 "normal",
                 "Fresh request nobody is late on",
@@ -853,7 +853,7 @@ mod tests {
         for i in 0..(OPERATOR_SECTION_CAP + 5) {
             rows.push(row(
                 &format!("019e0d79-3a7f-7902-86cc-{:012x}", i),
-                "Claude-Stealth",
+                "Claude-Laptop",
                 Some("Operator"),
                 "pending",
                 "normal",
@@ -880,7 +880,7 @@ mod tests {
         rows.push(row(
             "01a07777-0000-7000-8000-000000000007",
             "Monitor",
-            Some("Codex-HSR"),
+            Some("Codex-Buildbox"),
             "pending",
             "high",
             "[auto] nightly backup is 28h old",
@@ -915,7 +915,7 @@ mod tests {
         assert!(
             md.contains(
                 "- today · high · pending · re-filed ×2 · [auto] nightly backup is 28h old \
-                 — for Codex-HSR, from Monitor · 01a07777\n"
+                 — for Codex-Buildbox, from Monitor · 01a07777\n"
             ),
             "{md}"
         );
@@ -935,7 +935,7 @@ mod tests {
 
 ## Waiting on you (Operator)
 
-- 26d · high · Blocked: need the IT budget figure — from Claude-Stealth · 019e0d79
+- 26d · high · Blocked: need the IT budget figure — from Claude-Laptop · 019e0d79
 - 3d · Approve the switch decommission — from Claude-Cloud · 019e5555
 
 ## Failing checks (machine findings rated high or critical)
@@ -945,14 +945,14 @@ No high-priority machine finding is open.
 ## Stuck (pending open > 3d, accepted open > 7d)
 
 **Claude-Cloud**
-- open 11d · accepted · Deploy the briefing change — from Claude-Stealth · 019c3333
+- open 11d · accepted · Deploy the briefing change — from Claude-Laptop · 019c3333
 
 **(unaddressed)**
-- open 4d · pending · low · Anyone up for reviewing the adapter tests — from Codex-HSR · 019d4444
+- open 4d · pending · low · Anyone up for reviewing the adapter tests — from Codex-Buildbox · 019d4444
 
 ## Open set at a glance
 
-- Open by recipient: Claude-Cloud 3, Operator 2, (unaddressed) 1, Codex-HSR 1
+- Open by recipient: Claude-Cloud 3, Operator 2, (unaddressed) 1, Codex-Buildbox 1
 - Self-addressed claims: 1 open, oldest 20d
 - Machine findings: 1 open (1 still firing), oldest 14d
 ";
@@ -1037,7 +1037,7 @@ No high-priority machine finding is open.
             .map(|i| {
                 row(
                     &format!("019c3333-0000-7000-8000-{i:012x}"),
-                    "Claude-Stealth",
+                    "Claude-Laptop",
                     Some("Claude-Cloud"),
                     "pending",
                     "normal",
@@ -1065,7 +1065,7 @@ No high-priority machine finding is open.
         let rows = vec![
             row(
                 "019c3333-0000-7000-8000-000000000001",
-                "Claude-Stealth",
+                "Claude-Laptop",
                 Some("Claude-Cloud"),
                 "pending",
                 "normal",
@@ -1077,7 +1077,7 @@ No high-priority machine finding is open.
             ),
             row(
                 "019c3333-0000-7000-8000-000000000002",
-                "Claude-Stealth",
+                "Claude-Laptop",
                 Some("claude-cloud"),
                 "pending",
                 "normal",
