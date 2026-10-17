@@ -32,7 +32,8 @@ services:
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
       # One deployment-local line. Empty here, same as the example file, so a
       # copy does not instruct agents in someone else's release process.
-      # This deployment sets the variable in the host environment.
+      # This deployment sets it in the .env beside this file, which compose
+      # reads for interpolation (an exported shell variable would override it).
       - OPS_BRAIN_INSTRUCTIONS_EXTRA=${OPS_BRAIN_INSTRUCTIONS_EXTRA:-}
       - OPS_BRAIN_MIGRATE=true
       # rmcp 1.4+ Host header allowlist (DNS-rebind mitigation, default loopback-only)
