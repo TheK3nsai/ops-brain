@@ -1,0 +1,17 @@
+{
+  "baseImage": "debian:trixie-slim",
+  "buildSteps": [
+    "apt-get update && apt-get install -y --no-install-recommends postgresql-17 postgresql-17-pgvector curl ca-certificates jq && rm -rf /var/lib/apt/lists/*",
+    "set -e; R=https://ghcr.io/v2/thek3nsai/ops-brain; T=$(curl -fsS 'https://ghcr.io/token?scope=repository:thek3nsai/ops-brain:pull' | jq -r .token); A=\"Authorization: Bearer $T\"; M=$(curl -fsSL -H \"$A\" -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' $R/manifests/latest | jq -r 'first(.manifests[] | select(.platform.os == \"linux\" and .platform.architecture == \"amd64\") | .digest)'); curl -fsSL -H \"$A\" -H 'Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' -o /tmp/m.json $R/manifests/$M; echo \"${M#sha256:}  /tmp/m.json\" | sha256sum -c - >/dev/null; for L in $(jq -r '.layers | reverse | .[].digest' /tmp/m.json); do curl -fsSL -H \"$A\" -o /tmp/l.tgz $R/blobs/$L; echo \"${L#sha256:}  /tmp/l.tgz\" | sha256sum -c - >/dev/null; if tar -xzf /tmp/l.tgz -C /tmp app/ops-brain 2>/dev/null; then echo \"ops-brain from $L\" >&2; break; fi; done; install -m 755 /tmp/app/ops-brain /usr/local/bin/ops-brain; rm -rf /tmp/m.json /tmp/l.tgz /tmp/app",
+    "install -m 755 /app/contrib/glama/ops-brain-glama.sh /usr/local/bin/ops-brain-glama"
+  ],
+  "cmdArguments": [
+    "/usr/local/bin/ops-brain-glama"
+  ],
+  "placeholderParameters": {
+    "DATABASE_URL": "postgres://postgres@127.0.0.1:5432/ops_brain",
+    "OPS_BRAIN_AGENT_TOKENS": "[]",
+    "OPS_BRAIN_ALLOWED_HOSTS": "localhost",
+    "OPS_BRAIN_AUTH_TOKEN": "glama-check-placeholder-not-a-real-token-0000"
+  }
+}
