@@ -813,10 +813,10 @@ mod tests {
         // A padded config slug must be stored trimmed, or check_bound_identity
         // (which compares against the trimmed claim with no further trim) would
         // lock the agent out of filing as itself.
-        let raw = format!("[{}]", agent_entry_named(A, "  Claude-Stealth  "));
+        let raw = format!("[{}]", agent_entry_named(A, "  Claude-Laptop  "));
         let tokens = parse_agent_tokens(Some(&raw), None, &[]).unwrap();
-        assert_eq!(tokens[0].from_agent, "Claude-Stealth");
-        assert!(check_bound_identity(Some(&tokens[0].from_agent), "Claude-Stealth").is_ok());
+        assert_eq!(tokens[0].from_agent, "Claude-Laptop");
+        assert!(check_bound_identity(Some(&tokens[0].from_agent), "Claude-Laptop").is_ok());
     }
 
     fn agent_entry_named(token: &str, from_agent: &str) -> String {
@@ -832,14 +832,14 @@ mod tests {
 
     #[test]
     fn bound_identity_matches_case_insensitively() {
-        assert!(check_bound_identity(Some("Claude-Stealth"), "claude-stealth").is_ok());
-        assert!(check_bound_identity(Some("Claude-Stealth"), "Claude-Stealth").is_ok());
+        assert!(check_bound_identity(Some("Claude-Laptop"), "claude-laptop").is_ok());
+        assert!(check_bound_identity(Some("Claude-Laptop"), "Claude-Laptop").is_ok());
     }
 
     #[test]
     fn bound_identity_rejects_mismatch() {
-        let err = check_bound_identity(Some("Claude-Stealth"), "Claude-Cloud").unwrap_err();
-        assert!(err.contains("Claude-Stealth"));
+        let err = check_bound_identity(Some("Claude-Laptop"), "Claude-Cloud").unwrap_err();
+        assert!(err.contains("Claude-Laptop"));
         assert!(err.contains("Claude-Cloud"));
     }
 
@@ -950,15 +950,15 @@ mod tests {
         assert!(slug_matches("Grok-Bot-*", "grok-bot-Coder"));
         assert!(!slug_matches("Grok-Bot-*", "Grok-Bot-"));
         assert!(!slug_matches("Grok-Bot-*", "Grok-Botnet"));
-        assert!(!slug_matches("Grok-Bot-*", "Claude-HSR"));
+        assert!(!slug_matches("Grok-Bot-*", "Claude-Buildbox"));
         assert!(!slug_matches("Grok-Bot", "Grok-Bot-Coder"));
         assert!(check_bound_identity(Some("Grok-Bot-*"), "Grok-Bot-Mail").is_ok());
-        assert!(check_bound_identity(Some("Grok-Bot-*"), "Claude-Stealth").is_err());
+        assert!(check_bound_identity(Some("Grok-Bot-*"), "Claude-Laptop").is_err());
         let vis = Visibility::Restricted("Grok-Bot-*");
         assert!(vis.can_see_handoff("Grok-Bot-Mail", Some("Grok-Bot-Coder")));
         assert!(!vis.can_see_handoff("Claude-A", Some("Claude-B")));
         assert!(vis.check_own_queue("Grok-Bot-Coder").is_ok());
-        assert!(vis.check_own_queue("Claude-HSR").is_err());
+        assert!(vis.check_own_queue("Claude-Buildbox").is_err());
     }
 
     #[test]

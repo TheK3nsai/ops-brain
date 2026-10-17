@@ -732,24 +732,24 @@ mod tests {
     #[test]
     fn create_handoff_accepts_legacy_machine_aliases() {
         let params: CreateHandoffParams = serde_json::from_value(serde_json::json!({
-            "from_machine": "Claude-Stealth",
-            "to_machine": "Codex-HSR",
+            "from_machine": "Claude-Laptop",
+            "to_machine": "Codex-Buildbox",
             "title": "handoff",
             "body": "body"
         }))
         .unwrap();
-        assert_eq!(params.from_agent, "Claude-Stealth");
-        assert_eq!(params.to_agent.as_deref(), Some("Codex-HSR"));
+        assert_eq!(params.from_agent, "Claude-Laptop");
+        assert_eq!(params.to_agent.as_deref(), Some("Codex-Buildbox"));
     }
 
     #[test]
     fn list_handoffs_accepts_legacy_machine_aliases() {
         let params: ListHandoffsParams = serde_json::from_value(serde_json::json!({
-            "from_machine": "Claude-Stealth",
-            "to_machine": "Codex-HSR"
+            "from_machine": "Claude-Laptop",
+            "to_machine": "Codex-Buildbox"
         }))
         .unwrap();
-        assert_eq!(params.from_agent.as_deref(), Some("Claude-Stealth"));
-        assert_eq!(params.to_agent.as_deref(), Some("Codex-HSR"));
+        assert_eq!(params.from_agent.as_deref(), Some("Claude-Laptop"));
+        assert_eq!(params.to_agent.as_deref(), Some("Codex-Buildbox"));
     }
 }

@@ -118,9 +118,9 @@ pub fn validate_required(value: &str, field_name: &str, allowed: &[&str]) -> Res
 /// whatever the caller says it is, it is. Trims surrounding whitespace.
 ///
 /// v2.0 replacement for the v1.x CC-fleet allowlist (CC_TEAM, normalize_machine_name,
-/// is_valid_cc_name). Current values like `Claude-Stealth`, `Codex-HSR`, legacy
-/// `CC-Stealth` rows, and older lowercase slugs all pass cleanly. Recommended
-/// fleet convention is `<Agent>-<Host>` (`Claude-Stealth`, `Codex-HSR`) but this
+/// is_valid_cc_name). Current values like `Claude-Laptop`, `Codex-Buildbox`, legacy
+/// `CC-Laptop` rows, and older lowercase slugs all pass cleanly. Recommended
+/// fleet convention is `<Agent>-<Host>` (`Claude-Laptop`, `Codex-Buildbox`) but this
 /// is documentation, not enforcement.
 pub fn validate_agent_name(input: &str) -> Result<&str, String> {
     let trimmed = input.trim();
@@ -158,7 +158,7 @@ mod tests {
 
     /// The cap is bytes, not chars. A producer that truncates to
     /// `MAX_TITLE_BYTES` *characters* ships an oversized title the moment the
-    /// title carries any multi-byte codepoint — which is what dark-filed HSR's
+    /// title carries any multi-byte codepoint — which is what dark-filed a client host's
     /// nightly sweep for 5 days (handoff `01a0206b`). The rejection must say
     /// so in bytes, or the caller cannot tell why 200 "characters" failed.
     #[test]
@@ -317,28 +317,40 @@ mod tests {
     #[test]
     fn agent_name_accepts_fleet_slugs() {
         assert_eq!(
-            validate_agent_name("Claude-Stealth").unwrap(),
-            "Claude-Stealth"
+            validate_agent_name("Claude-Laptop").unwrap(),
+            "Claude-Laptop"
         );
         assert_eq!(validate_agent_name("Claude-Cloud").unwrap(), "Claude-Cloud");
-        assert_eq!(validate_agent_name("Claude-HSR").unwrap(), "Claude-HSR");
-        assert_eq!(validate_agent_name("Claude-CPA").unwrap(), "Claude-CPA");
+        assert_eq!(
+            validate_agent_name("Claude-Buildbox").unwrap(),
+            "Claude-Buildbox"
+        );
+        assert_eq!(
+            validate_agent_name("Claude-Office").unwrap(),
+            "Claude-Office"
+        );
     }
 
     #[test]
     fn agent_name_accepts_legacy_cc_values() {
-        assert_eq!(validate_agent_name("CC-Stealth").unwrap(), "CC-Stealth");
+        assert_eq!(validate_agent_name("CC-Laptop").unwrap(), "CC-Laptop");
         assert_eq!(validate_agent_name("CC-Cloud").unwrap(), "CC-Cloud");
     }
 
     #[test]
     fn agent_name_accepts_freeform_slugs() {
-        assert_eq!(validate_agent_name("Codex-HSR").unwrap(), "Codex-HSR");
         assert_eq!(
-            validate_agent_name("Gemini-Stealth").unwrap(),
-            "Gemini-Stealth"
+            validate_agent_name("Codex-Buildbox").unwrap(),
+            "Codex-Buildbox"
         );
-        assert_eq!(validate_agent_name("codex-hsr").unwrap(), "codex-hsr");
+        assert_eq!(
+            validate_agent_name("Gemini-Laptop").unwrap(),
+            "Gemini-Laptop"
+        );
+        assert_eq!(
+            validate_agent_name("codex-buildbox").unwrap(),
+            "codex-buildbox"
+        );
         assert_eq!(
             validate_agent_name("opencode_local").unwrap(),
             "opencode_local"
@@ -353,10 +365,13 @@ mod tests {
     #[test]
     fn agent_name_trims_whitespace() {
         assert_eq!(
-            validate_agent_name("  Claude-Stealth\n").unwrap(),
-            "Claude-Stealth"
+            validate_agent_name("  Claude-Laptop\n").unwrap(),
+            "Claude-Laptop"
         );
-        assert_eq!(validate_agent_name("\tCodex-HSR ").unwrap(), "Codex-HSR");
+        assert_eq!(
+            validate_agent_name("\tCodex-Buildbox ").unwrap(),
+            "Codex-Buildbox"
+        );
     }
 
     #[test]

@@ -1081,7 +1081,7 @@ mod tests {
             client_id: None,
             cross_client_safe: false,
             last_verified_at: last_verified,
-            author: Some("Claude-Stealth".to_string()),
+            author: Some("Claude-Laptop".to_string()),
             created_at: created,
             updated_at: created,
         }
@@ -1172,7 +1172,7 @@ mod tests {
         let obj = json[0].as_object().expect("should be object");
         assert_eq!(
             obj.get("author"),
-            Some(&serde_json::Value::String("Claude-Stealth".to_string())),
+            Some(&serde_json::Value::String("Claude-Laptop".to_string())),
             "author should survive serialization"
         );
     }
@@ -1182,9 +1182,9 @@ mod tests {
         let params: AddKnowledgeParams = serde_json::from_value(serde_json::json!({
             "title": "legacy alias",
             "content": "body",
-            "author_cc": "Claude-Stealth"
+            "author_cc": "Claude-Laptop"
         }))
         .unwrap();
-        assert_eq!(params.author, "Claude-Stealth");
+        assert_eq!(params.author, "Claude-Laptop");
     }
 }

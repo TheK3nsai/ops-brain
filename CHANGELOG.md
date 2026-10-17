@@ -17,6 +17,8 @@ repo for marketplace listings.
   new ids. Databases seeded earlier keep their rows; re-seeding adds the new
   pair alongside.
 - Standalone Compose, README and self-hosting examples pin `v6.1.1`.
+- Test fixtures, source comments, `ROADMAP.md` and `TODO.md` use the same
+  generic agent slugs instead of one fleet's seat names.
 
 Release notes for #151–#157 (Grok Bot slug families, retry keys and
 `accepted_by`, parking MCP Events/OAuth, the `accept_handoff` family error)

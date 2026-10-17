@@ -91,7 +91,7 @@ resurrect these designs.
 ### ❌ Deploy-chain workflow
 
 **What it would have been:** `workflow_id` on handoffs linking them into chains
-(HSR → Stealth → Cloud → HSR), plus a `list_workflows` view to measure deploy
+(Buildbox → Laptop → Cloud → Buildbox), plus a `list_workflows` view to measure deploy
 latency.
 
 **Why dead:** measurement is management ceremony. The natural workflow is
