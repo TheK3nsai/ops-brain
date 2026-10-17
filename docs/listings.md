@@ -8,7 +8,8 @@ Where ops-brain is published, and how each listing stays current.
 | [Glama](https://glama.ai/mcp/servers/TheK3nsai/ops-brain) | claimed; license A | Glama re-syncs on push. Its check config is the admin form, snapshot in [`contrib/glama/`](../contrib/glama/). |
 | [mcp.so](https://mcp.so/) | requested | Submission pending in `chatmcp/mcpso#1`. |
 | GitHub MCP Registry | requested | Pending with GitHub. |
-| Grok Bot / Cursor / Grok Build plugin | built, not submitted | [`plugins/ops-brain-bus/`](../plugins/ops-brain-bus/), listed by the root `.cursor-plugin/marketplace.json`. |
+| Grok, Grok Bot and Cursor marketplaces (`ops-brain-bus` plugin) | submitted 2026-10-17 via the x.ai form | [`plugins/ops-brain-bus/`](../plugins/ops-brain-bus/), listed by the root `.cursor-plugin/marketplace.json`. Updates are re-reviewed. |
+| Grok Build catalog (`ops-brain-bus`) | requested | `xai-org/plugin-marketplace#1520`, pinned to a commit SHA; a plugin change needs a new pin. |
 
 ## Glama check
 

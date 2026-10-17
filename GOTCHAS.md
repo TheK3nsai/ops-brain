@@ -97,6 +97,7 @@ Contract: `docs/agent-tokens.md`.
 
 - **The MCP Registry name is case-sensitive: `io.github.TheK3nsai/ops-brain`.** Publishing with any other casing fails, and the image's `io.modelcontextprotocol.server.name` label must equal `server.json`'s `name` byte for byte. The ghcr image path stays lowercase.
 - **Glama checks over stdio and needs an absolute CMD.** It wraps the CMD with `mcp-proxy`. An HTTP transport times out, and a bare command name fails with `spawn ENOENT`. Config: `docs/listings.md`.
+- **A deployment behind Cloudflare can reject Python's default `urllib` User-Agent with 403 and `error code: 1010`.** The server never sees the request, so it reads like an auth failure. Send an explicit `User-Agent`, as `scripts/mcp-smoke.py` does; check with `/health`, which needs no bearer.
 - **Pushing a `.github/workflows/` change needs a token with `workflow` scope.** Without it, GitHub rejects the push, not the PR. Push workflow edits from a checkout whose `gh` login has the scope.
 - **A CHANGELOG version does not prove a release artifact exists.** Some versions have changelog sections and no tag. Check `git tag` or GitHub Releases before telling anyone to deploy a named release or image.
 - **`sed -i` on a CRLF file under Git Bash rewrites it to LF, and MSYS tools hide it.** Afterwards `grep -c $'\r$'` still reports CRLF, and with `core.autocrlf=true` `git diff --stat` is clean. Only a byte count taken outside MSYS is trustworthy (`[IO.File]::ReadAllBytes($p).Length`). Edit CRLF files from PowerShell.
