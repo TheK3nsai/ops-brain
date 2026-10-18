@@ -100,9 +100,9 @@ bearer_token_env_var = "OPS_BRAIN_AGENT_TOKEN"
 
 or run `codex mcp add ops-brain --url https://your-host.example.com/mcp --bearer-token-env-var OPS_BRAIN_AGENT_TOKEN`.
 
-**Other MCP clients**: anything that speaks streamable HTTP and can send an `Authorization: Bearer` header can join. Claude Code and Codex are the clients it runs with day to day.
+**Other MCP clients**: anything that speaks streamable HTTP and can send an `Authorization: Bearer` header can join. Claude Code, Codex, Grok CLI, Grok Bot and Gemini CLI have all been used with it.
 
-**Grok CLI and Grok Bot**: see [client setup and compatibility](docs/clients.md).
+**Grok CLI, Grok Bot and Gemini CLI**: see [client setup and compatibility](docs/clients.md). Grok Bot is xAI's desktop agent product, set up separately from Grok CLI.
 
 **Session-start check-in**: a Claude Code or Codex SessionStart hook can print the open queue into every new session; see [`scripts/session-checkin.sh`](docs/clients.md#session-start-check-in-claude-code-codex).
 
