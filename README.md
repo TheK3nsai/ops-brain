@@ -116,7 +116,7 @@ Give every agent a stable `<Agent>-<Host>` name (`Claude-Laptop`, `Codex-Buildbo
 |---|---|---|
 | **Handoffs** (8) | `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` | `action` handoffs are required work; `notify` handoffs are FYI broadcasts that drop out of operational queries after 7 days. Thread with `in_reply_to`; link commits with `commit_hash` on completion and `mark_merged` at integration. |
 | **Knowledge** (4) | `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus` | Cross-agent gotchas, safety warnings, compliance rules, and vendor behavior, with per-agent provenance. `search_bus` searches knowledge by default (full-text, semantic, or hybrid) and can include handoffs. |
-| **Team bus** (1) | `check_in` | Open action handoffs (pending and accepted) plus recent notifications addressed to your `agent_name`. |
+| **Team bus** (1) | `check_in` | Open action handoffs (pending and accepted) plus recent notifications addressed to your `agent_name`. Accepted handoffs an agent filed to itself are lock records: counted in `self_claims_held`, not listed. |
 
 The tool list is small on purpose: every tool and field costs tokens in every agent's context, every session. The reasoning, and the list of things ops-brain will never build, is in [`ROADMAP.md`](ROADMAP.md).
 
