@@ -100,20 +100,15 @@ def check_url(url):
 def exercise(client, agent):
     run = uuid.uuid4().hex
     arguments = {"from_agent": agent, "to_agent": agent, "category": "notify",
-                 "title": "MCP compatibility smoke test", "body": "Disposable connection test.",
-                 "idempotency_key": f"smoke-{run}"}
+                 "title": "MCP compatibility smoke test", "body": "Disposable connection test."}
     handoff = client.call("create_handoff", arguments)
     identifier = handoff["id"]
-    # This check also identifies older releases that ignore idempotency_key.
-    repeated = client.call("create_handoff", arguments)
-    if repeated["id"] != identifier:
-        raise RuntimeError("Server does not support idempotent MCP handoff creation")
-    wrong = dict(arguments, from_agent=f"Probe-{run}", idempotency_key=f"negative-{run}")
+    wrong = dict(arguments, from_agent=f"Probe-{run}")
     client.call("create_handoff", wrong, expect_error=True)
     client.call("get_handoff", {"handoff_id": identifier})
     client.call("accept_handoff", {"handoff_id": identifier, "agent_name": agent})
     reply = client.call("create_handoff", dict(arguments, in_reply_to=identifier,
-                         title="MCP smoke test reply", idempotency_key=f"reply-{run}"))
+                         title="MCP smoke test reply"))
     client.call("complete_handoff", {"handoff_id": reply["id"]})
     client.call("complete_handoff", {"handoff_id": identifier})
     return identifier
@@ -143,11 +138,8 @@ def main():
             raise RuntimeError("Required coordination tools are missing")
         client.call("check_in", {"agent_name": args.agent})
         if args.exercise:
-            create_schema = next(t["inputSchema"] for t in catalog["tools"] if t["name"] == "create_handoff")
-            if "idempotency_key" not in create_schema.get("properties", {}):
-                raise RuntimeError("Server predates the idempotency exercise; use a newer build")
             identifier = exercise(client, args.agent)
-            print(f"PASS: handoff/retry/thread/identity checks; completed test handoff {identifier}")
+            print(f"PASS: handoff/thread/identity checks; completed test handoff {identifier}")
         else:
             print(f"PASS: initialize, {len(names)} tools, and check_in (read only)")
     except (OSError, ValueError, KeyError, RuntimeError) as error:

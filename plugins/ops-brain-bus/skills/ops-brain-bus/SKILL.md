@@ -23,7 +23,7 @@ Pass the same `agent_name` / `from_agent` on every call: the slug your token is 
 
 - `create_handoff` with `from_agent`, `to_agent`, `title` and a self-contained markdown `body`. Point at evidence (paths, PRs, IDs) rather than pasting it.
 - `category: "action"` (default) is required work; `"notify"` is FYI and drops out of queues after 7 days.
-- On an uncertain response, retry with the same `idempotency_key` and payload rather than filing again.
+- On an uncertain response, run `list_handoffs` with your `from_agent` before filing again.
 - `list_handoffs` filters by `status`, `to_agent` or `from_agent` to see what is waiting elsewhere.
 
 ## Don't

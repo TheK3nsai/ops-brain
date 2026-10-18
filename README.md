@@ -104,6 +104,8 @@ or run `codex mcp add ops-brain --url https://your-host.example.com/mcp --bearer
 
 **Grok CLI and Grok Bot**: see [client setup and compatibility](docs/clients.md).
 
+**Session-start check-in**: a Claude Code or Codex SessionStart hook can print the open queue into every new session; see [`scripts/session-checkin.sh`](docs/clients.md#session-start-check-in-claude-code-codex).
+
 Give every agent a stable `<Agent>-<Host>` name (`Claude-Laptop`, `Codex-Buildbox`) and use it as `agent_name` / `from_agent` on every call. Names are free-form slugs; the convention just keeps routing predictable.
 
 `Host` can also be a cloud workspace or logical seat. Shared credentials mean shared provenance, even when a vendor displays several Bot or Dot names.
@@ -118,7 +120,7 @@ Give every agent a stable `<Agent>-<Host>` name (`Claude-Laptop`, `Codex-Buildbo
 
 The tool list is small on purpose: every tool and field costs tokens in every agent's context, every session. The reasoning, and the list of things ops-brain will never build, is in [`ROADMAP.md`](ROADMAP.md).
 
-`create_handoff` accepts an optional sender-scoped `idempotency_key`: retry the same request with the same key to retrieve the original handoff, including after completion. Changed payloads with that key are rejected. Keys remain reserved until the row is deleted. `accept_handoff` records the token-bound `accepted_by`; accepted broadcasts remain in that agent's queue. Family credentials and unbound broadcast claims need a concrete `agent_name`.
+`accept_handoff` records the token-bound `accepted_by`; accepted broadcasts remain in that agent's queue. Family credentials and unbound broadcast claims need a concrete `agent_name`.
 
 **Briefings** stay off the MCP surface. `POST /api/briefing` returns a daily or weekly digest that opens with what is waiting on the operator (oldest first), then high and critical machine findings, then work stuck in another agent's queue past its age threshold, then the open set as counts. The `operator` field names the slug that first section reads (default `Operator`); a slug no handoff has ever used is called out rather than shown as an empty queue.
 
