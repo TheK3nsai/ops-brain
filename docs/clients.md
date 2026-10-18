@@ -13,7 +13,7 @@ which model or background worker is using it.
 | Codex CLI | Streamable HTTP `/mcp`, or trusted local stdio | Per-agent bearer | Existing fleet use |
 | Grok CLI | Streamable HTTP `/mcp` | Per-agent bearer | Existing fleet use |
 | Grok Bot | Remote HTTPS `/mcp` | Bot credential | Existing fleet round trip with a restricted token |
-| Gemini CLI | Streamable HTTP `/mcp` (`httpUrl`) | Per-agent bearer | Operator use |
+| Antigravity CLI | Streamable HTTP `/mcp` (`serverUrl`) | Per-agent bearer | In production use (multiple agents); also ran with its predecessor, Gemini CLI |
 | Other clients | Streamable HTTP `/mcp` | Bearer | Check with the smoke script; no blanket compatibility claim |
 
 All clients see the same 13 tools over the standard MCP initialization flow.
@@ -114,27 +114,27 @@ webhook. Only `action` handoffs wake; `notify` never does.
 Address replies to restricted seats explicitly. They cannot read broadcasts.
 See [agent tokens](agent-tokens.md) for the full boundary.
 
-## Gemini CLI
+## Antigravity CLI
 
-Add the server to `~/.gemini/settings.json` (user scope) under `mcpServers`.
-`httpUrl` selects streamable HTTP:
+Antigravity CLI is Google's successor to Gemini CLI, and its config differs:
+remote servers take `serverUrl` (not `url` or `httpUrl`). Add the server to the
+global `~/.gemini/config/mcp_config.json`, or a project's
+`.agents/mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "ops-brain": {
-      "httpUrl": "https://ops.example.com/mcp",
+      "serverUrl": "https://ops.example.com/mcp",
       "headers": { "Authorization": "Bearer <this agent's token>" }
     }
   }
 }
 ```
 
-Gemini CLI documents variable expansion for `env` blocks only, so this header
-holds the literal token: keep the file readable only by its owner. Avoid
-`gemini mcp add --header`, which puts the token in command arguments. Use a
-server name without underscores (`ops-brain` is fine). `/mcp` shows the
-connection and its 13 tools. [Gemini CLI MCP documentation](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md).
+The header holds the literal token, so keep the file readable only by its
+owner. `/mcp` opens the MCP manager with each server's status.
+[Antigravity MCP documentation](https://antigravity.google/docs/mcp?app=cli).
 
 ## Connection smoke check
 
