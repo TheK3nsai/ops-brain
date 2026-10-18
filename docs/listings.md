@@ -22,3 +22,11 @@ Glama builds its own image from a form (base image, build steps, CMD, env schema
 3. Install [`ops-brain-glama.sh`](../contrib/glama/ops-brain-glama.sh) from the clone at `/app`. It starts a throwaway trust-auth Postgres on loopback, creates the `vector` extension, unsets every token variable, and execs ops-brain on stdio with embeddings off.
 
 The placeholders are dummies the script overrides. The check runs the latest *released* binary, not the synced commit, so between a merge and the next tag it tests the previous release.
+
+## On each release
+
+After the `v*` tag's release workflow is green (the MCP Registry publishes itself), refresh Glama by hand from its admin page:
+
+1. **Repository → Sync Server**, then run the build test.
+2. **Make Release.** The form already pulls ghcr `latest`, so leave the config unchanged.
+3. Check that the listing's **Tool Schema Changelog** shows the new version.
