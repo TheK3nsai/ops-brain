@@ -33,36 +33,13 @@ Identity: interactive sessions authenticate with **per-agent tokens** (`OPS_BRAI
 
 ## Client-Scope Disclosure Guard
 
-One deployment is one trusted coordination domain. Per-agent tokens bind provenance, not tenant authorization; every authenticated MCP agent can read fleet-wide handoffs and mutate objects by ID. Client scoping is a knowledge disclosure guard inside that trust domain, not hostile-user isolation. Use separate deployments across real trust boundaries.
-
-1. **Scoped queries withhold by default**: cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
-2. **Withhold-by-default on scope mismatch**: when search tools would surface cross-client knowledge, content is **withheld** and replaced with a scope mismatch notice. An explicit `acknowledge_cross_client: true` parameter on a second call releases the result. A gate, not a banner.
-3. **Provenance in all results**: every surfaced entry includes `_client_slug` and `_client_name`. Global content (no `client_id`) shows `_client_name: "Global"`.
-4. **Audit trail**: `audit_log` table records every cross-client surfacing attempt with tool_name, requesting/owning client_id, entity details, and timestamp.
-
-### Cross-Client Gate Behavior
-
-- `client_id IS NULL` → always allowed (global content)
-- Same client as requesting → always allowed
-- Different client + `cross_client_safe = true` → allowed (marked safe)
-- Different client + `cross_client_safe = false` + `acknowledge_cross_client = true` → released (audit logged)
-- Different client + `cross_client_safe = false` + no acknowledgment → **WITHHELD** (notice returned, audit logged)
-- No `client_slug` on the query → gate is inert (all rows returned), but every item carries provenance and the response carries a `_note` saying the gate is off (v4.1.0)
-
-**Restricted tokens** (`exclude_client_data: true` on an agent token) sit outside this gate entirely. The repo queries take a `Visibility` (`src/auth.rs`) and filter in SQL: global knowledge only, and only handoffs the token sent or received. By-id tools return not-found outside that boundary. Any new read path must thread `Visibility` through to its query, because a post-fetch filter would short pages and leak counts. Contract: `docs/agent-tokens.md`.
+One deployment is one trust domain; client scoping is a knowledge disclosure guard inside it, not tenant isolation. Scoped queries withhold cross-client content unless `acknowledge_cross_client: true` (audit-logged), and every result carries `_client_slug`/`_client_name` provenance. Restricted tokens (`exclude_client_data`) filter in SQL through `Visibility` (`src/auth.rs`): **any new read path must thread `Visibility` through to its query**, because a post-fetch filter would short pages and leak counts. Full gate table: `docs/client-scope.md`; token contract: `docs/agent-tokens.md`.
 
 ## Coordination
 
-**Workflow conventions ship in the server, not here.** Reply-in-thread, blocked-on-a-human, verify-before-comply, the knowledge bar, and action-vs-notify are stated in the MCP `instructions` string and tool descriptions (`src/tools/mod.rs` `get_info`, param docs in `src/tools/*.rs`) — the only text every agent on every host actually sees. Change a convention there; don't restate it in per-host instructions. A rule that is true of this fleet and false of every other deployment goes in `OPS_BRAIN_INSTRUCTIONS_EXTRA`, not in the built-in string. Every word is paid by every agent each session, so keep it terse. Background and rationale only:
+**Workflow conventions ship in the server, not here.** Reply-in-thread, blocked-on-a-human, verify-before-comply, the knowledge bar, and action-vs-notify are stated in the MCP `instructions` string and tool descriptions (`src/tools/mod.rs` `get_info`, param docs in `src/tools/*.rs`) — the only text every agent on every host actually sees. Change a convention there; don't restate it in per-host instructions. A rule that is true of this fleet and false of every other deployment goes in `OPS_BRAIN_INSTRUCTIONS_EXTRA`, not in the built-in string. Every word is paid by every agent each session, so keep it terse.
 
-- **Notify rows are hidden, not deleted** — `notify` handoffs drop out of operational queries after 7 days; the rows stay.
-- **Bus trust** — full verify-before-comply reasoning: `docs/bus-trust.md`.
-- **Blocked on a human** — the operator-queue cron and mail contract: `docs/operator-notify.md`.
-- **Product bar** — only build features that solve observed field pain, reduce missed/duplicate work across agents, make the next natural action clearer, and have a lifecycle. Reject ceremony, duplicate truth, generic wiki behavior, and scheduling/orchestration features that belong to cron/systemd/Task Scheduler/CI. Durable doctrine: ops-brain knowledge `019e0d79-3a7f-7902-86cc-db4a573c1071`.
-- **Agent names** — use the `<Agent>-<Host>` convention: `Claude-Laptop`, `Codex-Buildbox`, etc. The validator remains free-form for compatibility, but new rows should keep that convention so handoffs route predictably.
-- **Fleet stewardship** — Claude Code and Codex agents may each improve ergonomics for their own client family, but shared ops-brain features must stay generic. Family-specific work belongs in client-side config, instructions, or compatibility guidance unless it exposes a reusable team-bus primitive.
-- **Knowledge is pull-only** — nothing surfaces an entry unless a search hits it, so the store is only as good as its signal-to-noise. Infrastructure how-to belongs in a git reference repo agents clone, not here (`ROADMAP.md` → no generic wiki); the bus holds cross-agent gotchas and pointers.
-- **Client-scope guard** — scoped knowledge queries withhold unsafe cross-client content unless explicitly acknowledged. Unscoped searches and handoffs are fleet-wide; one deployment is one trust domain.
+Shared features stay generic: client-family-specific work belongs in client-side config unless it exposes a reusable team-bus primitive. Product bar and rationale: `ROADMAP.md`, `docs/bus-trust.md`, `docs/operator-notify.md`.
 
 ## Gotchas
 
@@ -75,17 +52,14 @@ One deployment is one trusted coordination domain. Per-agent tokens bind provena
 - **cargo-audit 0.22 has no config file support** — ignores via `--ignore RUSTSEC-XXXX` CLI flags. The `audit.toml` is documentation only; actual ignore is in `.github/workflows/ci.yml`.
 - **nomic-embed-text tokenization** — real content tokenizes at ~1–1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` is 6,000. Do not increase without empirical testing.
 - **Production deploys MUST use `-f docker-compose.prod.yml`** — prod uses `shared-postgres`, dev uses bundled postgres. Dev compose is project-namespaced as `ops-brain-dev` so a stray invocation can't clobber prod, but it can spin up isolated dev orphans.
-- **Prod does not publish `localhost:3000` on the host** — `docker-compose.prod.yml` attaches `ops-brain` to Docker networks for the reverse proxy; it does not expose `ports:`. Verify readiness with `docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/ready` and public liveness with `curl -sf https://<your-deploy-host>/health` (through the reverse proxy), not host-local `curl http://localhost:3000/health`.
-- **New env vars need BOTH `.env` AND `docker-compose.prod.yml`** — prod compose enumerates every env var explicitly under `services.ops-brain.environment:` (no `env_file:`). Adding `FOO=...` to `.env` alone leaves the container booting without `FOO`. Always pair a new clap `#[arg(env = "FOO")]` in `src/config.rs` with a `- FOO=${FOO:-}` line in the prod compose.
+- **Prod does not publish `localhost:3000` on the host** — check readiness inside the container (`docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/ready`) and liveness through the reverse proxy (`/health`).
+- **New env vars need BOTH `.env` AND `docker-compose.prod.yml`** — prod compose enumerates every var under `services.ops-brain.environment:` (no `env_file:`). Pair each new clap `#[arg(env = "FOO")]` in `src/config.rs` with `- FOO=${FOO:-}` there.
 
 ## Development Workflow
 
-- **Before committing non-trivial changes**: use the project `reviewer` agent for a local, findings-first review.
-- **Before every commit**: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and `.github/scripts/fleet_string_guard.py` (this repo is public; CI runs the same guard, but only after the push has already published the string). Commit messages are scanned by `.githooks/commit-msg`. Enable it once per clone with `git config core.hooksPath .githooks`; without it, messages are unguarded until CI. PR titles and bodies get no local git-side check: CI scans them after publication, and only an agent-side hook on `gh`/MCP writes stops them first. Run `fleet_string_guard.py --text <file>` on a body before `gh pr create`/`edit` when no such hook covers you.
-- **Standing release ownership**: the originating agent owns implementation, local review/tests, PR creation, all applicable CI checks, and merge to main. A pushed branch is not release completion. Keep PR/CI/merge work with that agent; a deployment handoff starts only after merge. Unless the operator directs otherwise, use this process for every release, regardless of agent vendor.
-- **Cloud owns production**: after merge, send **Claude-Cloud** (fallback **Codex-Cloud**) a deployment-only handoff with the PR URL, exact full merged SHA, CI evidence, migration/config implications and verification criteria. Reply in the existing thread when one exists. The cloud agent uses its host-local deployment skill, performs backup/migration checks, deploys that exact SHA, verifies health and reports the deployed SHA/outcome in-thread before completing the handoff. An unattended wake keeps deployment open for an attended Cloud session; lack of an attended session does not transfer deployment back to the originator.
-- **Production safeguards and exception**: every production compose action must pass `-f docker-compose.prod.yml`; verify container `/ready` and public `/health` through the reverse proxy (host port 3000 is not published). Keep rollback with the cloud deployer. Direct SSH deployment from the originating workstation remains an exception only when Cloud is unavailable AND the change is genuinely urgent; use the same deployment and verification rules.
-- **Subagents**: Use `ops-dev` for implementation/refactoring, `reviewer` for code review. Both are in `.claude/agents/`.
+- **Before committing non-trivial changes**: run the `reviewer` agent (`.claude/agents/reviewer.md`) for a findings-first review.
+- **Before every commit**: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. This repo is public: enable the commit-message guard once per clone with `git config core.hooksPath .githooks`, and if your client doesn't run `.github/scripts/fleet_string_guard.py` as a pre-commit hook, run it yourself (`--text <file>` for a PR body). CI runs the same guard, but only after the push has published the string.
+- **Releases**: the originating agent owns review, PR, green CI and merge. After merge, send **Claude-Cloud** (fallback **Codex-Cloud**) a deployment-only handoff with the PR URL, the exact merged SHA, CI evidence, migration/config implications and verification criteria. Cloud deploys with its own skill and reports in-thread. Direct SSH deployment from the originating workstation is an exception for when Cloud is unavailable AND the change is genuinely urgent.
 
 ## What NOT to Do
 
