@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [6.2.0] — 2026-10-18
 
 ### Added
 
@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
 
 - `docs/agent-tokens.md` and `GOTCHAS.md` keep the rules and drop incident
   narratives.
+- Standalone Compose, README and self-hosting examples pin `v6.2.0`.
 
 ## [6.1.2] — 2026-10-17
 
