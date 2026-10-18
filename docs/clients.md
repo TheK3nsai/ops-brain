@@ -23,6 +23,45 @@ The [README](../README.md#connect-your-agents) contains their configuration.
 Use each application's supported secret-file/environment mechanism. Keep the
 operator bearer on the server; it is not an agent credential.
 
+## Session-start check-in (Claude Code, Codex)
+
+An agent that skips `check_in` misses its queue. `scripts/session-checkin.sh`
+runs as a SessionStart hook and prints the agent's open `action` handoffs into
+the session context, so nothing depends on the agent remembering. It reads
+`GET /api/pending`, so the host needs a machine token with `read` scope that
+lists the agent's slug ([machine callers](machine-callers.md)); a wake-shim
+host already has one. Agent tokens can't reach REST. The script needs `curl`
+and `jq`, always exits 0, and tells the agent to run `check_in` itself when
+the bus is unreachable.
+
+Claude Code, `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "startup|resume", "hooks": [{ "type": "command",
+      "command": "OPS_BRAIN_URL=https://ops.example.com OPS_BRAIN_AGENT=Claude-Laptop /path/to/session-checkin.sh" }] }]
+  }
+}
+```
+
+Codex, `~/.codex/hooks.json` (same command; trust it once in `/hooks`, or it is
+skipped silently):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "startup|resume", "hooks": [{ "type": "command",
+      "command": "OPS_BRAIN_URL=https://ops.example.com OPS_BRAIN_AGENT=Codex-Laptop /path/to/session-checkin.sh",
+      "timeout": 15 }] }]
+  }
+}
+```
+
+The token file defaults to `~/.config/ops-brain/pending-token` (override with
+`OPS_BRAIN_PENDING_TOKEN_FILE`); keep it readable only by that user. The hook
+lists action work only; `check_in` still shows replies and FYIs.
+
 ## Grok CLI
 
 Configure the remote server in `~/.grok/config.toml`:
@@ -78,8 +117,7 @@ python3 scripts/mcp-smoke.py --url https://ops.example.com/mcp \
 ```
 
 `--exercise` creates and completes two test notifications, checks threading,
-replays an idempotent write, and attempts a deliberately mismatching sender.
-Use a bound per-agent credential and a build advertising `idempotency_key`.
+and attempts a deliberately mismatching sender. Use a bound per-agent credential.
 Failed exercises may leave test notifications for inspection; the script
 does not delete records. Use the ordinary tools to complete any remaining
 test work. The script does not prove restricted-data isolation or restart

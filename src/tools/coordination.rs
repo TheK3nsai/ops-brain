@@ -39,10 +39,6 @@ pub struct CreateHandoffParams {
     /// `category` is preserved as written — a reply can legitimately be
     /// `action` (it requires a response) or `notify` (pure FYI).
     pub in_reply_to: Option<String>,
-    /// Retry key (1–200 bytes), scoped to this sender. Reusing it with the
-    /// same request returns the original row even after completion; changed
-    /// payloads fail. Keys remain reserved until the handoff is deleted.
-    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -223,48 +219,13 @@ pub async fn handle_create_handoff(
         None => None,
     };
 
-    if let Some(key) = p.idempotency_key.as_deref() {
-        if key.trim().is_empty() || key.len() > 200 {
-            return error_result("idempotency_key must contain 1–200 bytes and cannot be blank");
-        }
-    }
-    // A complete replay can survive parent deletion. A missing retry always
-    // goes through the ordinary parent visibility gate before any insertion.
-    if let Some(key) = p.idempotency_key.as_deref() {
-        let request = crate::repo::handoff_repo::handoff_create_request(
-            to_agent.as_deref(),
-            priority,
-            category,
-            &p.title,
-            &p.body,
-            p.context.as_ref(),
-            in_reply_to,
-        );
-        match crate::repo::handoff_repo::find_handoff_replay(
-            &brain.pool,
-            &from_agent,
-            key,
-            &request,
-        )
-        .await
-        {
-            Ok(Some(handoff)) => return json_result(&handoff),
-            Ok(None) => {}
-            Err(crate::repo::handoff_repo::CreateHandoffError::IdempotencyConflict) => {
-                return error_result("idempotency_key was already used with a different request")
-            }
-            Err(crate::repo::handoff_repo::CreateHandoffError::Database(e)) => {
-                return error_result(&format!("Database error: {e}"))
-            }
-        }
-    }
     if let (Some(parent), Some(raw)) = (in_reply_to, p.in_reply_to.as_deref()) {
         if let Err(r) = ensure_handoff_visible(brain, parent, raw, vis).await {
             return r;
         }
     }
 
-    match crate::repo::handoff_repo::create_handoff_idempotent(
+    match crate::repo::handoff_repo::create_handoff(
         &brain.pool,
         &from_agent,
         to_agent.as_deref(),
@@ -274,15 +235,10 @@ pub async fn handle_create_handoff(
         &p.body,
         p.context.as_ref(),
         in_reply_to,
-        p.idempotency_key.as_deref(),
     )
     .await
     {
-        Ok(outcome) => {
-            let handoff = outcome.handoff;
-            if !outcome.created {
-                return json_result(&handoff);
-            }
+        Ok(handoff) => {
             let text = crate::embeddings::prepare_handoff_text(&handoff);
             embed_and_store(
                 &brain.pool,
@@ -316,12 +272,7 @@ pub async fn handle_create_handoff(
                 None => json_result(&handoff),
             }
         }
-        Err(crate::repo::handoff_repo::CreateHandoffError::IdempotencyConflict) => {
-            error_result("idempotency_key was already used with a different request")
-        }
-        Err(crate::repo::handoff_repo::CreateHandoffError::Database(e)) => {
-            error_result(&format!("Database error: {e}"))
-        }
+        Err(e) => error_result(&format!("Database error: {e}")),
     }
 }
 

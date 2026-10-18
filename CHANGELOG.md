@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Session-start check-in hook.** `scripts/session-checkin.sh` prints an
+  agent's open action queue from `GET /api/pending` as a Claude Code or Codex
+  SessionStart hook (`docs/clients.md`). No server change.
+
+### Removed
+
+- **`idempotency_key` on `create_handoff`.** Unused outside smoke tests, so its
+  field stops costing schema tokens in every session. Migration
+  `20261018000001` drops the column, request copy, constraint and index;
+  existing rows are unaffected otherwise. Callers that still send the field
+  have it ignored. REST `dedupe_key` is unchanged. `scripts/mcp-smoke.py
+  --exercise` no longer replays a write.
+
+### Changed
+
+- `docs/agent-tokens.md` and `GOTCHAS.md` keep the rules and drop incident
+  narratives.
+
 ## [6.1.2] — 2026-10-17
 
 ### Added
