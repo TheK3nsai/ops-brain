@@ -11,11 +11,11 @@ One deployment is one trusted coordination domain. Per-agent tokens bind provena
 
 - `client_id IS NULL` → always allowed (global content)
 - Same client as requesting → always allowed
-- Different client + `cross_client_safe = true` → allowed (marked safe)
+- Different client + `cross_client_safe = true` → allowed (audit logged as `released_safe`)
 - Different client + `cross_client_safe = false` + `acknowledge_cross_client = true` → released (audit logged)
 - Different client + `cross_client_safe = false` + no acknowledgment → **WITHHELD** (notice returned, audit logged)
 - No `client_slug` on the query → gate is inert (all rows returned), but every item carries provenance and the response carries a `_note` saying the gate is off (v4.1.0)
 
 ## Restricted tokens
 
-Tokens with `exclude_client_data: true` sit outside this gate entirely. The repo queries take a `Visibility` (`src/auth.rs`) and filter in SQL: global knowledge only, and only handoffs the token sent or received. By-id tools return not-found outside that boundary. Contract: [agent-tokens.md](agent-tokens.md).
+Tokens with `exclude_client_data: true` sit outside this gate entirely. The repo queries take a `Visibility` (`src/auth.rs`) and filter in SQL: global knowledge only, and only handoffs the token sent or received. By-id tools return not-found outside that boundary, and such a token can edit only the global rows it wrote. Contract: [agent-tokens.md](agent-tokens.md).

@@ -24,6 +24,7 @@ Identity: interactive sessions authenticate with **per-agent tokens** (`OPS_BRAI
 - Shared helpers in `tools/helpers.rs`; shared async functions in `tools/shared.rs`
 - OpsBrain fields are `pub(crate)` so category modules can access pool, embedding_client
 - Tool errors return `Ok(CallToolResult::error(...))`, never `Err(McpError)`
+- Tool descriptions state what the tool does, when to use it and when not, each parameter, and its caveats; no worked examples or behavioral steering. Under-describing costs more than the tokens saved. Removing a tool means removing its mentions from `get_info` too — the compiler won't catch those.
 - Slugs are the public API (not UUIDs) — tools resolve slugs to IDs internally. On miss, pg_trgm suggests similar slugs via `not_found_with_suggestions()` in helpers.rs
 - Tracing writes to stderr (critical: stdout is the MCP stdio transport)
 - IDs use UUIDv7 (`Uuid::now_v7()`) for time-ordered sorting
@@ -44,7 +45,7 @@ Shared features stay generic: client-family-specific work belongs in client-side
 ## Gotchas
 
 - **sqlx migration checksums are SHA-384** (48 bytes), not SHA-256 — if manually inserting into `_sqlx_migrations`, use `sha384sum` and `decode(..., 'hex')`
-- **Never modify existing migrations** — checksum mismatch will break deployments. If schema was applied outside migrations, insert the migration record manually with the correct SHA-384 checksum.
+- **Never modify existing migrations** — checksum mismatch will break deployments. If schema was applied outside migrations, insert the migration record manually with the correct SHA-384 checksum. To drop a table, write a new `DROP TABLE IF EXISTS` migration, and only when its data has zero retention value; when in doubt, leave the empty table.
 - **"connection closed: initialize request"** on manual `./target/release/ops-brain` run is normal — no MCP client connected
 - **seed.sql is foundational only** — clients only. Never add fictional/placeholder data.
 - **mold linker is local only** — `.cargo/config.toml` uses mold; Docker build uses its own linker. Cargo falls back if mold isn't installed.
@@ -58,8 +59,8 @@ Shared features stay generic: client-family-specific work belongs in client-side
 ## Development Workflow
 
 - **Before committing non-trivial changes**: run the `reviewer` agent (`.claude/agents/reviewer.md`) for a findings-first review.
-- **Before every commit**: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. This repo is public: enable the commit-message guard once per clone with `git config core.hooksPath .githooks`, and if your client doesn't run `.github/scripts/fleet_string_guard.py` as a pre-commit hook, run it yourself (`--text <file>` for a PR body). CI runs the same guard, but only after the push has published the string.
-- **Releases**: the originating agent owns review, PR, green CI and merge. After merge, send **Claude-Cloud** (fallback **Codex-Cloud**) a deployment-only handoff with the PR URL, the exact merged SHA, CI evidence, migration/config implications and verification criteria. Cloud deploys with its own skill and reports in-thread. Direct SSH deployment from the originating workstation is an exception for when Cloud is unavailable AND the change is genuinely urgent.
+- **Before every commit**: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. This repo is public: enable the commit-message guard once per clone with `git config core.hooksPath .githooks`, and if your client doesn't run `.github/scripts/fleet_string_guard.py` as a pre-commit hook, run it yourself (`--text <file>` for a PR title and body). CI runs the same guard, but only after the push has published the string.
+- **Releases**: the originating agent owns review, PR, green CI and merge. After merge, send **Claude-Cloud** (fallback **Codex-Cloud**) a deployment-only handoff with the PR URL, the exact merged SHA, CI evidence, migration/config implications and verification criteria. Cloud deploys with its own skill and reports in-thread. Rollback stays with the cloud deployer. Direct SSH deployment from the originating workstation is an exception for when Cloud is unavailable AND the change is genuinely urgent; an unattended Cloud wake that defers the deploy does not count as unavailable.
 
 ## What NOT to Do
 
