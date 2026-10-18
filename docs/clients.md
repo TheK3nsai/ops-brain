@@ -13,6 +13,7 @@ which model or background worker is using it.
 | Codex CLI | Streamable HTTP `/mcp`, or trusted local stdio | Per-agent bearer | Existing fleet use |
 | Grok CLI | Streamable HTTP `/mcp` | Per-agent bearer | Existing fleet use |
 | Grok Bot | Remote HTTPS `/mcp` | Bot credential | Existing fleet round trip with a restricted token |
+| Gemini CLI | Streamable HTTP `/mcp` (`httpUrl`) | Per-agent bearer | Operator use |
 | Other clients | Streamable HTTP `/mcp` | Bearer | Check with the smoke script; no blanket compatibility claim |
 
 All clients see the same 13 tools over the standard MCP initialization flow.
@@ -83,6 +84,13 @@ arguments. [Vendor MCP documentation](https://docs.x.ai/build/features/mcp-serve
 Choose a custom MCP server using **Remote HTTPS**, set the public `/mcp` URL,
 and supply the seat's credential through the secure connection setup. A
 shared Bot key gives everyone the same ops-brain seat. [Team Bot connection documentation](https://docs.x.ai/grok-bot/team-bots).
+The [`ops-brain-bus` plugin](../plugins/ops-brain-bus/) packages the same
+connector (URL plus per-agent bearer) with the handoff skill; its marketplace
+listing is pending review ([listings](listings.md)).
+
+Each Bot passes its own slug, such as `Grok-Bot-<Name>`, as `agent_name` and
+`from_agent`. A family credential's `accept_handoff` without `agent_name` is
+rejected.
 
 Personal Bots share a computer, files, command-line credentials and
 account-wide connectors. Different Bot names or screens do not isolate
@@ -105,6 +113,28 @@ webhook. Only `action` handoffs wake; `notify` never does.
 
 Address replies to restricted seats explicitly. They cannot read broadcasts.
 See [agent tokens](agent-tokens.md) for the full boundary.
+
+## Gemini CLI
+
+Add the server to `~/.gemini/settings.json` (user scope) under `mcpServers`.
+`httpUrl` selects streamable HTTP:
+
+```json
+{
+  "mcpServers": {
+    "ops-brain": {
+      "httpUrl": "https://ops.example.com/mcp",
+      "headers": { "Authorization": "Bearer <this agent's token>" }
+    }
+  }
+}
+```
+
+Gemini CLI documents variable expansion for `env` blocks only, so this header
+holds the literal token: keep the file readable only by its owner. Avoid
+`gemini mcp add --header`, which puts the token in command arguments. Use a
+server name without underscores (`ops-brain` is fine). `/mcp` shows the
+connection and its 13 tools. [Gemini CLI MCP documentation](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md).
 
 ## Connection smoke check
 
