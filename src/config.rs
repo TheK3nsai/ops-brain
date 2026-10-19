@@ -83,10 +83,12 @@ pub struct Config {
     pub embedding_url: Option<String>,
 
     /// Embedding model name (default: nomic-embed-text for ollama)
+    /// Blank falls back to the default.
     #[arg(
         long,
         env = "OPS_BRAIN_EMBEDDING_MODEL",
-        default_value = "nomic-embed-text"
+        default_value = DEFAULT_EMBEDDING_MODEL,
+        value_parser = parse_model
     )]
     pub embedding_model: String,
 
@@ -112,6 +114,18 @@ impl Config {
         let url = self.embedding_url.as_deref().map(str::trim);
         url.filter(|u| !u.is_empty() && self.embeddings_enabled)
     }
+}
+
+const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
+
+fn parse_model(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    Ok(if value.is_empty() {
+        DEFAULT_EMBEDDING_MODEL
+    } else {
+        value
+    }
+    .to_string())
 }
 
 /// Blank is unset, which leaves the decision to the URL.
@@ -157,6 +171,17 @@ mod tests {
         assert_eq!(endpoint(URL, "").as_deref(), Some(URL));
         assert_eq!(endpoint(URL, "true").as_deref(), Some(URL));
         assert_eq!(endpoint(URL, "false"), None);
+    }
+
+    #[test]
+    fn blank_model_falls_back_to_default() {
+        let model = |m| {
+            let args = ["ops-brain", "--database-url", "x", "--embedding-model", m];
+            Config::try_parse_from(args).unwrap().embedding_model
+        };
+        assert_eq!(model(""), DEFAULT_EMBEDDING_MODEL);
+        assert_eq!(model("  "), DEFAULT_EMBEDDING_MODEL);
+        assert_eq!(model("mxbai-embed-large"), "mxbai-embed-large");
     }
 
     #[test]

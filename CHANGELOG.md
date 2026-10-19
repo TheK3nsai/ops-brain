@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
   unset instead of aborting startup. Hosts that pass empty values (Docker's
   MCP catalog drops defaults) no longer get a client pointed at nothing.
   `OPS_BRAIN_EMBEDDINGS_ENABLED=false` still turns them off.
+- A blank `OPS_BRAIN_EMBEDDING_MODEL` falls back to `nomic-embed-text`.
 
 ### Changed
 
