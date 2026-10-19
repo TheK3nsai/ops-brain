@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **`delete_handoff` is audited.** Still a hard delete, but the same statement
+  writes an `audit_log` row (`action = 'deleted'`, `entity_type = 'handoff'`)
+  whose new `detail` JSONB holds the deleting agent (`null` for the main
+  bearer) and the handoff's sender, recipient, title and status. Migration
+  `20261019000001` adds the nullable `detail` column; existing rows are
+  untouched.
+
 ## [6.2.0] — 2026-10-18
 
 ### Added

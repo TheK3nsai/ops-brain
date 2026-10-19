@@ -659,6 +659,7 @@ pub async fn handle_list_handoffs(
 pub async fn handle_delete_handoff(
     brain: &super::OpsBrain,
     p: DeleteHandoffParams,
+    bound: Option<&str>,
     vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
     let id = match uuid::Uuid::parse_str(&p.handoff_id) {
@@ -669,7 +670,7 @@ pub async fn handle_delete_handoff(
         return r;
     }
 
-    match crate::repo::handoff_repo::delete_handoff(&brain.pool, id).await {
+    match crate::repo::handoff_repo::delete_handoff(&brain.pool, id, bound).await {
         Ok(true) => json_result(&serde_json::json!({"deleted": true, "id": p.handoff_id})),
         Ok(false) => not_found("Handoff", &p.handoff_id),
         Err(e) => error_result(&format!("Database error: {e}")),
