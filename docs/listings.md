@@ -5,7 +5,7 @@ Where ops-brain is published, and how each listing stays current.
 | Where | State | How it updates |
 |---|---|---|
 | [Official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.TheK3nsai/ops-brain` | live | The release workflow publishes `server.json` through GitHub OIDC after the image push, on `v*` tags only. |
-| [Glama](https://glama.ai/mcp/servers/TheK3nsai/ops-brain) | claimed; license A | Glama re-syncs on push. Its check config is the admin form, snapshot in [`contrib/glama/`](../contrib/glama/). |
+| [Glama](https://glama.ai/mcp/servers/TheK3nsai/ops-brain) | claimed; license A; auto-release on | Glama re-syncs on push; after a `v*` tag, Sync Server (below). Its check config is the admin form, snapshot in [`contrib/glama/`](../contrib/glama/). |
 | [mcp.so](https://mcp.so/) | requested | Submission pending in `chatmcp/mcpso#1`. |
 | GitHub MCP Registry | requested | Pending with GitHub. |
 | Grok, Grok Bot and Cursor marketplaces (`ops-brain-bus` plugin) | submitted 2026-10-17 via the x.ai form | [`plugins/ops-brain-bus/`](../plugins/ops-brain-bus/), listed by the root `.cursor-plugin/marketplace.json`. Updates are re-reviewed. |
@@ -25,8 +25,6 @@ The placeholders are dummies the script overrides. The check runs the latest *re
 
 ## On each release
 
-After the `v*` tag's release workflow is green (the MCP Registry publishes itself), refresh Glama by hand from its admin page:
+After the `v*` tag's release workflow is green (the MCP Registry publishes itself), click **Repository → Sync Server** on Glama's admin page. Auto-release is on, so Glama builds and publishes by itself and emails the owner "Build succeeded" and "Release X published".
 
-1. **Repository → Sync Server**, then run the build test.
-2. **Make Release.** The form already pulls ghcr `latest`, so leave the config unchanged.
-3. Check that the listing's **Tool Schema Changelog** shows the new version.
+Verify with those emails or the listing's release number. The Tool Schema Changelog can lag and lists schema changes only.
