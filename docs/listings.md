@@ -6,6 +6,7 @@ Where ops-brain is published, and how each listing stays current.
 |---|---|---|
 | [Official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.TheK3nsai/ops-brain` | live | The release workflow publishes `server.json` through GitHub OIDC after the image push, on `v*` tags only. |
 | [Glama](https://glama.ai/mcp/servers/TheK3nsai/ops-brain) | claimed; license A; auto-release on | Glama re-syncs on push; after a `v*` tag, Sync Server (below). Its check config is the admin form, snapshot in [`contrib/glama/`](../contrib/glama/). |
+| [HOL Guard](https://github.com/hashgraph-online/hol-guard/blob/main/contributions/mcp-servers/mcp.ops-brain.json) catalog as `mcp.ops-brain` | listed (stdio entry, opt-in); `hashgraph-online/hol-guard#5255` | No version pin; bump the entry only if tool names change. |
 | [mcp.so](https://mcp.so/) | requested | Submission pending in `chatmcp/mcpso#1`. |
 | GitHub MCP Registry | requested | Pending with GitHub. |
 | Grok, Grok Bot and Cursor marketplaces (`ops-brain-bus` plugin) | submitted 2026-10-17 via the x.ai form | [`plugins/ops-brain-bus/`](../plugins/ops-brain-bus/), listed by the root `.cursor-plugin/marketplace.json`. Updates are re-reviewed. |
