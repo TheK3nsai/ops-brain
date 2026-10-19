@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Token scan for staged changes. This repo is public, and setting
+# core.hooksPath to .githooks replaces any global gitleaks pre-commit hook the
+# committer may have, so the scan has to live here. Runs for any committer, but
+# only on `git commit`: not with --no-verify, and not for cherry-pick, rebase
+# picks or `git am`. CI's gitleaks range scan is the net for those.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# Without gitleaks on PATH this warns and lets the commit through, so a
+# contributor without it is not locked out; CI is the backstop. With gitleaks
+# present, a finding or a scan error blocks the commit. Output is redacted.
+# A reviewed false positive goes in .gitleaksignore (exact fingerprint) or
+# gets an inline `gitleaks:allow` comment, never a broad allowlist.
+
+set -uo pipefail
+
+if ! command -v gitleaks >/dev/null; then
+    echo "pre-commit: gitleaks not found on PATH; staged changes were NOT scanned for tokens (CI will scan the push)." >&2
+    echo "pre-commit: install it from https://github.com/gitleaks/gitleaks/releases" >&2
+    exit 0
+fi
+
+if ! gitleaks git --pre-commit --staged --redact --verbose --no-banner; then
+    {
+        echo "pre-commit blocked: gitleaks flagged the staged changes (values redacted above)."
+        echo "Unstage the secret and rotate it if it was real. A reviewed false positive"
+        echo "goes in .gitleaksignore by fingerprint."
+    } >&2
+    exit 1
+fi
+exit 0
