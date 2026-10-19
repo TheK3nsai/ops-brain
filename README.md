@@ -67,7 +67,7 @@ Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below).
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
 
-The standalone example pins `:v6.3.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
+The standalone example pins `:v6.3.1` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
 
 Other deployment shapes:
 
@@ -177,8 +177,8 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` values (DNS-rebinding protection). Set your public hostname when behind a reverse proxy. |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Serve HTTP with no auth. Dev only; never expose beyond localhost. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
-| `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | `false` disables embeddings (the example compose file ships with them off) |
-| `OPS_BRAIN_EMBEDDING_URL` | `http://localhost:11434/v1/embeddings` | OpenAI-compatible embedding API |
+| `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | `false` turns embeddings off even when a URL is set (the example compose file ships with them off). Blank means unset. |
+| `OPS_BRAIN_EMBEDDING_URL` | (none) | OpenAI-compatible embedding API, e.g. `http://localhost:11434/v1/embeddings` for local Ollama. Embeddings are off unless this is set; blank counts as unset. |
 | `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
 | `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | Bearer for the embedding API, if it needs one |
 

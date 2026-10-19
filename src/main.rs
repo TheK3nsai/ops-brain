@@ -29,27 +29,24 @@ async fn main() -> anyhow::Result<()> {
         db::run_migrations(&pool).await?;
     }
 
-    let embedding_client = if config.embeddings_enabled.unwrap_or(true) {
+    let embedding_client = if let Some(url) = config.embedding_endpoint() {
         tracing::info!(
-            "Embeddings configured: url={}, model={}",
-            config.embedding_url,
+            "Embeddings configured: url={url}, model={}",
             config.embedding_model
         );
         Some(embeddings::EmbeddingClient::new(
-            config.embedding_url.clone(),
+            url.to_string(),
             config.embedding_model.clone(),
             config.embedding_api_key.clone(),
         ))
     } else {
-        tracing::info!("Embeddings disabled via OPS_BRAIN_EMBEDDINGS_ENABLED=false");
+        tracing::info!("Embeddings off: set OPS_BRAIN_EMBEDDING_URL to enable");
         None
     };
 
     if let Some(Command::BackfillEmbeddings { table, batch_size }) = config.command.as_ref() {
         let client = embedding_client.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "embedding client is disabled; enable OPS_BRAIN_EMBEDDINGS_ENABLED to backfill"
-            )
+            anyhow::anyhow!("embeddings are off; set OPS_BRAIN_EMBEDDING_URL to backfill")
         })?;
         if let Some(table) = table.as_deref() {
             if !matches!(table, "knowledge" | "handoffs") {

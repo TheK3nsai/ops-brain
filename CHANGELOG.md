@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.3.1] — 2026-10-19
+
+### Fixed
+
+- **Embeddings are off unless `OPS_BRAIN_EMBEDDING_URL` is set.** A blank
+  URL now counts as unset, and a blank `OPS_BRAIN_EMBEDDINGS_ENABLED` means
+  unset instead of aborting startup. Hosts that pass empty values (Docker's
+  MCP catalog drops defaults) no longer get a client pointed at nothing.
+  `OPS_BRAIN_EMBEDDINGS_ENABLED=false` still turns them off.
+
+### Changed
+
+- **No implicit `localhost:11434` default.** Deployments that relied on it
+  without setting `OPS_BRAIN_EMBEDDING_URL` must now set
+  `OPS_BRAIN_EMBEDDING_URL=http://localhost:11434/v1/embeddings`. The bundled
+  Compose files already set it.
+- Standalone Compose, README and self-hosting examples pin `v6.3.1`.
+
 ## [6.3.0] — 2026-10-19
 
 ### Changed
