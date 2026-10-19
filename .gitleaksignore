@@ -1,0 +1,7 @@
+# Exact gitleaks findings that are known false positives (commit:path:rule:line).
+# Add an entry only for a reviewed fixture, never a pattern or a path glob.
+#
+# Throwaway EC key generated for the OAuth test suite; src/oauth.rs has since
+# been removed and the key was never used by any deployment or IdP.
+b5298356b9422d96eaae4347cc9d4097ce069c9b:src/oauth.rs:private-key:676
+1bf8c3a13db2078740f759c88c8ca44dafe4e973:src/oauth.rs:private-key:676
