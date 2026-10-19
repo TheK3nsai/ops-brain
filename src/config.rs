@@ -76,19 +76,19 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_MIGRATE", default_value = "true")]
     pub migrate: bool,
 
-    /// Embedding API base URL (OpenAI-compatible). Default: local ollama.
-    #[arg(
-        long,
-        env = "OPS_BRAIN_EMBEDDING_URL",
-        default_value = "http://localhost:11434/v1/embeddings"
-    )]
-    pub embedding_url: String,
+    /// Embedding API URL (OpenAI-compatible, e.g. local ollama at
+    /// `http://localhost:11434/v1/embeddings`). Embeddings run only when this
+    /// is set; blank counts as unset (Docker's MCP catalog passes empty values).
+    #[arg(long, env = "OPS_BRAIN_EMBEDDING_URL")]
+    pub embedding_url: Option<String>,
 
     /// Embedding model name (default: nomic-embed-text for ollama)
+    /// Blank falls back to the default.
     #[arg(
         long,
         env = "OPS_BRAIN_EMBEDDING_MODEL",
-        default_value = "nomic-embed-text"
+        default_value = DEFAULT_EMBEDDING_MODEL,
+        value_parser = parse_model
     )]
     pub embedding_model: String,
 
@@ -96,7 +96,96 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_EMBEDDING_API_KEY")]
     pub embedding_api_key: Option<String>,
 
-    /// Enable embedding generation (default: true if embedding URL is reachable)
-    #[arg(long, env = "OPS_BRAIN_EMBEDDINGS_ENABLED")]
-    pub embeddings_enabled: Option<bool>,
+    /// `false` turns embeddings off even when a URL is set. Blank means unset.
+    #[arg(
+        long,
+        env = "OPS_BRAIN_EMBEDDINGS_ENABLED",
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        value_parser = parse_enabled
+    )]
+    pub embeddings_enabled: bool,
+}
+
+impl Config {
+    /// The embedding endpoint, or `None` when embeddings are off: no
+    /// (or a blank) URL, or `OPS_BRAIN_EMBEDDINGS_ENABLED=false`.
+    pub fn embedding_endpoint(&self) -> Option<&str> {
+        let url = self.embedding_url.as_deref().map(str::trim);
+        url.filter(|u| !u.is_empty() && self.embeddings_enabled)
+    }
+}
+
+const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
+
+fn parse_model(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    Ok(if value.is_empty() {
+        DEFAULT_EMBEDDING_MODEL
+    } else {
+        value
+    }
+    .to_string())
+}
+
+/// Blank is unset, which leaves the decision to the URL.
+fn parse_enabled(value: &str) -> Result<bool, String> {
+    match value.trim() {
+        "" | "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(format!("expected true or false, got {other:?}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Every case passes both settings so CI's OPS_BRAIN_EMBEDDINGS_ENABLED
+    // (or a developer's OPS_BRAIN_EMBEDDING_URL) cannot leak in.
+    fn endpoint(url: &str, enabled: &str) -> Option<String> {
+        let args = [
+            "ops-brain",
+            "--database-url",
+            "postgres://test",
+            "--embedding-url",
+            url,
+            "--embeddings-enabled",
+            enabled,
+        ];
+        let config = Config::try_parse_from(args).unwrap();
+        config.embedding_endpoint().map(str::to_string)
+    }
+
+    const URL: &str = "http://ollama:11434/v1/embeddings";
+
+    #[test]
+    fn blank_url_means_off() {
+        assert_eq!(endpoint("", ""), None);
+        assert_eq!(endpoint("  ", ""), None);
+        assert_eq!(endpoint("", "true"), None);
+    }
+
+    #[test]
+    fn url_means_on_unless_disabled() {
+        assert_eq!(endpoint(URL, "").as_deref(), Some(URL));
+        assert_eq!(endpoint(URL, "true").as_deref(), Some(URL));
+        assert_eq!(endpoint(URL, "false"), None);
+    }
+
+    #[test]
+    fn blank_model_falls_back_to_default() {
+        let model = |m| {
+            let args = ["ops-brain", "--database-url", "x", "--embedding-model", m];
+            Config::try_parse_from(args).unwrap().embedding_model
+        };
+        assert_eq!(model(""), DEFAULT_EMBEDDING_MODEL);
+        assert_eq!(model("  "), DEFAULT_EMBEDDING_MODEL);
+        assert_eq!(model("mxbai-embed-large"), "mxbai-embed-large");
+    }
+
+    #[test]
+    fn enabled_flag_rejects_junk() {
+        assert!(parse_enabled("ture").is_err());
+    }
 }
