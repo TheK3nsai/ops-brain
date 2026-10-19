@@ -5,7 +5,7 @@ One deployment is one trusted coordination domain. Per-agent tokens bind provena
 1. **Scoped queries withhold by default**: cross-client surfacing requires explicit `acknowledge_cross_client: true` and is audit-logged.
 2. **Withhold-by-default on scope mismatch**: when search tools would surface cross-client knowledge, content is **withheld** and replaced with a scope mismatch notice. An explicit `acknowledge_cross_client: true` parameter on a second call releases the result. A gate, not a banner.
 3. **Provenance in all results**: every surfaced entry includes `_client_slug` and `_client_name`. Global content (no `client_id`) shows `_client_name: "Global"`.
-4. **Audit trail**: `audit_log` table records every cross-client surfacing attempt with tool_name, requesting/owning client_id, entity details, and timestamp.
+4. **Audit trail**: `audit_log` table records every cross-client surfacing attempt with tool_name, requesting/owning client_id, entity details, and timestamp. It also takes one `deleted` row per `delete_handoff` (a hard delete), with the deleting agent and the handoff's sender, recipient, title and status in `detail`.
 
 ## Gate behavior
 

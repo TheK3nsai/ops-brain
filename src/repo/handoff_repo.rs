@@ -612,11 +612,29 @@ pub async fn suggest_similar_agents(
     .unwrap_or_default()
 }
 
-pub async fn delete_handoff(pool: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM handoffs WHERE id = $1")
-        .bind(id)
-        .execute(pool)
-        .await?;
+/// Hard delete that leaves an `audit_log` tombstone. One statement, so the
+/// delete and its audit row commit or fail together. `actor` is the caller's
+/// bound agent; `None` means the main bearer or stdio.
+pub async fn delete_handoff(
+    pool: &PgPool,
+    id: Uuid,
+    actor: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "WITH d AS (DELETE FROM handoffs WHERE id = $1
+                    RETURNING id, from_agent, to_agent, title, status)
+         INSERT INTO audit_log (id, tool_name, entity_type, entity_id, action, detail)
+         SELECT $2, 'delete_handoff', 'handoff', d.id, 'deleted',
+                jsonb_build_object('actor', $3::text, 'from_agent', d.from_agent,
+                                   'to_agent', d.to_agent, 'title', d.title,
+                                   'status', d.status)
+           FROM d",
+    )
+    .bind(id)
+    .bind(Uuid::now_v7())
+    .bind(actor)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() > 0)
 }
 

@@ -350,7 +350,9 @@ impl OpsBrain {
 
     #[tool(
         name = "delete_handoff",
-        description = "Permanently delete a handoff by ID (hard delete)",
+        description = "Permanently delete a handoff by ID (hard delete). The delete is \
+                       audited: audit_log keeps a tombstone with the handoff id, \
+                       who deleted it, and its sender, recipient, title and status",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -364,8 +366,9 @@ impl OpsBrain {
         ext: Extensions,
     ) -> Result<CallToolResult, McpError> {
         let restricted = helpers::restricted_agent(&ext);
+        let bound = helpers::bound_agent(&ext);
         let vis = Visibility::from_restricted(restricted.as_deref());
-        Ok(coordination::handle_delete_handoff(self, params.0, vis).await)
+        Ok(coordination::handle_delete_handoff(self, params.0, bound.as_deref(), vis).await)
     }
 
     // ===== TEAM BUS: pending-work query =====

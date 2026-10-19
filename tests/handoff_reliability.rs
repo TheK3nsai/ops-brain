@@ -7,7 +7,8 @@ use ops_brain::{
     repo::handoff_repo as repo,
     tools::{
         coordination::{
-            handle_accept_handoff, handle_get_handoff, GetHandoffParams, UpdateHandoffStatusParams,
+            handle_accept_handoff, handle_delete_handoff, handle_get_handoff, DeleteHandoffParams,
+            GetHandoffParams, UpdateHandoffStatusParams,
         },
         OpsBrain,
     },
@@ -88,7 +89,7 @@ async fn racing_acceptors_keep_broadcast_only_in_winners_check_in_and_wake_queue
     )
     .await;
     assert!(response_text(&hidden).contains("not found"));
-    repo::delete_handoff(&pool, row.id).await.unwrap();
+    repo::delete_handoff(&pool, row.id, None).await.unwrap();
 }
 
 #[tokio::test]
@@ -144,7 +145,7 @@ async fn accept_handler_binds_identity_and_keeps_restricted_boundary() {
             .as_deref(),
         Some(agent.as_str())
     );
-    repo::delete_handoff(&pool, row.id).await.unwrap();
+    repo::delete_handoff(&pool, row.id, None).await.unwrap();
 }
 
 #[tokio::test]
@@ -220,6 +221,48 @@ async fn family_accepts_require_explicit_concrete_identity() {
         let claimed = repo::get_handoff(&pool, row.id).await.unwrap().unwrap();
         assert_eq!(claimed.accepted_by.as_deref(), Some(identity));
         assert!(!claimed.accepted_by.unwrap().contains('*'));
-        repo::delete_handoff(&pool, row.id).await.unwrap();
+        repo::delete_handoff(&pool, row.id, None).await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn delete_leaves_audit_tombstone_with_actor() {
+    let pool = common::test_pool().await;
+    let sender = format!("Delete-Sender-{}", Uuid::now_v7());
+    let actor = format!("Delete-Actor-{}", Uuid::now_v7());
+    let row = create(&pool, &sender, "doomed").await;
+    let brain = OpsBrain::new(pool.clone(), None);
+
+    let r = handle_delete_handoff(
+        &brain,
+        DeleteHandoffParams {
+            handoff_id: row.id.to_string(),
+        },
+        Some(&actor),
+        Visibility::Full,
+    )
+    .await;
+    assert_eq!(r.is_error, Some(false), "{}", response_text(&r));
+    assert!(repo::get_handoff(&pool, row.id).await.unwrap().is_none());
+
+    let (action, detail): (String, serde_json::Value) = sqlx::query_as(
+        "SELECT action, detail FROM audit_log
+          WHERE entity_type = 'handoff' AND entity_id = $1",
+    )
+    .bind(row.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(action, "deleted");
+    assert_eq!(detail["actor"], actor.as_str());
+    assert_eq!(detail["from_agent"], sender.as_str());
+    assert_eq!(detail["title"], "doomed");
+
+    // A second delete finds nothing and writes no second tombstone.
+    assert!(!repo::delete_handoff(&pool, row.id, None).await.unwrap());
+    sqlx::query("DELETE FROM audit_log WHERE entity_id = $1")
+        .bind(row.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 }

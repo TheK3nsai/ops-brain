@@ -11,5 +11,7 @@ pub struct AuditLog {
     pub entity_id: Uuid,
     pub owning_client_id: Option<Uuid>,
     pub action: String,
+    /// Set for 'deleted' rows: actor plus the deleted row's summary.
+    pub detail: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
 }

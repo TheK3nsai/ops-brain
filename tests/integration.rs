@@ -4168,6 +4168,7 @@ mod restricted_visibility_tests {
             DeleteHandoffParams {
                 handoff_id: id.clone(),
             },
+            Some(&f.bot),
             restricted,
         )
         .await;
