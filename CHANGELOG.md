@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [6.3.0] — 2026-10-19
 
 ### Changed
 
@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
   bearer) and the handoff's sender, recipient, title and status. Migration
   `20261019000001` adds the nullable `detail` column; existing rows are
   untouched.
+- Standalone Compose, README and self-hosting examples pin `v6.3.0`.
 
 ## [6.2.0] — 2026-10-18
 

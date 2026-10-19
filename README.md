@@ -67,7 +67,7 @@ Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below).
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
 
-The standalone example pins `:v6.2.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
+The standalone example pins `:v6.3.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
 
 Other deployment shapes:
 
