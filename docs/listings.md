@@ -10,7 +10,7 @@ Where ops-brain is published, and how each listing stays current.
 | [mcprush](https://mcprush.com/thek3nsai/ops-brain-mcp) as Ops Brain MCP | listed by mcprush on its own 2026-10-19; claim submitted 2026-10-19 via GitHub, pending their review | They index the `thek3nsai/ops-brain` container image. Once claimed, bump the version by hand after each release. |
 | [Docker MCP Catalog](https://hub.docker.com/mcp) as `mcp/ops-brain` | submitted 2026-10-19; [`docker/mcp-registry#5871`](https://github.com/docker/mcp-registry/pull/5871), CI pending maintainer approval (first-time contributor) | Docker builds the image from a pinned commit in `servers/ops-brain/server.yaml`; updates come from Docker's nightly pin-bump PRs against `main`. |
 | [mcp.so](https://mcp.so/) | requested | Submission pending in `chatmcp/mcpso#1`. |
-| GitHub MCP Registry | requested | Pending with GitHub. |
+| [GitHub MCP Registry](https://github.com/mcp) as `io.github.TheK3nsai/ops-brain` | accepted 2026-10-20 | Draws from the Official MCP Registry entry ([`v0/servers?search=ops-brain`](https://registry.modelcontextprotocol.io/v0/servers?search=ops-brain)); 6.3.1 is latest there, so no separate publish step. |
 | Grok, Grok Bot and Cursor marketplaces (`ops-brain-bus` plugin) | submitted 2026-10-17 via the x.ai form | [`plugins/ops-brain-bus/`](../plugins/ops-brain-bus/), listed by the root `.cursor-plugin/marketplace.json`. Updates are re-reviewed. |
 | Grok Build catalog (`ops-brain-bus`) | requested; pin bumped to `d26a6d1`, pending code-owner review | `xai-org/plugin-marketplace#1520`, pinned to a commit SHA; a plugin change needs a new pin. |
 
