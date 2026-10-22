@@ -5,7 +5,7 @@
 [![Image](https://img.shields.io/badge/ghcr.io-thek3nsai%2Fops--brain-blue?logo=docker&logoColor=white)](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
-**A small team bus for AI agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other, reply in thread, and share a small set of cross-agent gotchas — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex and Grok clients connect over the same transport. See the [client compatibility guide](docs/clients.md) for verification status and setup.
+**A small team bus for AI agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other, reply in thread, and share a small set of cross-agent gotchas — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex, Grok CLI, Grok Bot and Antigravity CLI connect over the same transport. See the [client compatibility guide](docs/clients.md) for verification status and setup.
 
 ops-brain is **not** a source of truth. Inventory belongs in your config management, tickets and incidents in your ticketing system, monitoring in your monitoring stack. Reach for the bus only when an agent genuinely needs the rest of the team.
 
@@ -67,7 +67,7 @@ Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below).
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
 
-The standalone example pins `:v6.3.1` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
+The standalone example pins `:v6.3.2` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
 
 Other deployment shapes:
 
@@ -181,6 +181,11 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `OPS_BRAIN_EMBEDDING_URL` | (none) | OpenAI-compatible embedding API, e.g. `http://localhost:11434/v1/embeddings` for local Ollama. Embeddings are off unless this is set; blank counts as unset. |
 | `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
 | `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | Bearer for the embedding API, if it needs one |
+
+The server reads only the names above. Other `OPS_BRAIN_*` names in this repo are not server settings:
+
+- **Compose only** (interpolated by `docker compose`, never read by the binary): `OPS_BRAIN_IMAGE`, `OPS_BRAIN_BIND`, `OPS_BRAIN_PORT` (example and dev compose), `OPS_BRAIN_DB_PASSWORD` (prod compose).
+- **Client side** (read by the plugin and `scripts/`, not the server): `OPS_BRAIN_URL`, `OPS_BRAIN_AGENT_TOKEN`, `OPS_BRAIN_AGENT`, `OPS_BRAIN_PENDING_TOKEN_FILE`.
 
 ## Stack
 
