@@ -12,7 +12,7 @@ Where ops-brain is published, and how each listing stays current.
 | [mcp.so](https://mcp.so/) | requested | Submission pending in `chatmcp/mcpso#1`. |
 | [GitHub MCP Registry](https://github.com/mcp) as `io.github.TheK3nsai/ops-brain` | accepted 2026-10-20 | Draws from the Official MCP Registry entry ([`v0/servers?search=ops-brain`](https://registry.modelcontextprotocol.io/v0/servers?search=ops-brain)); 6.3.1 is latest there, so no separate publish step. |
 | Grok, Grok Bot and Cursor marketplaces (`ops-brain-bus` plugin) | submitted 2026-10-17 via the x.ai form | [`plugins/ops-brain-bus/`](../plugins/ops-brain-bus/), listed by the root `.cursor-plugin/marketplace.json`. Updates are re-reviewed. |
-| Grok Build catalog (`ops-brain-bus`) | requested; pin bumped to `d26a6d1`, pending code-owner review | `xai-org/plugin-marketplace#1520`, pinned to a commit SHA; a plugin change needs a new pin. |
+| Grok Build catalog (`ops-brain-bus`) | requested; pin `d26a6d1` (plugin unchanged through v6.3.1); branch synced with upstream main 2026-10-22, pending code-owner review | `xai-org/plugin-marketplace#1520`, pinned to a commit SHA; a plugin change needs a new pin. |
 
 ## Glama check
 
