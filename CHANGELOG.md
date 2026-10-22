@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.3.2] — unreleased
+
+### Security
+
+- **rustls-webpki 0.103.16 and webpki-roots 1.0.10** fix RUSTSEC-2026-0381
+  and RUSTSEC-2026-0382 (#184). No code or config changes.
+
+### Documentation
+
+- Listing statuses refreshed, Docker MCP Catalog submission recorded, and the
+  Glama release step documented (#181, #182); GitHub MCP Registry acceptance
+  recorded (#183).
+- Gotcha: stacked PRs under repo-wide branch auto-delete (#185).
+- README names every verified client and marks which `OPS_BRAIN_*` names are
+  compose-only or client-side rather than server settings.
+
 ## [6.3.1] — 2026-10-19
 
 ### Fixed
