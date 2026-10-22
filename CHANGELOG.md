@@ -2,12 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [6.3.2] — unreleased
+## [6.3.2] — 2026-10-22
 
 ### Security
 
 - **rustls-webpki 0.103.16 and webpki-roots 1.0.10** fix RUSTSEC-2026-0381
-  and RUSTSEC-2026-0382 (#184). No code or config changes.
+  and RUSTSEC-2026-0382 (#184). No server code or migration changes.
+
+### Changed
+
+- sqlx now uses `tls-rustls-ring-native-roots`: Postgres TLS verifies against
+  the OS trust store instead of bundled webpki roots. If you connect with
+  `sslmode=verify-ca` or `verify-full`, your runtime image needs a CA bundle
+  (the published image ships `ca-certificates`).
 
 ### Documentation
 
