@@ -49,9 +49,7 @@ Traps in this repo: the rule, why it bites, and the check. History lives in `git
 ## MCP Clients
 
 - **`Session not found` after idle is server-side eviction.** rmcp's default session `keep_alive` is 300 s; `src/main.rs` raises it to 3600 s. MCP clients do not reliably re-initialize on the resulting 404 — reconnect (`/mcp` in Claude Code). If it recurs sooner, check that the deployed binary carries the bump, then rmcp's release notes.
-- **Recreating the container evicts every MCP session, including the deployer's.** The session table is in memory. `complete_handoff` then returns `Session not found`, and retrying in the same turn does not reconnect. Close out over SQL instead:
-  `docker exec shared-postgres psql -U ops_brain -d ops_brain -c "UPDATE handoffs SET status='completed', commit_hash='<sha>', updated_at=NOW() WHERE id='<uuid>'"`.
-  The keep-alive bump does not affect this.
+- **Recreating the container evicts every MCP session, including the deployer's.** The session table is in memory. `complete_handoff` then returns `Session not found`, and retrying with the same session ID does not reconnect. Reconnect or restart the MCP client to initialize a fresh session, then close out through the tool. A stale transport is not a reason to bypass application validation, caller visibility and state-transition safeguards with a direct SQL update. The keep-alive bump does not preserve sessions across a restart.
 
 ## Machine-Filed Handoffs
 

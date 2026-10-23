@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Documentation
+
+- Replace the direct-SQL handoff closeout workaround after a server restart
+  with MCP reconnection, preserving the tool's visibility and transition checks.
+
 ## [6.3.2] — 2026-10-22
 
 ### Security
