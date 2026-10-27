@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `docker-compose.prod.yml` now passes `OPS_BRAIN_EMBEDDINGS_ENABLED`, so
+  `false` in `.env` can turn embeddings off without removing the URL. A
+  `false` already sitting in a prod `.env` (as `.env.example` ships it) now
+  takes effect.
+
+### Changed
+
+- A unit test fails when a clap `env` var is missing from
+  `docker-compose.prod.yml`, or when `OPS_BRAIN_DEV_NO_AUTH` appears there.
+  It replaces the reviewer agent's manual check.
+- Builds use the default linker. The repo no longer forces clang + mold, and
+  CI no longer installs mold.
+
 ### Documentation
 
 - Replace the direct-SQL handoff closeout workaround after a server restart

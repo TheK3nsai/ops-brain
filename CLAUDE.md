@@ -37,7 +37,7 @@ Shared features stay generic: client-family-specific work belongs in client-side
 - **nomic-embed-text tokenization** — real content tokenizes at ~1–1.15 chars/token, NOT ~4 chars/token. `MAX_EMBEDDING_CHARS` is 6,000. Do not increase without empirical testing.
 - **Production deploys MUST use `-f docker-compose.prod.yml`** — prod uses `shared-postgres`, dev uses bundled postgres. Dev compose is project-namespaced as `ops-brain-dev` so a stray invocation can't clobber prod, but it can spin up isolated dev orphans.
 - **Prod does not publish `localhost:3000` on the host** — check readiness inside the container (`docker compose -f docker-compose.prod.yml exec -T ops-brain curl -sf http://localhost:3000/ready`) and liveness through the reverse proxy (`/health`).
-- **New env vars need BOTH `.env` AND `docker-compose.prod.yml`** — prod compose enumerates every var under `services.ops-brain.environment:` (no `env_file:`). Pair each new clap `#[arg(env = "FOO")]` in `src/config.rs` with `- FOO=${FOO:-}` there.
+- **New env vars need BOTH `.env` AND `docker-compose.prod.yml`** — prod compose enumerates every var under `services.ops-brain.environment:` (no `env_file:`). Pair each new clap `#[arg(env = "FOO")]` in `src/config.rs` with `- FOO=${FOO:-}` there; `config::tests::prod_compose_passes_every_env_var` fails until you do, and keeps `OPS_BRAIN_DEV_NO_AUTH` out.
 
 ## Development Workflow
 
