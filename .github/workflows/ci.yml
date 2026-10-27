@@ -37,9 +37,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install mold linker
-        run: sudo apt-get update && sudo apt-get install -y mold
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -52,9 +49,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-v2-
 
       - name: Enable pgvector extension
         run: |

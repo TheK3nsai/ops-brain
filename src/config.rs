@@ -188,4 +188,33 @@ mod tests {
     fn enabled_flag_rejects_junk() {
         assert!(parse_enabled("ture").is_err());
     }
+
+    // The prod compose has no `env_file:`, so a var missing from its
+    // `environment:` list never reaches the container, whatever `.env` says.
+    #[test]
+    fn prod_compose_passes_every_env_var() {
+        use clap::CommandFactory;
+        const NEVER_IN_PROD: &str = "OPS_BRAIN_DEV_NO_AUTH";
+        let compose = include_str!("../docker-compose.prod.yml");
+        let listed = |var: &str| {
+            let entry = format!("- {var}=");
+            compose.lines().any(|l| l.trim_start().starts_with(&entry))
+        };
+        let cmd = Config::command();
+        let missing: Vec<String> = std::iter::once(&cmd)
+            .chain(cmd.get_subcommands())
+            .flat_map(|c| c.get_arguments())
+            .filter_map(|arg| arg.get_env())
+            .map(|env| env.to_string_lossy().into_owned())
+            .filter(|var| var != NEVER_IN_PROD && !listed(var))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "add `- VAR=${{VAR:-}}` to docker-compose.prod.yml for: {missing:?}"
+        );
+        assert!(
+            !compose.contains(NEVER_IN_PROD),
+            "{NEVER_IN_PROD} must never appear in docker-compose.prod.yml, comments included"
+        );
+    }
 }
