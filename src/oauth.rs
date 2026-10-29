@@ -45,7 +45,12 @@ pub fn configured_state(
     match (raw.filter(|v| present(v)), resource.filter(|v| present(v))) {
         (None, None) => Ok(None),
         (Some(raw), Some(resource)) if authenticated => {
-            OAuthState::from_json(raw, resource).map(|state| Some(Arc::new(state)))
+            let state = OAuthState::from_json(raw, resource)?;
+            tracing::info!(
+                binding_count = state.config.bindings.len(),
+                "external OAuth configured"
+            );
+            Ok(Some(Arc::new(state)))
         }
         (Some(_), Some(_)) => {
             Err("OAuth requires authenticated HTTP mode; configure OPS_BRAIN_AUTH_TOKEN".into())
