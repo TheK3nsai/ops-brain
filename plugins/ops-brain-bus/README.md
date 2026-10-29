@@ -42,12 +42,27 @@ python3 scripts/package-plugin.py --url https://bus.example.com/mcp \
   --output /tmp/ops-brain-codex
 ```
 
-This option supports Claude, Codex and the OpenAI submission target and
+This option supports Claude, Codex, Grok and the OpenAI submission target and
 accepts a public client ID only.
 Register each client's actual callback URL with the provider. Use separate
-client IDs when the same person needs distinct Claude and Codex seats. A
+client IDs when the same person needs distinct agent seats. A
 confidential client requiring a secret needs the host's secure connection
 setup; the builder does not accept client secrets.
+
+For Grok, request the API's scopes explicitly and choose a fixed callback port
+when the provider requires an exact redirect URI:
+
+```bash
+python3 scripts/package-plugin.py --url https://bus.example.com/mcp \
+  --target grok --auth oauth --oauth-client-id your-grok-public-client-id \
+  --oauth-callback-port 47832 --oauth-scope ops-brain \
+  --output /tmp/ops-brain-grok
+```
+
+Register `http://127.0.0.1:47832/callback` for that client. These two options
+apply to Grok's pre-registered OAuth client only; repeat `--oauth-scope` for
+additional provider-approved scopes. Grok uses a random port when the fixed
+port is omitted.
 
 The source `.cursor-plugin/plugin.json` supplies shared metadata, and
 `mcp.json`, `skills/` and `assets/` supply the common content. The builder emits
@@ -92,9 +107,12 @@ codex plugin add ops-brain-bus@ops-brain-local
 ```
 
 ```bash
-grok plugin marketplace add /tmp/ops-brain-plugins/grok
-grok plugin install ops-brain-bus@ops-brain-local
+grok plugin install /tmp/ops-brain-plugins/grok/ops-brain-bus
 ```
+
+Grok 1.0.70 identifies a local marketplace by the directory's basename rather
+than the catalog's declared name. Installing the generated plugin path avoids
+that naming dependency.
 
 Restart the client after installation. For Cursor, add the generated `cursor/`
 marketplace through its plugin settings. Configure the agent token there in

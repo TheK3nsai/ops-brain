@@ -17,6 +17,7 @@ import select
 import shutil
 import socket
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -62,11 +63,12 @@ class FixtureServer(ThreadingHTTPServer):
 
 
 class Provider:
-    """Test-only issuer: auto-consents a synthetic user for two fixture clients."""
+    """Test-only issuer: auto-consents synthetic fixture clients."""
 
     def __init__(self, root):
         self.root, self.codes, self.tokens = root, {}, {}
         self.authenticated_initializations = {}
+        self.model_requests = 0
         self.lock = threading.Lock()
         self.key, self.certificate = root / "jwt-key.pem", root / "ca.pem"
         ca_key, tls_key, tls_cert = root / "ca-key.pem", root / "tls-key.pem", root / "tls.pem"
@@ -133,6 +135,10 @@ class Provider:
 
             def do_GET(self):
                 path = urlsplit(self.path).path
+                if path == "/fixture-models":
+                    return self.reply(200, {"object": "list", "data": []})
+                if path == "/fixture-api/api-key":
+                    return self.reply(200, {})
                 if path == "/.well-known/oauth-authorization-server":
                     return self.reply(200, {"issuer": provider.issuer,
                         "authorization_endpoint": provider.issuer + "/authorize",
@@ -149,7 +155,7 @@ class Provider:
                 if path == "/authorize":
                     values = {key: value[0] for key, value in parse_qs(urlsplit(self.path).query).items()}
                     callback = urlsplit(values.get("redirect_uri", ""))
-                    if (values.get("client_id") not in ("codex-fixture", "claude-fixture")
+                    if (values.get("client_id") not in ("codex-fixture", "claude-fixture", "grok-fixture")
                             or values.get("resource") != provider.resource
                             or values.get("response_type") != "code"
                             or values.get("code_challenge_method") != "S256"
@@ -167,6 +173,10 @@ class Provider:
                 return self.proxy_request()
 
             def do_POST(self):
+                if urlsplit(self.path).path.startswith("/fixture-api/"):
+                    with provider.lock:
+                        provider.model_requests += 1
+                    return self.reply(400, {"error": "model_requests_not_allowed"})
                 if urlsplit(self.path).path != "/token":
                     return self.proxy_request()
                 values = {key: value[0] for key, value in parse_qs(
@@ -291,22 +301,24 @@ def mcp(provider, token):
     return client
 
 
-def exercise(provider, codex_token, recipient=None):
+def exercise(provider, recipient_token, recipient=None, recipient_agent="Fixture-Codex",
+             recipient_client="codex-fixture"):
     provider.authorize("claude-fixture", invalid_verifier=True)
     sender = mcp(provider, provider.authorize("claude-fixture"))
-    recipient = recipient or mcp(provider, codex_token)
-    arguments = {"from_agent": "Fixture-Claude", "to_agent": "Fixture-Codex",
+    recipient = recipient or mcp(provider, recipient_token)
+    arguments = {"from_agent": "Fixture-Claude", "to_agent": recipient_agent,
                  "title": "OAuth fixture " + uuid.uuid4().hex,
                  "body": "Synthetic local integration test."}
     sender.call("create_handoff", dict(arguments, from_agent="Forged-Agent"), expect_error=True)
     handoff = sender.call("create_handoff", arguments)
     identifier = handoff["id"]
-    claimed = recipient.call("accept_handoff", {"handoff_id": identifier, "agent_name": "Fixture-Codex"})
-    assert claimed["accepted_by"] == "Fixture-Codex"
+    recipient.call("create_handoff", dict(arguments, from_agent="Forged-Agent"), expect_error=True)
+    claimed = recipient.call("accept_handoff", {"handoff_id": identifier, "agent_name": recipient_agent})
+    assert claimed["accepted_by"] == recipient_agent
     recipient.call("check_in", {"agent_name": "Fixture-Claude"}, expect_error=True)
-    recipient.call("add_knowledge", {"author": "Fixture-Codex", "title": "refuse client data",
+    recipient.call("add_knowledge", {"author": recipient_agent, "title": "refuse client data",
                     "content": "fixture", "category": "gotcha", "client_slug": "private-client"}, expect_error=True)
-    reply = recipient.call("create_handoff", dict(arguments, from_agent="Fixture-Codex",
+    reply = recipient.call("create_handoff", dict(arguments, from_agent=recipient_agent,
                             to_agent="Fixture-Claude", category="notify", in_reply_to=identifier))
     recipient.call("complete_handoff", {"handoff_id": identifier})
     sender.call("complete_handoff", {"handoff_id": reply["id"]})
@@ -314,9 +326,9 @@ def exercise(provider, codex_token, recipient=None):
     assert any(row["id"] == reply["id"] for row in replies["replies"])
     assert sender.call("get_handoff", {"handoff_id": identifier})["status"] == "completed"
     for token, path, status in (
-            (codex_token, "/api/briefing", 401),
-            (provider.token("codex-fixture", exp=int(time.time()) - 1), "/mcp", 401),
-            (provider.token("codex-fixture", aud="other-api"), "/mcp", 401)):
+            (recipient_token, "/api/briefing", 401),
+            (provider.token(recipient_client, exp=int(time.time()) - 1), "/mcp", 401),
+            (provider.token(recipient_client, aud="other-api"), "/mcp", 401)):
         request = Request(provider.issuer + path, b"{}", {"Authorization": "Bearer " + token})
         try:
             provider.opener.open(request, timeout=10)
@@ -325,13 +337,13 @@ def exercise(provider, codex_token, recipient=None):
             assert response.code == status
 
 
-def fixture_package(root, target, provider):
+def fixture_package(root, target, provider, **options):
     spec = importlib.util.spec_from_file_location("packaging", REPO / "scripts/package-plugin.py")
     packaging = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(packaging)
     output = root / (target + "-packages")
     packaging.build(output, provider.resource, targets=(target,), auth="oauth",
-                    oauth_client_id=target + "-fixture")
+                    oauth_client_id=target + "-fixture", **options)
     return output / target
 
 
@@ -360,11 +372,11 @@ def native_command(root, name, binary=None):
 
 
 class AppServer:
-    """Native Codex JSON-RPC, without model requests or account credentials."""
+    """Native client JSON-RPC, without model requests or account credentials."""
 
-    def __init__(self, command, environment, root):
+    def __init__(self, command, environment, root, arguments=("app-server",)):
         self.sequence, self.notifications = 0, []
-        self.process = subprocess.Popen(command + ["app-server"], cwd=root, env=environment,
+        self.process = subprocess.Popen(command + list(arguments), cwd=root, env=environment,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         self.lines = queue.Queue()
 
@@ -378,7 +390,7 @@ class AppServer:
     def receive(self, deadline):
         line = self.lines.get(timeout=max(0.1, deadline - time.monotonic()))
         if line is None:
-            raise RuntimeError("native Codex app server stopped; child output withheld")
+            raise RuntimeError("native client stopped; child output withheld")
         return json.loads(line)
 
     def request(self, method, params):
@@ -411,7 +423,8 @@ class AppServer:
         raise RuntimeError("native app-server notification timed out")
 
     def close(self):
-        self.process.stdin.close()
+        if not self.process.stdin.closed:
+            self.process.stdin.close()
         try:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -536,6 +549,128 @@ def native_claude(provider, root, binary=None):
     assert "claude-fixture" in provider.tokens
 
 
+class GrokMCP:
+    call = smoke.MCP.call
+
+    def __init__(self, app, session):
+        self.app, self.session = app, session
+
+    def send(self, method, params):
+        assert method == "tools/call"
+        return self.app.request("_x.ai/mcp/call", {"sessionId": self.session, "server": "ops-brain",
+            "tool": params["name"], "arguments": params["arguments"]})["result"]
+
+
+def grok_servers(app, session):
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        result = app.request("_x.ai/mcp/list", {"sessionId": session})["result"]
+        if result.get("sessionMcpResolved"):
+            servers = result["servers"]
+            assert len(servers) == 1 and servers[0]["name"] == "ops-brain"
+            assert servers[0]["sourceLabel"] == "plugin: ops-brain-bus"
+            return servers
+        time.sleep(0.1)
+    raise RuntimeError("native Grok MCP initialization timed out")
+
+
+def grok_fixture_consent(app, session, provider, log, callback_port):
+    results = queue.Queue()
+
+    def authenticate():
+        try:
+            results.put(app.request("_x.ai/mcp/auth_trigger", {
+                "session_id": session, "server_name": "ops-brain"}))
+        except Exception as error:
+            results.put(error)
+
+    worker = threading.Thread(target=authenticate, daemon=True)
+    worker.start()
+    try:
+        deadline, url = time.monotonic() + 30, None
+        while time.monotonic() < deadline and worker.is_alive():
+            # No desktop/browser is available in the isolated home. Grok logs
+            # its manual fallback URL; fixture logs never leave this temp dir.
+            if log.exists():
+                url = terminal_authorization_url(log.read_text(errors="replace"), provider.issuer)
+                if url:
+                    break
+            time.sleep(0.1)
+        if not url:
+            raise RuntimeError("native Grok fixture consent URL was not observed")
+        parameters = parse_qs(urlsplit(url).query)
+        expected_callback = f"http://127.0.0.1:{callback_port}/callback"
+        assert parameters["client_id"] == ["grok-fixture"]
+        assert parameters["redirect_uri"] == [expected_callback]
+        assert parameters["scope"] == ["ops-brain"]
+        try:
+            provider.opener.open(url, timeout=10)
+            raise RuntimeError("expected fixture consent redirect")
+        except HTTPError as response:
+            assert response.code == 302
+            redirect = response.headers["Location"]
+            assert redirect.split("?", 1)[0] == expected_callback
+        with build_opener(HTTPSHandler(context=provider.context)).open(redirect, timeout=10) as response:
+            response.read()
+        result = results.get(timeout=30)
+        if isinstance(result, Exception):
+            raise result
+        assert result["result"]["status"] == "authenticated"
+    finally:
+        if worker.is_alive():
+            app.close()
+        worker.join(timeout=5)
+
+
+def native_grok(provider, root, binary=None):
+    callback_port = free_port()
+    marketplace = fixture_package(root, "grok", provider, oauth_callback_port=callback_port,
+                                  oauth_scopes=["ops-brain"])
+    command, environment = native_command(root, "grok", binary)
+    # Synthetic API authentication creates an ACP session only. Both endpoint
+    # overrides point at the fixture; there is no model prompt or real account.
+    environment.update(SSL_CERT_FILE=str(provider.certificate), XAI_API_KEY="fixture-not-a-real-api-key",
+        GROK_XAI_API_BASE_URL=provider.issuer + "/fixture-api",
+        GROK_MODELS_LIST_URL=provider.issuer + "/fixture-models", GROK_DISABLE_AUTOUPDATER="1",
+        GROK_SUBAGENTS="0", GROK_MEMORY="0", GROK_CLAUDE_MCPS_ENABLED="0", GROK_CURSOR_MCPS_ENABLED="0",
+        BROWSER="/bin/false")
+    # Local marketplace registration uses the directory's basename in Grok
+    # 1.0.70, rather than the manifest's name. A direct path is unambiguous.
+    run(command + ["plugin", "install", str(marketplace / "ops-brain-bus"), "--trust"],
+        cwd=root, env=environment, timeout=30)
+    for phase in ("sign-in", "reconnect"):
+        log = root / f"grok-{phase}.log"
+        arguments = ["agent", "--no-leader", "--xai-api-base-url", provider.issuer + "/fixture-api",
+                     "--debug-file", str(log), "stdio"]
+        before = provider.authenticated_initializations.get("grok-fixture", 0)
+        app = AppServer(command, environment, root, arguments)
+        try:
+            app.request("initialize", {"protocolVersion": 1, "clientCapabilities": {},
+                                      "clientInfo": {"name": "ops-brain-fixture", "version": "1"}})
+            app.request("authenticate", {"methodId": "xai.api_key"})
+            session = app.request("session/new", {"cwd": str(root), "mcpServers": []})["sessionId"]
+            servers = grok_servers(app, session)
+            if phase == "sign-in":
+                assert servers[0]["session"].get("authRequired")
+                grok_fixture_consent(app, session, provider, log, callback_port)
+                servers = grok_servers(app, session)
+            assert servers[0]["session"]["status"] == "ready"
+            assert len(servers[0]["session"]["tools"]) == 13
+            assert provider.authenticated_initializations.get("grok-fixture", 0) > before
+            if phase == "sign-in":
+                exercise(provider, provider.tokens["grok-fixture"], GrokMCP(app, session),
+                         "Fixture-Grok", "grok-fixture")
+            else:
+                GrokMCP(app, session).call("check_in", {"agent_name": "Fixture-Grok"})
+                assert "Opening browser for OAuth consent" not in log.read_text()
+        finally:
+            if app.process.poll() is None:
+                app.close()
+    store = root / "grok-home/.grok/mcp_credentials.json"
+    assert store.is_file() and stat.S_IMODE(store.stat().st_mode) == 0o600
+    assert provider.model_requests == 0
+
+
 def terminal_authorization_url(output, issuer):
     # OSC hyperlinks repeat the URL, separated by BEL/ESC rather than spaces.
     # Wait for a terminator so a partial terminal chunk isn't opened as a URL.
@@ -577,6 +712,8 @@ def main():
     parser.add_argument("--codex-binary", type=Path, help="standalone Codex executable, if PATH uses a launcher")
     parser.add_argument("--claude", action="store_true", help="also install and sign in to the Claude Code plugin, using an isolated home (Linux + bwrap)")
     parser.add_argument("--claude-binary", type=Path, help="standalone Claude Code executable, if PATH uses a launcher")
+    parser.add_argument("--grok", action="store_true", help="also install and exercise Grok Build OAuth in an isolated home (Linux + bwrap)")
+    parser.add_argument("--grok-binary", type=Path, help="standalone Grok executable, if PATH uses a launcher")
     parser.add_argument("--rust-tests", action="store_true", help="also run cargo test against the isolated database")
     parser.add_argument("--binary", type=Path, default=REPO / "target/debug/ops-brain")
     args = parser.parse_args()
@@ -592,7 +729,8 @@ def main():
                           "bindings": [{"subject": "fixture-user", "oauth_client_id": client,
                                         "from_agent": agent, "exclude_client_data": restricted}
                                        for client, agent, restricted in (("claude-fixture", "Fixture-Claude", False),
-                                                                         ("codex-fixture", "Fixture-Codex", True))]}
+                                                                         ("codex-fixture", "Fixture-Codex", True),
+                                                                         ("grok-fixture", "Fixture-Grok", True))]}
                 environment = {"PATH": os.environ["PATH"], "RUST_LOG": "warn", "DATABASE_URL": url,
                     "OPS_BRAIN_TRANSPORT": "http", "OPS_BRAIN_LISTEN": urlsplit(provider.proxy).netloc,
                     "OPS_BRAIN_AUTH_TOKEN": secrets.token_urlsafe(48), "OPS_BRAIN_EMBEDDINGS_ENABLED": "false",
@@ -635,6 +773,10 @@ def main():
                             STAGE = "native Claude Code plugin install/sign-in"
                             native_claude(provider, root, args.claude_binary)
                             print("PASS: installed Claude Code plugin, native OAuth sign-in and persisted-grant connection check")
+                        if args.grok:
+                            STAGE = "native Grok Build plugin install/sign-in/tool calls/reconnection"
+                            native_grok(provider, root, args.grok_binary)
+                            print("PASS: installed Grok plugin, native OAuth, fixed callback/scopes, 13 tools, native handoff/thread/identity checks and persisted-grant reconnection; no model requests")
                     finally:
                         process.terminate()
                         process.wait(timeout=10)

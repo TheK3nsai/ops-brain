@@ -22,7 +22,9 @@ The [plugin source](../plugins/ops-brain-bus/README.md) builds local packages
 from the same skill and metadata for Claude Code, Codex CLI, Grok Build and
 Cursor. Manifest validators cover packaging; the isolated
 [OAuth fixture](oauth.md#validation-status) also installs the generated
-Claude/Codex plugins, verifies native sign-in and runs native Codex handoffs.
+Claude/Codex/Grok plugins, verifies native sign-in and runs native Codex and
+Grok handoffs. The Codex plugin also passed a real Auth0 production connection
+and model-selected reads and a threaded write after a client restart.
 That page records tested versions and remaining gaps. Use `--target codex`
 for local installation and `--target openai --auth oauth` for the separate
 portable submission artifact; see the [format gotcha](../GOTCHAS.md#mcp-clients).

@@ -30,7 +30,8 @@ def json_bytes(value):
     return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode()
 
 
-def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_client_id=None):
+def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_client_id=None,
+                  oauth_callback_port=None, oauth_scopes=None):
     if target not in (*TARGETS, SUBMISSION_TARGET):
         raise ValueError("Unknown plugin target")
     if auth not in ("token", "oauth"):
@@ -38,11 +39,22 @@ def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_cli
     if target == SUBMISSION_TARGET and auth != "oauth":
         raise ValueError("The OpenAI submission package requires --auth oauth")
     if oauth_client_id is not None:
-        if auth != "oauth" or target not in ("claude", "codex", SUBMISSION_TARGET):
-            raise ValueError("A provided OAuth client ID requires --auth oauth and one Claude, Codex or OpenAI target")
+        if auth != "oauth" or target not in ("claude", "codex", "grok", SUBMISSION_TARGET):
+            raise ValueError("A provided OAuth client ID requires --auth oauth and one Claude, Codex, Grok or OpenAI target")
         if not oauth_client_id or len(oauth_client_id) > 2048 or any(
                 character.isspace() or ord(character) < 32 for character in oauth_client_id):
             raise ValueError("Invalid OAuth client ID")
+    if oauth_callback_port is not None or oauth_scopes is not None:
+        if target != "grok" or auth != "oauth" or oauth_client_id is None:
+            raise ValueError("OAuth callback port and scopes require one Grok OAuth target with a public client ID")
+    if oauth_callback_port is not None and (
+            type(oauth_callback_port) is not int or not 1 <= oauth_callback_port <= 65535):
+        raise ValueError("Invalid OAuth callback port")
+    if oauth_scopes is not None and (not isinstance(oauth_scopes, list) or not oauth_scopes
+            or len(oauth_scopes) > 20 or any(not isinstance(scope, str) or not scope or len(scope) > 2048
+                or any(character.isspace() or ord(character) < 32 for character in scope)
+                for scope in oauth_scopes)):
+        raise ValueError("Invalid OAuth scopes")
     try:
         parsed = urlsplit(url)
         hostname = parsed.hostname
@@ -96,6 +108,10 @@ def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_cli
         files[f".{target}-plugin/plugin.json"] = json_bytes(manifest)
         if oauth_client_id is not None:
             server["oauth"] = {"clientId": oauth_client_id}
+            if oauth_callback_port is not None:
+                server["oauth"]["callbackPort"] = oauth_callback_port
+            if oauth_scopes is not None:
+                server["oauth"]["scopes"] = oauth_scopes
         files[".mcp.json"] = json_bytes(mcp)
     else:
         manifest = dict(common, skills="./skills/", mcpServers="./.mcp.json",
@@ -135,13 +151,15 @@ def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_cli
     return files
 
 
-def build(output, url, targets=TARGETS, source=SOURCE, repo=REPO, auth="token", oauth_client_id=None):
+def build(output, url, targets=TARGETS, source=SOURCE, repo=REPO, auth="token", oauth_client_id=None,
+          oauth_callback_port=None, oauth_scopes=None):
     output = Path(output)
     # Plan every input before creating output, including rejection of a credential
     # accidentally substituted into source MCP configuration.
     if oauth_client_id is not None and len(targets) != 1:
         raise ValueError("Build one target at a time when providing an OAuth client ID")
-    planned = [(target, package_files(target, url, source, repo, auth, oauth_client_id)) for target in targets]
+    planned = [(target, package_files(target, url, source, repo, auth, oauth_client_id,
+                                     oauth_callback_port, oauth_scopes)) for target in targets]
     # A new directory makes accidental overwrites (including existing credentials)
     # impossible, and keeps archives out of the source plugin.
     if output.resolve() == source.resolve() or source.resolve() in output.resolve().parents:
@@ -198,11 +216,15 @@ def main():
                         help="client for local installation; openai is a separate portable OAuth submission artifact")
     parser.add_argument("--auth", choices=("token", "oauth"), default="token",
                         help="fixed per-agent token (default), or external OAuth sign-in")
-    parser.add_argument("--oauth-client-id", help="public, pre-registered PKCE client ID (one Claude, Codex or OpenAI target only; never a secret)")
+    parser.add_argument("--oauth-client-id", help="public, pre-registered PKCE client ID (one Claude, Codex, Grok or OpenAI target only; never a secret)")
+    parser.add_argument("--oauth-callback-port", type=int, help="fixed loopback callback port for a Grok public OAuth client")
+    parser.add_argument("--oauth-scope", action="append", dest="oauth_scopes",
+                        help="scope requested by a Grok public OAuth client; repeat for multiple scopes")
     args = parser.parse_args()
     try:
         archives = build(args.output, args.url, TARGETS if args.target == "all" else (args.target,),
-                         auth=args.auth, oauth_client_id=args.oauth_client_id)
+                         auth=args.auth, oauth_client_id=args.oauth_client_id,
+                         oauth_callback_port=args.oauth_callback_port, oauth_scopes=args.oauth_scopes)
     except (OSError, ValueError, KeyError) as error:
         parser.exit(1, f"Plugin packaging failed: {error}\n")
     for archive in archives:
