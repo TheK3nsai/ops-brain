@@ -94,7 +94,7 @@ fixed tokens, use your existing secret manager to make
 Use the per-agent credential, never the operator's `OPS_BRAIN_AUTH_TOKEN`.
 See [agent tokens](https://github.com/TheK3nsai/ops-brain/blob/main/docs/agent-tokens.md).
 
-Install from the generated local marketplace for the client you use:
+Install the generated package for your client:
 
 ```bash
 claude plugin marketplace add /tmp/ops-brain-plugins/claude

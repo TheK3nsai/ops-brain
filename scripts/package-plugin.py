@@ -30,6 +30,12 @@ def json_bytes(value):
     return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode()
 
 
+def valid_oauth_scope(value):
+    # Match the server's RFC 6749 scope-token grammar, including punctuation.
+    return isinstance(value, str) and bool(value) and all(
+        character == "!" or "#" <= character <= "[" or "]" <= character <= "~" for character in value)
+
+
 def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_client_id=None,
                   oauth_callback_port=None, oauth_scopes=None):
     if target not in (*TARGETS, SUBMISSION_TARGET):
@@ -51,8 +57,7 @@ def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_cli
             type(oauth_callback_port) is not int or not 1 <= oauth_callback_port <= 65535):
         raise ValueError("Invalid OAuth callback port")
     if oauth_scopes is not None and (not isinstance(oauth_scopes, list) or not oauth_scopes
-            or len(oauth_scopes) > 20 or any(not isinstance(scope, str) or not scope or len(scope) > 2048
-                or any(character.isspace() or ord(character) < 32 for character in scope)
+            or len(oauth_scopes) > 20 or any(not valid_oauth_scope(scope) or len(scope) > 2048
                 for scope in oauth_scopes)):
         raise ValueError("Invalid OAuth scopes")
     try:

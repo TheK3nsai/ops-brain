@@ -13,10 +13,8 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 ### Distribution
 
 - **OpenAI submission validation.** Validate the portable OAuth ZIP in the
-  submission portal before public submission. Real Auth0 connections and
-  ordinary model-selected handoffs have passed with installed Codex and Grok
-  plugins. The existing fleet is the test cohort; outside beta users are not
-  a prerequisite. Verified scope and fixture commands: `docs/oauth.md`.
+  submission portal before public submission. The existing fleet is the test
+  cohort; outside beta users are not a prerequisite. Verified scope: `docs/oauth.md`.
 - **Phase 2 listings: follow up on review.** Grok Build catalog PR `xai-org/plugin-marketplace#1520` is synced with upstream main and awaits code-owner review; Docker MCP Catalog `docker/mcp-registry#5871` awaits a maintainer's CI approval. The GitHub MCP Registry has accepted the entry. State lives in `docs/listings.md`; drop this item once both pending listings are live or declined.
 
 ### Public-repo hygiene

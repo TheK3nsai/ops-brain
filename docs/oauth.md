@@ -48,6 +48,8 @@ bindings for seats that need independent provenance.
 The operator bearer remains required; OAuth cannot turn on unauthenticated
 development mode. All three Compose files forward these variables. OAuth
 credentials reach `/mcp` only, never machine or operator REST endpoints.
+Startup logs `external OAuth configured` with its binding count; principal
+and OAuth client identifiers are omitted.
 
 ## Discovery and validation
 
@@ -130,7 +132,7 @@ existing static authentication and identity/visibility propagation through
 the MCP transport.
 
 An isolated HTTPS provider fixture exercises authorization code with S256 PKCE,
-one-time codes, resource audiences, two client-bound seats, an actual handoff,
+one-time codes, resource audiences, distinct client-bound seats, an actual handoff,
 claim, completion and threaded reply. It auto-consents synthetic accounts;
 it is test infrastructure and must never front real data.
 
@@ -174,20 +176,14 @@ Verified with Codex 0.165.0, Claude Code 2.1.312 and Grok Build 1.0.70 on 2026-1
   the saved grant. Its synthetic API configuration points at the fixture,
   and no model requests are made.
 
-Real-provider verification on 2026-10-29 also passed with Auth0 RFC 9068
-access tokens and an installed Codex 0.165.0 plugin against a production
-deployment: 13 tools, native handoff/thread operations and persisted-grant
-reconnection. After a client restart, model-selected check-in, reply retrieval
-and a threaded notification succeeded in an ordinary Codex session.
-
-Grok Build 1.0.70 also passed against that real provider and deployment with
-the installed plugin in its regular profile: native sign-in, all 13 tools,
-reads, refusal of a write claiming a different identity, and a fresh-process
-reconnection with the saved grant. Codex and Grok use separate public clients
-bound to their own seats. An ordinary model-selected handoff from Codex to
-Grok then passed retrieval, acceptance, a threaded reply and completion; the
-sender retrieved the reply through its own OAuth plugin. The bounded Grok
-check used only the four MCP tools needed for that acknowledgement.
+Real Auth0 verification on 2026-10-29 passed with RFC 9068 access tokens and
+installed Codex 0.165.0 and Grok Build 1.0.70 plugins in their regular profiles.
+Both discovered 13 tools and reconnected in fresh processes with saved grants,
+using separate public clients bound to their own seats. Native Codex exercised
+handoff/thread operations; native Grok checked reads and identity refusal.
+A model-selected Codex-to-Grok handoff passed retrieval, acceptance, a threaded
+reply and completion, and the sender retrieved the reply through its OAuth
+plugin. Grok used only the four MCP operations needed for that acknowledgement.
 
 Add `--rust-tests` to run the Rust suite against the same isolated database.
 

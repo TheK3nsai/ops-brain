@@ -25,6 +25,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Plugin packaging rejects OAuth scopes outside the server's RFC 6749 grammar
+  before writing an artifact.
 - Codex local OAuth packages use its native client-ID setting and compatibility
   layout; Codex 0.165.0 skips the MCP server in the portable root layout.
 - OAuth-only setups no longer emit the static-agent-token onboarding warning.
@@ -38,6 +40,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- OAuth configuration logs its binding count at startup without principal or
+  OAuth client identifiers.
 - A unit test fails when a clap `env` var is missing from
   `docker-compose.prod.yml`, or when `OPS_BRAIN_DEV_NO_AUTH` appears there.
   It replaces the reviewer agent's manual check.

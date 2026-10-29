@@ -178,18 +178,21 @@ class PackagingTests(unittest.TestCase):
     def test_grok_oauth_callback_and_scopes_are_explicit_and_validated_before_writing(self):
         with tempfile.TemporaryDirectory() as temporary:
             options = dict(targets=("grok",), auth="oauth", oauth_client_id="grok-public-client",
-                           oauth_callback_port=47832, oauth_scopes=["ops-brain", "offline_access"])
+                           oauth_callback_port=47832, oauth_scopes=["ops-brain", "offline_access", "api:read/notes[all]!"])
             archive, = packaging.build(Path(temporary) / "valid", "https://bus.example.com/mcp", **options)
             with zipfile.ZipFile(archive) as bundle:
                 server = json.loads(bundle.read("ops-brain-bus/.mcp.json"))["mcpServers"]["ops-brain"]
                 self.assertEqual(server["oauth"], {"clientId": "grok-public-client", "callbackPort": 47832,
-                                                  "scopes": ["ops-brain", "offline_access"]})
+                                                  "scopes": ["ops-brain", "offline_access", "api:read/notes[all]!"]})
                 self.assertNotIn("headers", server)
             for invalid in ({"targets": ("claude",)}, {"targets": ("openai",)}, {"auth": "token"},
                             {"oauth_client_id": None}, {"oauth_callback_port": 0},
                             {"oauth_callback_port": 65536}, {"oauth_callback_port": True},
                             {"oauth_scopes": []}, {"oauth_scopes": "ops-brain"},
-                            {"oauth_scopes": ["bad scope"]}, {"oauth_scopes": ["bad\nvalue"]}):
+                            {"oauth_scopes": ["bad scope"]}, {"oauth_scopes": ["bad\nvalue"]},
+                            {"oauth_scopes": ['bad"scope']}, {"oauth_scopes": [r"bad\scope"]},
+                            {"oauth_scopes": ["bad\x7fscope"]}, {"oauth_scopes": ["caf\u00e9"]},
+                            {"oauth_scopes": [""]}):
                 output = Path(temporary) / "invalid"
                 with self.assertRaises(ValueError):
                     packaging.build(output, "https://bus.example.com/mcp", **dict(options, **invalid))
