@@ -12,8 +12,10 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 
 ### Distribution
 
-- **Marketplace readiness through fleet use.** Configure a real provider,
-  verify model-selected tools in ordinary fleet handoffs (including Grok OAuth),
+- **Marketplace readiness through fleet use.** Auth0 and the installed Codex
+  OAuth plugin passed production and model-selected reads/threaded writes.
+  Grok's native OAuth, handoff and reconnection checks passed the isolated fixture.
+  Verify Grok with the real provider and ordinary model-selected fleet handoffs,
   and validate the portable OpenAI ZIP in the submission portal before public
   submission. The existing fleet is the test cohort; outside beta users are
   not a prerequisite. Verified scope and fixture commands: `docs/oauth.md`.

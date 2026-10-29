@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Pre-registered Grok OAuth client packages with explicit scopes and a fixed
+  callback port, plus isolated native Grok sign-in, handoff/thread operations
+  and persisted-grant reconnection checks.
 - Optional external OAuth resource-server validation, restored independently
   of event delivery: protected-resource discovery, RS256/ES256 access tokens,
   bounded HTTPS JWKS fetching and explicit subject/client-to-agent bindings.

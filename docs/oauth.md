@@ -101,11 +101,17 @@ Public listings still need platform review, publisher verification and a
 reachable provider. Current OpenAI hosts also check the authorization response
 issuer when the provider advertises RFC 9207 support.
 
-For pre-registered public PKCE clients, add `--target claude` or `--target codex`
+For pre-registered public PKCE clients, add `--target claude`, `--target codex` or `--target grok`
 and `--oauth-client-id your-public-client-id`. Build one client at a time;
 the ID is public, and the builder never accepts a client secret. Register the
 host's actual redirect URI with your provider. Codex local packages include
 its native `oauth.client_id` setting; Claude uses `oauth.clientId`.
+Grok also uses `oauth.clientId`. Add `--oauth-scope ops-brain` for the scope
+required by this API; repeat the option when requesting additional scopes.
+For providers requiring an exact loopback redirect, add
+`--oauth-callback-port 47832` and register
+`http://127.0.0.1:47832/callback`. The callback-port and scope options are
+Grok-specific. See the [package commands](../plugins/ops-brain-bus/README.md#build-for-your-client).
 
 Use `--target openai --auth oauth` for the separate portable public-submission
 artifact. It contains root `plugin.json` and `mcp.json` files following the
@@ -143,28 +149,40 @@ cluster on exit.
 On Linux, test native installed plugins without model requests:
 
 ```bash
-python3 scripts/test-oauth-flow.py --start-postgres --codex --claude
+python3 scripts/test-oauth-flow.py --start-postgres --codex --claude --grok
 ```
 
-This requires `bwrap` and the selected installed CLIs. Either flag can run
-independently; `--codex-binary` and `--claude-binary` select standalone
+This requires `bwrap` and the selected installed CLIs. Each flag can run
+independently; `--codex-binary`, `--claude-binary` and `--grok-binary` select standalone
 executables when PATH uses launchers. A mount namespace hides the real home
 and gives each child a temporary home at its normal path. `HOME` and
 `CODEX_HOME` keep their original values. Configuration, credentials and
 certificate trust changes stay inside the fixture and are removed on exit.
 
-Verified with Codex 0.165.0 and Claude Code 2.1.312 on 2026-10-29:
+Verified with Codex 0.165.0, Claude Code 2.1.312 and Grok Build 1.0.70 on 2026-10-29:
 
-- Both clients install the generated plugin from its local marketplace and
+- Claude and Codex install the generated plugin from its local marketplace and
   complete native OAuth sign-in against the HTTPS fixture.
 - Codex's app-server runtime discovers all 13 tools and runs handoff acceptance,
   completion and a threaded reply, including identity and visibility refusals.
 - Claude Code's headless sign-in completes in a temporary terminal, and a
   separate `mcp list` process reconnects with the persisted grant.
+- Grok installs the generated plugin by its local path. Its ACP runtime
+  completes native OAuth with the configured scope and fixed callback,
+  discovers 13 tools, and runs handoff acceptance, completion, a threaded
+  reply and identity/visibility refusals. A fresh process reconnects with
+  the saved grant. Its synthetic API configuration points at the fixture,
+  and no model requests are made.
+
+Real-provider verification on 2026-10-29 also passed with Auth0 RFC 9068
+access tokens and an installed Codex 0.165.0 plugin against a production
+deployment: 13 tools, native handoff/thread operations and persisted-grant
+reconnection. After a client restart, model-selected check-in, reply retrieval
+and a threaded notification succeeded in an ordinary Codex session.
 
 Add `--rust-tests` to run the Rust suite against the same isolated database.
 
-These checks do not establish real-provider interoperability, Claude web,
-Grok OAuth or Cursor sign-in, model tool selection or public directory approval.
-Operator provider setup remains necessary before enabling OAuth outside the
-fixture. No new scheduling or delivery path is added.
+The fixture does not establish Claude web, Cursor sign-in or public directory
+approval. Grok's real-provider sign-in and ordinary model-selected fleet
+handoffs remain unverified. Operator provider setup remains necessary for
+each new seat outside the fixture. No new scheduling or delivery path is added.

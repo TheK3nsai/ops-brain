@@ -155,24 +155,44 @@ class PackagingTests(unittest.TestCase):
 
     def test_provided_oauth_clients_are_public_target_specific_and_require_oauth(self):
         with tempfile.TemporaryDirectory() as temporary:
-            for target in ("claude", "codex"):
+            for target in ("claude", "codex", "grok"):
                 archive, = packaging.build(Path(temporary) / target, "https://bus.example.com/mcp",
                     targets=(target,), auth="oauth", oauth_client_id=f"{target}-public-client")
                 with zipfile.ZipFile(archive) as bundle:
                     server = json.loads(bundle.read("ops-brain-bus/.mcp.json"))["mcpServers"]["ops-brain"]
-                    if target == "claude":
-                        self.assertEqual(server["oauth"]["clientId"], "claude-public-client")
+                    if target in ("claude", "grok"):
+                        self.assertEqual(server["oauth"]["clientId"], f"{target}-public-client")
                     else:
                         self.assertEqual(server["oauth"]["client_id"], "codex-public-client")
                         self.assertEqual(server["extensions"]["com.openai"]["auth"]["client"],
                             {"mode": "provided", "clientId": "codex-public-client", "tokenEndpointAuthMethod": "none"})
-            for options in ({}, {"auth": "oauth"}, {"auth": "oauth", "targets": ("grok",)},
+            for options in ({}, {"auth": "oauth"},
                             {"auth": "oauth", "targets": ("cursor",)}, {"targets": ("codex",)},
                             {"auth": "oauth", "targets": ("codex",), "oauth_client_id": "bad\nclient"}):
                 output = Path(temporary) / "invalid"
                 with self.assertRaises(ValueError):
                     packaging.build(output, "https://bus.example.com/mcp", **dict(
                         {"oauth_client_id": "public-client"}, **options))
+                self.assertFalse(output.exists())
+
+    def test_grok_oauth_callback_and_scopes_are_explicit_and_validated_before_writing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            options = dict(targets=("grok",), auth="oauth", oauth_client_id="grok-public-client",
+                           oauth_callback_port=47832, oauth_scopes=["ops-brain", "offline_access"])
+            archive, = packaging.build(Path(temporary) / "valid", "https://bus.example.com/mcp", **options)
+            with zipfile.ZipFile(archive) as bundle:
+                server = json.loads(bundle.read("ops-brain-bus/.mcp.json"))["mcpServers"]["ops-brain"]
+                self.assertEqual(server["oauth"], {"clientId": "grok-public-client", "callbackPort": 47832,
+                                                  "scopes": ["ops-brain", "offline_access"]})
+                self.assertNotIn("headers", server)
+            for invalid in ({"targets": ("claude",)}, {"targets": ("openai",)}, {"auth": "token"},
+                            {"oauth_client_id": None}, {"oauth_callback_port": 0},
+                            {"oauth_callback_port": 65536}, {"oauth_callback_port": True},
+                            {"oauth_scopes": []}, {"oauth_scopes": "ops-brain"},
+                            {"oauth_scopes": ["bad scope"]}, {"oauth_scopes": ["bad\nvalue"]}):
+                output = Path(temporary) / "invalid"
+                with self.assertRaises(ValueError):
+                    packaging.build(output, "https://bus.example.com/mcp", **dict(options, **invalid))
                 self.assertFalse(output.exists())
 
     def test_malformed_url_errors_do_not_echo_credentials(self):
