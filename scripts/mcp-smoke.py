@@ -53,7 +53,11 @@ class MCP:
                             raise RuntimeError("SSE ended without a matching response")
                         if line.strip() == b"":
                             if chunks:
-                                value = json.loads(b"\n".join(chunks))
+                                data = b"\n".join(chunks)
+                                if not data.strip():
+                                    chunks = []
+                                    continue
+                                value = json.loads(data)
                                 if value.get("id") == payload["id"]:
                                     break
                                 chunks = []

@@ -76,7 +76,13 @@ Other deployment shapes:
 
 ## Connect your agents
 
-ops-brain speaks MCP over stdio (the default) or streamable HTTP. Multi-machine setups want HTTP, so every agent reaches the same server at `/mcp` with its own per-agent token.
+For local plugin installation in Claude Code, Codex CLI, Grok Build or Cursor,
+build the matching package from the shared
+[`ops-brain-bus` plugin source](plugins/ops-brain-bus/README.md). It includes
+the handoff skill and a connection to your self-hosted server. Manual MCP
+setup is also supported below.
+
+ops-brain speaks MCP over stdio (the default) or streamable HTTP. Multi-machine setups want HTTP, so every agent reaches the same server at `/mcp` with its own bound credential. The examples below use per-agent tokens; [optional OAuth sign-in](docs/oauth.md) uses an external provider.
 
 **Claude Code**: add to `~/.claude.json` under `mcpServers`:
 
@@ -172,6 +178,8 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
 | `OPS_BRAIN_AUTH_TOKEN` | (none) | Main bearer. Required for `http`: a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true`. |
 | `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for `/mcp`. Enforces identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
+| `OPS_BRAIN_OAUTH_CONFIG` | (none) | Optional external provider, JWKS, scopes and explicit subject/client-to-agent bindings. See [`docs/oauth.md`](docs/oauth.md). |
+| `OPS_BRAIN_OAUTH_RESOURCE_URL` | (none) | Canonical public HTTPS MCP resource URL. Required together with the OAuth config; empty leaves OAuth disabled. |
 | `OPS_BRAIN_INSTRUCTIONS_EXTRA` | (none) | One line appended to the built-in MCP instructions for this deployment only. No line breaks. Rejected when the initialize text would pass 1400 bytes (213 bytes of room with the current built-in text). |
 | `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped tokens for `POST /api/handoff` and `GET /api/pending`. See [`docs/machine-callers.md`](docs/machine-callers.md). |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` values (DNS-rebinding protection). Set your public hostname when behind a reverse proxy. |
@@ -206,6 +214,7 @@ The server reads only the names above. Other `OPS_BRAIN_*` names in this repo ar
 | [`CHANGELOG.md`](CHANGELOG.md) | Release history, including why the live lane was removed in v6.0.0 |
 | [`GOTCHAS.md`](GOTCHAS.md) | Code and deployment footguns |
 | [`docs/agent-tokens.md`](docs/agent-tokens.md) | Per-agent identity tokens and onboarding a new agent |
+| [`docs/oauth.md`](docs/oauth.md) | External OAuth providers, agent bindings, plugin sign-in and local validation |
 | [`docs/machine-callers.md`](docs/machine-callers.md) | Contract for cron jobs, CI, and scripts filing handoffs over REST |
 | [`docs/bus-trust.md`](docs/bus-trust.md) | Why agents verify before complying with a handoff |
 | [`docs/operator-notify.md`](docs/operator-notify.md) | Mailing the operator when an agent is blocked on a human |
