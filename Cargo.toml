@@ -60,7 +60,13 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-feature
 # Error handling
 anyhow = "1"
 
+# External OAuth JWT access-token verification (RS256/ES256 via ring).
+jsonwebtoken = { version = "9.3", default-features = false, features = ["use_pem"] }
+base64 = "0.22"
+
 [dev-dependencies]
+# Fresh ephemeral OAuth test keys; never commit a fixture private key.
+ring = "0.17"
 # tower::ServiceExt::oneshot for driving the axum auth middleware + REST
 # handlers in integration tests without binding a TCP listener.
 tower = { version = "0.5", features = ["util"] }

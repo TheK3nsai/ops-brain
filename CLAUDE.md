@@ -8,7 +8,7 @@ Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18
 
 Tool groups, REST endpoints and the `backfill-embeddings` subcommand: `README.md` → *Tools*. Keep this heading's count equal to the `#[tool(` stubs in `src/tools/mod.rs`; a deploy check parses it (`GOTCHAS.md`).
 
-Identity: interactive sessions authenticate with **per-agent tokens** (`OPS_BRAIN_AGENT_TOKENS`) that bind `from_agent` server-side — MCP write tools reject mismatching identity. Agent tokens reach `/mcp` only, never REST. The main bearer stays unbound as operator break-glass. Contract in `docs/agent-tokens.md`.
+Identity: interactive sessions use **per-agent tokens** (`OPS_BRAIN_AGENT_TOKENS`) or optional external OAuth subject/client bindings. Both bind `from_agent` server-side and reach `/mcp` only, never REST; MCP write tools reject mismatching identity. The main bearer stays unbound as operator break-glass. Contracts: `docs/agent-tokens.md`, `docs/oauth.md`.
 
 ## Architecture Constraints
 

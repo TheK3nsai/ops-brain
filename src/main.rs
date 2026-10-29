@@ -2,7 +2,7 @@ use clap::Parser;
 use ops_brain::{
     api, auth,
     config::{Command, Config},
-    db, embeddings,
+    db, embeddings, oauth,
     tools::OpsBrain,
 };
 use rmcp::service::ServiceExt;
@@ -233,14 +233,24 @@ async fn main() -> anyhow::Result<()> {
                 agent_tokens: Arc::new(agent_tokens),
             };
 
+            let oauth = oauth::configured_state(
+                config.oauth_config.as_deref(),
+                config.oauth_resource_url.as_deref(),
+                auth_state.main_token.is_some(),
+            )
+            .map_err(anyhow::Error::msg)?;
+
             // The curl quick start is "ready" as soon as the main bearer
             // exists. That bearer can file as any agent. Say so until the
-            // operator mints per-agent tokens.
-            if auth_state.main_token.is_some() && auth_state.agent_tokens.is_empty() {
+            // operator configures identity-bound agent credentials.
+            if auth_state.main_token.is_some()
+                && auth_state.agent_tokens.is_empty()
+                && oauth.is_none()
+            {
                 tracing::warn!(
                     "No per-agent tokens configured. The main bearer can file as any agent. \
-                     Set OPS_BRAIN_AGENT_TOKENS before connecting agents, and keep the main \
-                     bearer on the server."
+                     Configure OPS_BRAIN_AGENT_TOKENS or OAuth before connecting agents, \
+                     and keep the main bearer on the server."
                 );
             }
 
@@ -260,8 +270,11 @@ async fn main() -> anyhow::Result<()> {
                 .nest("/api", api_routes)
                 .nest_service("/mcp", mcp_service)
                 .layer(axum::middleware::from_fn_with_state(
-                    auth_state,
-                    auth::bearer_auth,
+                    oauth::OAuthAuthState {
+                        auth: auth_state,
+                        oauth,
+                    },
+                    oauth::oauth_bearer_auth,
                 ));
 
             let listener = tokio::net::TcpListener::bind(&config.listen).await?;

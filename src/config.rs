@@ -60,6 +60,14 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_AGENT_TOKENS")]
     pub agent_tokens: Option<String>,
 
+    /// Optional external OAuth resource-server config (JSON); see docs/oauth.md.
+    #[arg(long, env = "OPS_BRAIN_OAUTH_CONFIG")]
+    pub oauth_config: Option<String>,
+
+    /// Canonical public HTTPS MCP URL used for OAuth resource discovery.
+    #[arg(long, env = "OPS_BRAIN_OAUTH_RESOURCE_URL")]
+    pub oauth_resource_url: Option<String>,
+
     /// One deployment-local line appended to the built-in MCP instructions.
     /// Use it for a rule that is true of this operator's team and false of
     /// every other deployment. Blank omits it. See `tools::resolve_instructions`.

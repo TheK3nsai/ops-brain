@@ -30,6 +30,9 @@ services:
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       # Per-agent tokens (JSON array): identity-bound /mcp sessions (see docs/agent-tokens.md)
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
+      # Optional external OAuth provider; empty leaves static authentication unchanged.
+      - OPS_BRAIN_OAUTH_CONFIG=${OPS_BRAIN_OAUTH_CONFIG:-}
+      - OPS_BRAIN_OAUTH_RESOURCE_URL=${OPS_BRAIN_OAUTH_RESOURCE_URL:-}
       # One deployment-local line. Empty here, same as the example file, so a
       # copy does not instruct agents in someone else's release process.
       # This deployment sets it in the .env beside this file, which compose

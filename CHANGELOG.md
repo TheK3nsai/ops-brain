@@ -4,8 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Optional external OAuth resource-server validation, restored independently
+  of event delivery: protected-resource discovery, RS256/ES256 access tokens,
+  bounded HTTPS JWKS fetching and explicit subject/client-to-agent bindings.
+  Fixed-token authentication and the 13 MCP tools remain available.
+- `--auth oauth` plugin packages and a local HTTPS/PKCE provider fixture that
+  exercises distinct seats and handoffs without deployment credentials.
+- Pre-registered public OAuth client IDs for Claude and Codex packages, a
+  separate portable OpenAI submission ZIP, and isolated native plugin tests:
+  Codex sign-in/tool calls and Claude Code sign-in/persisted-grant reconnection.
+- `scripts/package-plugin.py` builds self-hosted Claude Code, Codex CLI,
+  Grok Build and Cursor plugin folders, local marketplace catalogs and
+  reproducible ZIPs from the shared plugin source. It embeds the chosen
+  endpoint but never reads credentials; public OAuth listings remain separate.
+
 ### Fixed
 
+- Codex local OAuth packages use its native client-ID setting and compatibility
+  layout; Codex 0.165.0 skips the MCP server in the portable root layout.
+- OAuth-only setups no longer emit the static-agent-token onboarding warning.
+- The HTTP smoke client skips empty SSE events emitted by the MCP transport.
+- The handoff skill checks in when coordination is needed, rather than on
+  every session start, and retrieves specific completed handoffs by ID.
 - `docker-compose.prod.yml` now passes `OPS_BRAIN_EMBEDDINGS_ENABLED`, so
   `false` in `.env` can turn embeddings off without removing the URL. A
   `false` already sitting in a prod `.env` (as `.env.example` ships it) now

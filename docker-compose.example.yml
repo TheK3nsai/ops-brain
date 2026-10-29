@@ -59,6 +59,9 @@ services:
       # See docs/machine-callers.md and docs/agent-tokens.md in the repository.
       - OPS_BRAIN_MACHINE_TOKENS=${OPS_BRAIN_MACHINE_TOKENS:-}
       - OPS_BRAIN_AGENT_TOKENS=${OPS_BRAIN_AGENT_TOKENS:-}
+      # Available in an OAuth-capable build; leave empty on older release images.
+      - OPS_BRAIN_OAUTH_CONFIG=${OPS_BRAIN_OAUTH_CONFIG:-}
+      - OPS_BRAIN_OAUTH_RESOURCE_URL=${OPS_BRAIN_OAUTH_RESOURCE_URL:-}
       # One line of this deployment's own rules, appended to the built-in
       # MCP instructions. Leave empty unless you have a rule that is not
       # true of every team running ops-brain.
