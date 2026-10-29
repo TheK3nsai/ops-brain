@@ -46,6 +46,9 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+- Recorded real Auth0 verification for installed Codex and Grok plugins,
+  including saved-grant reconnection and a model-selected fleet handoff.
+  OpenAI submission-portal validation remains open.
 - Replace the direct-SQL handoff closeout workaround after a server restart
   with MCP reconnection, preserving the tool's visibility and transition checks.
 

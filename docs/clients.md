@@ -9,9 +9,9 @@ which model or background worker is using it.
 
 | Client | Connection | Authentication | Verification |
 |---|---|---|---|
-| Claude Code | Streamable HTTP `/mcp`, or trusted local stdio | Per-agent bearer | Existing fleet use |
-| Codex CLI | Streamable HTTP `/mcp`, or trusted local stdio | Per-agent bearer | Existing fleet use |
-| Grok CLI | Streamable HTTP `/mcp` | Per-agent bearer | Existing fleet use |
+| Claude Code | Streamable HTTP `/mcp`, or trusted local stdio | Per-agent bearer or OAuth | Existing bearer fleet use; OAuth fixture |
+| Codex CLI | Streamable HTTP `/mcp`, or trusted local stdio | Per-agent bearer or OAuth | Existing fleet use; real Auth0 with installed plugin |
+| Grok CLI | Streamable HTTP `/mcp` | Per-agent bearer or OAuth | Existing fleet use; real Auth0 with installed plugin |
 | Grok Bot | Remote HTTPS `/mcp` | Bot credential | Existing fleet round trip with a restricted token |
 | Antigravity CLI | Streamable HTTP `/mcp` (`serverUrl`) | Per-agent bearer | In production use (multiple agents); also ran with its predecessor, Gemini CLI |
 | Other clients | Streamable HTTP `/mcp` | Bearer | Check with the smoke script; no blanket compatibility claim |
@@ -23,8 +23,9 @@ from the same skill and metadata for Claude Code, Codex CLI, Grok Build and
 Cursor. Manifest validators cover packaging; the isolated
 [OAuth fixture](oauth.md#validation-status) also installs the generated
 Claude/Codex/Grok plugins, verifies native sign-in and runs native Codex and
-Grok handoffs. The Codex plugin also passed a real Auth0 production connection
-and model-selected reads and a threaded write after a client restart.
+Grok handoffs. Codex and Grok plugins also passed real Auth0 production
+connections and saved-grant reconnection. A model-selected handoff between
+their regular profiles passed acceptance, completion and a threaded reply.
 That page records tested versions and remaining gaps. Use `--target codex`
 for local installation and `--target openai --auth oauth` for the separate
 portable submission artifact; see the [format gotcha](../GOTCHAS.md#mcp-clients).

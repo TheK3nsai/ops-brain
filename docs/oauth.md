@@ -180,9 +180,17 @@ deployment: 13 tools, native handoff/thread operations and persisted-grant
 reconnection. After a client restart, model-selected check-in, reply retrieval
 and a threaded notification succeeded in an ordinary Codex session.
 
+Grok Build 1.0.70 also passed against that real provider and deployment with
+the installed plugin in its regular profile: native sign-in, all 13 tools,
+reads, refusal of a write claiming a different identity, and a fresh-process
+reconnection with the saved grant. Codex and Grok use separate public clients
+bound to their own seats. An ordinary model-selected handoff from Codex to
+Grok then passed retrieval, acceptance, a threaded reply and completion; the
+sender retrieved the reply through its own OAuth plugin. The bounded Grok
+check used only the four MCP tools needed for that acknowledgement.
+
 Add `--rust-tests` to run the Rust suite against the same isolated database.
 
-The fixture does not establish Claude web, Cursor sign-in or public directory
-approval. Grok's real-provider sign-in and ordinary model-selected fleet
-handoffs remain unverified. Operator provider setup remains necessary for
+Real-provider Claude Code, Claude web, Cursor sign-in and public directory
+approval remain unverified. Operator provider setup remains necessary for
 each new seat outside the fixture. No new scheduling or delivery path is added.
