@@ -122,6 +122,33 @@ Use `--target codex` for local installation; the
 [client format gotcha](../GOTCHAS.md#mcp-clients) explains why the artifacts
 remain separate. Public portal validation remains untested.
 
+### OpenAI review cases
+
+[`contrib/openai/review-cases.json`](../contrib/openai/review-cases.json) supplies
+five positive and three negative cases, included only in the `openai` package
+under `extensions.com.openai.review.test_cases`. These are prepared review
+scenarios, not recorded passes in ChatGPT or Codex with a reviewer account.
+The existing fixture and transport tests establish related behavior only.
+
+Before running the cases, use a dedicated demo dataset with seats
+`Review-Worker` and `Review-Peer`. Bind the reviewer's OAuth identity to
+`Review-Worker`; allow it to read its own handoffs and write global knowledge.
+Seed a pending action from `Review-Peer` to `Review-Worker` titled
+`[Demo] Acknowledge receipt`, whose entire task is to acknowledge receipt.
+Also seed a completed action from `Review-Worker` to `Review-Peer` titled
+`[Demo] Completed lookup`, with a notify reply titled
+`[Demo] Lookup acknowledgement` containing `Sample status confirmed.` and
+linked by `in_reply_to`. Reset only this synthetic data before a fresh run.
+The peer need not be online: creating a handoff queues work.
+
+Run all eight prompts in the target hosts, record their actual calls and
+outcomes, and capture the demo recording before submission. Reviewer access
+and sign-in instructions belong in the portal's secure review details, never
+in the package or repository. No review account, credentials or seeded data
+are created by the package builder. The
+[submission contract](https://developers.openai.com/plugins/deploy/submission#configure-onboarding-review-and-publication)
+defines the imported fields.
+
 ## Validation status
 
 Packaging checks passed Claude Code 2.1.312's strict directory/marketplace

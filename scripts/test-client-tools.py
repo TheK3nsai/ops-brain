@@ -149,6 +149,10 @@ class PackagingTests(unittest.TestCase):
                     asset = interface[field]
                     self.assertTrue(asset.startswith("./assets/"))
                     self.assertTrue(bundle.read("ops-brain-bus/" + asset.removeprefix("./")))
+                cases = portable["extensions"]["com.openai"]["review"]["test_cases"]
+                self.assertEqual(len(cases["positive"]), 5)
+                self.assertEqual(len(cases["negative"]), 3)
+                self.assertEqual(cases, json.loads((packaging.REPO / "contrib/openai/review-cases.json").read_text()))
                 self.assertEqual(server["type"], "streamable-http")
                 self.assertEqual(server["extensions"]["com.openai"]["auth"]["client"]["clientId"], "public-client")
                 self.assertNotIn("headers", server)
@@ -158,6 +162,38 @@ class PackagingTests(unittest.TestCase):
             self.assertFalse((Path(temporary) / "submission/openai/.agents").exists())
             with self.assertRaises(ValueError):
                 packaging.build(Path(temporary) / "token", "https://bus.example.com/mcp", targets=("openai",))
+
+    def test_review_cases_do_not_change_local_client_packages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archives = packaging.build(Path(temporary) / "output", "https://bus.example.com/mcp", auth="oauth")
+            for target, archive in zip(packaging.TARGETS, archives):
+                with zipfile.ZipFile(archive) as bundle:
+                    manifest = json.loads(bundle.read(f"ops-brain-bus/.{target}-plugin/plugin.json"))
+                    self.assertNotIn("review", manifest)
+                    self.assertNotIn("review", manifest.get("extensions", {}).get("com.openai", {}))
+                    self.assertFalse(any("review-cases" in name for name in bundle.namelist()))
+
+    def test_invalid_review_cases_are_rejected_before_creating_output(self):
+        original = json.loads((packaging.REPO / "contrib/openai/review-cases.json").read_text())
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "repo"
+            (repo / "contrib/openai").mkdir(parents=True)
+            for name in ("LICENSE-MIT", "LICENSE-APACHE"):
+                shutil.copyfile(packaging.REPO / name, repo / name)
+            review = repo / "contrib/openai/review-cases.json"
+            invalid = [dict(original, positive=[]), dict(original, negative=original["negative"][:2]),
+                       dict(original, test_credentials="synthetic-forbidden-field")]
+            for field, value in (("prompt", " "), ("tools_triggered", None),
+                                 ("expected_behavior", {}), ("test_credentials", "synthetic-forbidden-field")):
+                changed = json.loads(json.dumps(original))
+                changed["positive"][0][field] = value
+                invalid.append(changed)
+            for cases in invalid:
+                review.write_text(json.dumps(cases))
+                output = Path(temporary) / "invalid"
+                with self.assertRaises(ValueError):
+                    packaging.build(output, "https://bus.example.com/mcp", targets=("openai",), auth="oauth", repo=repo)
+                self.assertFalse(output.exists())
 
     def test_provided_oauth_clients_are_public_target_specific_and_require_oauth(self):
         with tempfile.TemporaryDirectory() as temporary:

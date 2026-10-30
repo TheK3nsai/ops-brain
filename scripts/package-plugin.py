@@ -36,6 +36,23 @@ def valid_oauth_scope(value):
         character == "!" or "#" <= character <= "[" or "]" <= character <= "~" for character in value)
 
 
+def submission_review_cases(repo):
+    cases = json.loads(read_file(repo, "contrib/openai/review-cases.json"))
+    if not isinstance(cases, dict) or set(cases) != {"positive", "negative"}:
+        raise ValueError("OpenAI review cases must contain positive and negative lists")
+    for kind, count in (("positive", 5), ("negative", 3)):
+        required = {"description", "prompt", "expected_behavior"}
+        if kind == "positive":
+            required.add("tools_triggered")
+        if not isinstance(cases[kind], list) or len(cases[kind]) != count:
+            raise ValueError(f"OpenAI review requires exactly {count} {kind} cases")
+        for case in cases[kind]:
+            if (not isinstance(case, dict) or set(case) != required
+                    or any(not isinstance(value, str) or not value.strip() for value in case.values())):
+                raise ValueError(f"Invalid OpenAI {kind} review case")
+    return cases
+
+
 def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_client_id=None,
                   oauth_callback_port=None, oauth_scopes=None):
     if target not in (*TARGETS, SUBMISSION_TARGET):
@@ -147,6 +164,7 @@ def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_cli
                 portable["$schema"] = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
                 portable["extensions"] = {"com.openai": {"interface": dict(manifest["interface"],
                     developerName=common["author"]["name"], composerIcon="./assets/logo.svg")}}
+                portable["extensions"]["com.openai"]["review"] = {"test_cases": submission_review_cases(repo)}
                 files["plugin.json"] = json_bytes(portable)
                 codex_mcp["$schema"] = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
                 codex_server["type"] = "streamable-http"
