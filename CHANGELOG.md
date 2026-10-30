@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- A guarded GitHub REST publisher for PRs, issues, comments, reviews and release
+  notes, plus metadata-only CI detection that also covers conflicting PRs.
 - Pre-registered Grok OAuth client packages with explicit scopes and a fixed
   callback port, plus isolated native Grok sign-in, handoff/thread operations
   and persisted-grant reconnection checks.

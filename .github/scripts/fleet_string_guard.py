@@ -26,6 +26,10 @@ payload from a local agent hook. Those are the surfaces that leaked (PR #116's
 message and body both passed a clean tree scan). No allowlist applies: it names
 tree paths, and a message has none.
 
+`--github-event FILE` scans selected public text from a GitHub webhook payload.
+The separate metadata workflow uses trusted default-branch code, so even a
+conflicting PR can have its text checked without running its code.
+
 Deliberate non-goals, so nobody over-trusts this: it does not decode base64,
 percent-encoding, or any other transformation, and it will not match a value
 whose characters have been re-spaced or split across lines. It catches
@@ -40,6 +44,7 @@ last character). Match output names a digest prefix and no plaintext at all.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -179,23 +184,11 @@ def scan_file(path: str, by_len: dict[int, set[str]], unscanned: list[tuple[str,
     return hits
 
 
-def scan_text(sources: list[str]) -> int:
-    """Scan free text (files, or stdin for none/`-`). Exit 1 on any hit.
-
-    The denylist is loaded and validated exactly as for a tree scan, so a
-    malformed or short denylist aborts here too rather than passing the text.
-    """
+def scan_sources(sources: list[tuple[str, bytes]], *, incomplete: bool = False) -> int:
+    """Scan already-read text, using caller-supplied, non-sensitive labels."""
     by_len = load_denylist()
-    failed = False
-    for src in sources or ["-"]:
-        label = "<stdin>" if src == "-" else src
-        try:
-            data = sys.stdin.buffer.read() if src == "-" else Path(src).read_bytes()
-        except OSError as exc:
-            # Unreadable is a failure, not a pass: an unread message is unscanned.
-            print(f"::error::NOT SCANNED (unreadable: {exc}): {label}")
-            failed = True
-            continue
+    failed = incomplete
+    for label, data in sources:
         hits = scan_bytes(data, by_len)
         if b"\0" in data:
             hits += scan_bytes(data.replace(b"\0", b""), by_len)
@@ -210,6 +203,73 @@ def scan_text(sources: list[str]) -> int:
     total = sum(len(v) for v in by_len.values())
     print(f"Clean: {total} guarded classes, none in the scanned text.")
     return 0
+
+
+def scan_text(sources: list[str]) -> int:
+    """Scan free text (files, or stdin for none/`-`). Exit 1 on any hit.
+
+    The denylist is loaded and validated exactly as for a tree scan, so a
+    malformed or short denylist aborts here too rather than passing the text.
+    """
+    failed = False
+    texts = []
+    for src in sources or ["-"]:
+        label = "<stdin>" if src == "-" else src
+        try:
+            data = sys.stdin.buffer.read() if src == "-" else Path(src).read_bytes()
+        except OSError as exc:
+            # Unreadable is a failure, not a pass: an unread message is unscanned.
+            print(f"::error::NOT SCANNED (unreadable: {exc}): {label}")
+            failed = True
+            continue
+        texts.append((label, data))
+    return scan_sources(texts, incomplete=failed)
+
+
+def github_event_sources(name: str, event: dict) -> list[tuple[str, bytes]]:
+    """Select public text only; never scan/echo the whole webhook envelope.
+
+    Labels are fixed here rather than taken from user-controlled event data.
+    JSON is decoded first so escaped characters cannot hide a guarded value.
+    Missing objects/fields or wrong types fail closed on a changed contract.
+    """
+    paths = {
+        "pull_request_target": ["pull_request.title", "pull_request.body",
+                                "pull_request.head.ref", "pull_request.base.ref"],
+        "issues": ["issue.title", "issue.body"],
+        "issue_comment": ["comment.body"],
+        "pull_request_review": ["review.body"],
+        "pull_request_review_comment": ["comment.body", "comment.path"],
+        "release": ["release.name", "release.body", "release.tag_name",
+                    "release.target_commitish"],
+    }
+    if name not in paths:
+        raise ValueError("unsupported GitHub event")
+    sources = []
+    for path in paths[name]:
+        value = event
+        for part in path.split("."):
+            if not isinstance(value, dict) or part not in value:
+                raise ValueError("missing public-text field in GitHub event")
+            value = value[part]
+        # Empty bodies and release names can be null in GitHub payloads.
+        if value is None and path.endswith((".body", ".name")):
+            value = ""
+        if not isinstance(value, str):
+            raise ValueError("invalid public-text field in GitHub event")
+        sources.append((path, value.encode("utf-8")))
+    return sources
+
+
+def scan_github_event(path: str) -> int:
+    try:
+        event = json.loads(Path(path).read_bytes())
+        sources = github_event_sources(os.environ.get("GITHUB_EVENT_NAME", ""), event)
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        # JSON exceptions can include supplied text. Never print them.
+        print("::error::GitHub event NOT SCANNED: unreadable or invalid public-text payload")
+        return 1
+    return scan_sources(sources)
 
 
 def main() -> int:
@@ -230,6 +290,11 @@ def main() -> int:
         #   .github/scripts/fleet_string_guard.py --text .git/COMMIT_EDITMSG
         #   git log --format=%B base..head | .github/scripts/fleet_string_guard.py --text
         return scan_text(args[1:])
+
+    if args and args[0] == "--github-event":
+        if len(args) != 2:
+            sys.exit("::error::--github-event requires one event file")
+        return scan_github_event(args[1])
 
     use_allowlist = True
     for arg in args:
