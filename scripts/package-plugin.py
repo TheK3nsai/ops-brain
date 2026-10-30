@@ -145,7 +145,8 @@ def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_cli
                 # plugin.json is present, even though the plugin is installed.
                 portable = dict(common)
                 portable["$schema"] = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
-                portable["extensions"] = {"com.openai": {"interface": manifest["interface"]}}
+                portable["extensions"] = {"com.openai": {"interface": dict(manifest["interface"],
+                    developerName=common["author"]["name"], composerIcon="./assets/logo.svg")}}
                 files["plugin.json"] = json_bytes(portable)
                 codex_mcp["$schema"] = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
                 codex_server["type"] = "streamable-http"

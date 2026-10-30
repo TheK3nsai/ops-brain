@@ -27,6 +27,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Portable OpenAI submission packages include the required developer name and
+  composer icon, reusing the bundled square SVG logo.
 - Plugin packaging rejects OAuth scopes outside the server's RFC 6749 grammar
   before writing an artifact.
 - Codex local OAuth packages use its native client-ID setting and compatibility

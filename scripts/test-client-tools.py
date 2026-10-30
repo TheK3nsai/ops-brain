@@ -143,6 +143,12 @@ class PackagingTests(unittest.TestCase):
                 portable = json.loads(bundle.read("ops-brain-bus/plugin.json"))
                 server = json.loads(bundle.read("ops-brain-bus/mcp.json"))["mcpServers"]["ops-brain"]
                 self.assertEqual(portable["name"], "ops-brain-bus")
+                interface = portable["extensions"]["com.openai"]["interface"]
+                self.assertEqual(interface["developerName"], portable["author"]["name"])
+                for field in ("logo", "composerIcon"):
+                    asset = interface[field]
+                    self.assertTrue(asset.startswith("./assets/"))
+                    self.assertTrue(bundle.read("ops-brain-bus/" + asset.removeprefix("./")))
                 self.assertEqual(server["type"], "streamable-http")
                 self.assertEqual(server["extensions"]["com.openai"]["auth"]["client"]["clientId"], "public-client")
                 self.assertNotIn("headers", server)

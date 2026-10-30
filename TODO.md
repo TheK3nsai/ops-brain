@@ -13,7 +13,10 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 ### Distribution
 
 - **OpenAI submission validation.** Validate the portable OAuth ZIP in the
-  submission portal before public submission. The existing fleet is the test
+  submission portal before public submission; upload is currently blocked on
+  developer identity review. Final submission also needs listing URLs, a demo
+  recording, five positive and three negative review cases, and reviewer access.
+  The existing fleet is the test
   cohort; outside beta users are not a prerequisite. Verified scope: `docs/oauth.md`.
 - **Phase 2 listings: follow up on review.** Keep the Grok Build catalog branch current and follow up on the Grok and Docker reviews. Current PRs, pins and blockers live in `docs/listings.md`; drop this item once both listings are live or declined.
 
