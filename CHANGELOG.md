@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Five positive and three negative OpenAI review scenarios, imported into the
+  portable submission ZIP, with synthetic-data setup and an explicit pending
+  reviewer-account validation status.
 - An opt-in guarded GitHub REST publisher for PRs, issues, comments, reviews
   and release notes, plus metadata-only CI detection that also covers conflicting PRs.
 - Pre-registered Grok OAuth client packages with explicit scopes and a fixed
