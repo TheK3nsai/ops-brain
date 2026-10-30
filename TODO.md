@@ -13,12 +13,10 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 ### Distribution
 
 - **OpenAI submission validation.** Validate the portable OAuth ZIP in the
-  submission portal before public submission; upload is currently blocked on
-  developer identity review. Eight review cases are prepared in
-  `contrib/openai/review-cases.json`; run them with the reviewer account before
-  submission. Listing URLs, a demo recording and reviewer access remain open.
-  The existing fleet is the test
-  cohort; outside beta users are not a prerequisite. Verified scope: `docs/oauth.md`.
+  portal before public submission. Last checked 2026-10-30: identity in review;
+  eight cases prepared, reviewer-account runs pending. Gates and setup:
+  [`docs/investigations/openai-submission.md`](docs/investigations/openai-submission.md).
+  The fleet remains the test cohort; outside beta users are not a prerequisite.
 - **Phase 2 listings: follow up on review.** Keep the Grok Build catalog branch current and follow up on the Grok and Docker reviews. Current PRs, pins and blockers live in `docs/listings.md`; drop this item once both listings are live or declined.
 
 ### Public-repo hygiene
