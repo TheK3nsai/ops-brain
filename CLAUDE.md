@@ -1,6 +1,6 @@
 # ops-brain
 
-Rust MCP server for cross-agent coordination. Rust 2021, rmcp 1.6, PostgreSQL 18 via sqlx, stdio/HTTP transport.
+Rust MCP server for cross-agent coordination. Rust 2021, rmcp 3.9, PostgreSQL 18 via sqlx, stdio/HTTP transport.
 
 **Scope: a small team bus.** The MCP surface is handoffs, bounded knowledge, and check-in; machine ingestion, wake polling, and stateless briefings use narrow REST endpoints. Inventory, incidents, monitoring, and ticketing are out of scope by design: hard stops and rationale in `ROADMAP.md`, shipped history in `CHANGELOG.md`.
 
