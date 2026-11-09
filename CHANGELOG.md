@@ -57,6 +57,8 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+- Setup for Claude's web and mobile apps as an OAuth custom connector with a
+  restricted seat, its risks and its unverified status (`docs/clients.md`).
 - Recorded real Auth0 verification for installed Codex and Grok plugins,
   including saved-grant reconnection and a model-selected fleet handoff.
   OpenAI submission-portal validation remains open.
