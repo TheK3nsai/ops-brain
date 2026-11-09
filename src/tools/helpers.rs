@@ -8,12 +8,14 @@ pub(crate) fn json_result<T: Serialize>(data: &T) -> CallToolResult {
     match serde_json::to_value(data) {
         Ok(json @ serde_json::Value::Object(_)) => CallToolResult::structured(json),
         Ok(json) => CallToolResult::structured(serde_json::json!({ "result": json })),
-        Err(e) => CallToolResult::error(vec![Content::text(format!("Serialization error: {e}"))]),
+        Err(e) => CallToolResult::error(vec![ContentBlock::text(format!(
+            "Serialization error: {e}"
+        ))]),
     }
 }
 
 pub(crate) fn error_result(msg: &str) -> CallToolResult {
-    CallToolResult::error(vec![Content::text(msg.to_string())])
+    CallToolResult::error(vec![ContentBlock::text(msg.to_string())])
 }
 
 /// Resolve the caller's server-bound agent identity from the MCP tool-call
@@ -65,7 +67,9 @@ pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> String {
 }
 
 pub(crate) fn not_found(entity: &str, key: &str) -> CallToolResult {
-    CallToolResult::error(vec![Content::text(format!("{entity} not found: {key}"))])
+    CallToolResult::error(vec![ContentBlock::text(format!(
+        "{entity} not found: {key}"
+    ))])
 }
 
 /// Like `not_found`, but queries pg_trgm for similar slugs and appends "Did you mean: ..." suggestions.
@@ -82,7 +86,7 @@ pub(crate) async fn not_found_with_suggestions(
     if suggestions.is_empty() {
         not_found(entity, key)
     } else {
-        CallToolResult::error(vec![Content::text(format!(
+        CallToolResult::error(vec![ContentBlock::text(format!(
             "{entity} not found: {key}. Did you mean: {}?",
             suggestions.join(", ")
         ))])

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **rmcp 3.9.0** fixes RUSTSEC-2026-0462 (unbounded response buffering in
+  Streamable HTTP clients). ops-brain only serves MCP, so the client path was
+  never used; the upgrade clears the audit. `Content` is now `ContentBlock` and
+  `ServerInfo` is the deprecated alias of `ServerConfig`; no tool or protocol
+  change.
+- RUSTSEC-2026-0459 (bundled SQLite in `libsqlite3-sys`) is ignored in the
+  audit with its reasoning in `audit.toml`: SQLite is never compiled, and no
+  sqlx release accepts the fixed version yet.
+
 ### Added
 
 - Five positive and three negative OpenAI review scenarios, imported into the
