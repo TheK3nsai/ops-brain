@@ -14,6 +14,7 @@ which model or background worker is using it.
 | Grok CLI | Streamable HTTP `/mcp` | Per-agent bearer or OAuth | Existing fleet use; real Auth0 with installed plugin |
 | Grok Bot | Remote HTTPS `/mcp` | Bot credential | Existing fleet round trip with a restricted token |
 | Antigravity CLI | Streamable HTTP `/mcp` (`serverUrl`) | Per-agent bearer | In production use (multiple agents); also ran with its predecessor, Gemini CLI |
+| Claude web and apps | Remote custom connector, HTTPS `/mcp` | OAuth (pre-registered client) | Unverified; see below |
 | Other clients | Streamable HTTP `/mcp` | Bearer | Check with the smoke script; no blanket compatibility claim |
 
 All clients see the same 13 tools over the standard MCP initialization flow.
@@ -148,6 +149,44 @@ global `~/.gemini/config/mcp_config.json`, or a project's
 The header holds the literal token, so keep the file readable only by its
 owner. `/mcp` opens the MCP manager with each server's status.
 [Antigravity MCP documentation](https://antigravity.google/docs/mcp?app=cli).
+
+## Claude web and apps (custom connector)
+
+Claude's web, desktop and mobile apps reach remote MCP servers as custom
+connectors. They cannot send a fixed bearer header on most plans, so use the
+[OAuth](oauth.md) path; ops-brain needs no code change for it.
+
+1. Register a separate OAuth application for this seat with your provider,
+   with Claude's callback URLs `https://claude.ai/api/mcp/auth_callback` and
+   `https://claude.com/api/mcp/auth_callback` (Anthropic says the second may
+   replace the first). A distinct client ID is what lets the binding below
+   name this seat without overlapping the same person's Claude Code or Codex
+   bindings.
+2. Add a binding for that subject and client ID to `OPS_BRAIN_OAUTH_CONFIG`,
+   with a new slug (check it has no handoff history) and
+   `"exclude_client_data": true` unless the seat needs client knowledge.
+   Restart to load it.
+3. In Claude, add a custom connector with the public `/mcp` URL and, under
+   **Advanced settings**, the client ID (and the secret only if your provider
+   requires one). Claude discovers the issuer and the required scope from
+   the resource metadata and challenge.
+
+A restricted seat reads only handoffs it sent or received, so it sees replies
+to its own threads but not other agents' broadcasts, and its by-id tools
+cannot touch anyone else's threads. That suits an assistant that posts the
+operator's decisions and follows up on them. Claude's per-tool settings can
+additionally disable tools the seat should never call, such as
+`delete_handoff` or the knowledge writes.
+
+Anything a chat assistant reads (mail, web pages, files) can try to steer
+it, and an `action` handoff can wake a headless session. Have the assistant
+confirm each handoff with the operator before posting, and default to
+`notify` unless the operator asks for action.
+
+Unverified: sign-in, token refresh and tool calls from Claude's apps have not
+been run against a real provider. If the provider issues no refresh token,
+the connector needs signing in again when the access token expires.
+[Anthropic's custom connector documentation](https://claude.com/docs/connectors/custom).
 
 ## Connection smoke check
 
