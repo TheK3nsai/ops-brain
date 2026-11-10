@@ -110,3 +110,7 @@ Contract: `docs/agent-tokens.md`.
 - **Pushing a `.github/workflows/` change needs a token with `workflow` scope.** Without it, GitHub rejects the push, not the PR. Push workflow edits from a checkout whose `gh` login has the scope.
 - **A CHANGELOG version does not prove a release artifact exists.** Some versions have changelog sections and no tag. Check `git tag` or GitHub Releases before telling anyone to deploy a named release or image.
 - **`sed -i` on a CRLF file under Git Bash rewrites it to LF, and MSYS tools hide it.** Afterwards `grep -c $'\r$'` still reports CRLF, and with `core.autocrlf=true` `git diff --stat` is clean. Only a byte count taken outside MSYS is trustworthy (`[IO.File]::ReadAllBytes($p).Length`). Edit CRLF files from PowerShell.
+
+## Tests
+
+- **A test that captures tracing output flakes unless every test reaching the same `warn!`/`info!` also has a subscriber.** With one scoped dispatcher alive, tracing-core registers a callsite on its first hit using whatever subscriber that thread has; a parallel test with none caches the callsite as `Interest::never`, and the capturing test silently gets zero lines (about two runs in three before the fix). `rebuild_interest_cache()` doesn't close the race. Have every test that reaches the callsite capture (pattern: `capture_logs()` in `src/oauth.rs` tests), and run the module ~10 times in parallel before trusting it.
