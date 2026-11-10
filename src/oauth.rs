@@ -6,7 +6,7 @@
 //! ID tokens, opaque tokens and HMAC JWTs are deliberately unsupported.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -33,6 +33,14 @@ const MAX_JWKS_BYTES: usize = 256 * 1024;
 const MAX_JWKS_KEYS: usize = 64;
 const CACHE_TTL: Duration = Duration::from_secs(300);
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
+/// The same unmapped principal is logged at most once per window; connectors
+/// retry rejected requests every few seconds.
+const UNMAPPED_LOG_WINDOW: Duration = Duration::from_secs(60);
+/// Principal identifiers are bounded in the log so a verified token cannot
+/// make a single warning line arbitrarily large.
+const UNMAPPED_LOG_FIELD_CHARS: usize = 256;
+/// Distinct unmapped principals remembered for deduplication.
+const UNMAPPED_LOG_CAPACITY: usize = 32;
 
 /// Enable OAuth only when both public settings and operator authentication
 /// are present. Blank Compose interpolation has the same meaning as unset.
@@ -111,6 +119,16 @@ pub struct OAuthState {
     metadata_url: String,
     http: reqwest::Client,
     cache: Mutex<JwksCache>,
+    recent_unmapped: std::sync::Mutex<HashMap<Principal, Instant>>,
+}
+
+/// Identifiers of a verified token whose principal matched no binding. These
+/// are the only token-derived values ever logged.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Principal {
+    sub: String,
+    client_id: String,
+    azp: Option<String>,
 }
 
 /// Existing static authentication state remains unchanged for current callers
@@ -249,6 +267,7 @@ impl OAuthState {
             metadata_url: metadata.to_string(),
             http,
             cache: Mutex::new(JwksCache::default()),
+            recent_unmapped: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -367,9 +386,14 @@ impl OAuthState {
         {
             return Err(OAuthError::InvalidToken);
         }
-        let binding = self
-            .binding(&claims.sub, &claims.client_id)
-            .ok_or(OAuthError::UnmappedPrincipal)?;
+        let Some(binding) = self.binding(&claims.sub, &claims.client_id) else {
+            self.log_unmapped(Principal {
+                sub: claims.sub,
+                client_id: claims.client_id,
+                azp: verified_azp(token),
+            });
+            return Err(OAuthError::UnmappedPrincipal);
+        };
         let scopes: HashSet<_> = claims.scope.split_ascii_whitespace().collect();
         if !self
             .config
@@ -380,6 +404,39 @@ impl OAuthState {
             return Err(OAuthError::InsufficientScope);
         }
         Ok(agent_from_binding(binding))
+    }
+
+    /// Operators fix a binding from this line, so it names the principal the
+    /// IdP actually issued. It carries no token, claims set or headers.
+    fn log_unmapped(&self, principal: Principal) {
+        let now = Instant::now();
+        {
+            let mut recent = self
+                .recent_unmapped
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            recent.retain(|_, at| now.duration_since(*at) < UNMAPPED_LOG_WINDOW);
+            if recent.contains_key(&principal) {
+                return;
+            }
+            if recent.len() >= UNMAPPED_LOG_CAPACITY {
+                if let Some(oldest) = recent
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(p, _)| p.clone())
+                {
+                    recent.remove(&oldest);
+                }
+            }
+            recent.insert(principal.clone(), now);
+        }
+        // Emit outside the lock: a blocked stderr must not stall other requests.
+        tracing::warn!(
+            sub = ?bounded_log_field(&principal.sub),
+            client_id = ?bounded_log_field(&principal.client_id),
+            azp = ?principal.azp.as_deref().map(bounded_log_field),
+            "OAuth principal has no configured agent binding"
+        );
     }
 
     async fn key(&self, kid: &str, algorithm: Algorithm) -> Result<DecodingKey, OAuthError> {
@@ -459,6 +516,26 @@ impl OAuthState {
         }
         parse_keys(&body)
     }
+}
+
+/// Read `azp` from an already verified token for diagnostics only. It is not
+/// part of `Claims`, so an unusual `azp` (non-string, duplicated) can never
+/// change whether a token validates.
+fn verified_azp(token: &str) -> Option<String> {
+    let payload = URL_SAFE_NO_PAD.decode(token.split('.').nth(1)?).ok()?;
+    let payload: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+    payload.get("azp")?.as_str().map(str::to_string)
+}
+
+/// Truncated values end in `…` so an operator never copies a cut identifier
+/// into a binding that silently fails to match.
+fn bounded_log_field(value: &str) -> String {
+    let mut chars = value.chars();
+    let mut bounded: String = chars.by_ref().take(UNMAPPED_LOG_FIELD_CHARS).collect();
+    if chars.next().is_some() {
+        bounded.push('…');
+    }
+    bounded
 }
 
 fn agent_from_binding(binding: &OAuthBinding) -> AgentToken {
@@ -915,6 +992,7 @@ mod tests {
 
     #[tokio::test]
     async fn exact_subject_client_binding_and_scopes_are_required() {
+        let (logs, _guard) = capture_logs();
         let state = state();
         for field in ["sub", "client_id"] {
             let mut value = claims();
@@ -924,6 +1002,7 @@ mod tests {
                 Err(OAuthError::UnmappedPrincipal)
             ));
         }
+        assert_eq!(logs.lines().len(), 2, "each distinct principal is logged");
         let mut value = claims();
         value["scope"] = json!("other");
         assert!(matches!(
@@ -935,6 +1014,110 @@ mod tests {
             state.validate(&signed(&value)).await,
             Err(OAuthError::InsufficientScope)
         ));
+    }
+
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self {
+            self.clone()
+        }
+    }
+
+    /// Every test that reaches the unmapped-principal path must capture. A
+    /// parallel test hitting that `warn!` with no subscriber can cache the
+    /// callsite's global interest as "never" and silently drop captured events.
+    fn capture_logs() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buffer.clone())
+            .with_ansi(false)
+            .finish();
+        (buffer, tracing::subscriber::set_default(subscriber))
+    }
+
+    impl LogBuffer {
+        fn lines(&self) -> Vec<String> {
+            String::from_utf8(self.0.lock().unwrap().clone())
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn unmapped_principal_logs_only_deduplicated_bounded_identifiers() {
+        let (buffer, _guard) = capture_logs();
+        let state = state();
+
+        let mut value = claims();
+        value["sub"] = json!("issued-user-id");
+        value["azp"] = json!("issued-azp");
+        let token = signed(&value);
+        for _ in 0..3 {
+            assert!(matches!(
+                state.validate(&token).await,
+                Err(OAuthError::UnmappedPrincipal)
+            ));
+        }
+        let lines = buffer.lines();
+        assert_eq!(lines.len(), 1, "retries are deduplicated: {lines:?}");
+        let line = &lines[0];
+        assert!(line.contains("WARN"));
+        assert!(line.contains("sub=\"issued-user-id\""));
+        assert!(line.contains("client_id=\"approved-client\""));
+        assert!(line.contains("azp=Some(\"issued-azp\")"));
+        let signature = token.rsplit('.').next().unwrap();
+        for forbidden in [
+            token.as_str(),
+            signature,
+            "fixture-token-id",
+            "id.example.com",
+            RESOURCE,
+            "mcp other",
+        ] {
+            assert!(
+                !line.contains(forbidden),
+                "log leaked {forbidden:?}: {line}"
+            );
+        }
+
+        // A different principal logs immediately; control characters stay
+        // escaped on one line, oversized identifiers are visibly truncated,
+        // and a non-string azp is dropped rather than failing validation.
+        let mut other = claims();
+        other["client_id"] = json!(format!("forged\nline{}", "x".repeat(1000)));
+        other["azp"] = json!(123);
+        let other = signed(&other);
+        // Alternating principals each log once within the window.
+        for token in [&other, &token, &other, &token] {
+            assert!(matches!(
+                state.validate(token).await,
+                Err(OAuthError::UnmappedPrincipal)
+            ));
+        }
+        let lines = buffer.lines();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        let kept = UNMAPPED_LOG_FIELD_CHARS - "forged\nline".chars().count();
+        assert!(lines[1].contains(&format!("client_id=\"forged\\nline{}…\"", "x".repeat(kept))));
+        assert!(lines[1].contains("azp=None"));
+
+        let mut mapped = claims();
+        mapped["azp"] = json!(123);
+        assert!(state.validate(&signed(&mapped)).await.is_ok());
     }
 
     #[tokio::test]

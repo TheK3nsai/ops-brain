@@ -51,6 +51,13 @@ credentials reach `/mcp` only, never machine or operator REST endpoints.
 Startup logs `external OAuth configured` with its binding count; principal
 and OAuth client identifiers are omitted.
 
+A validly signed token whose subject/client pair matches no binding gets a
+403 without a challenge, and the server logs one `warn` naming the token's
+`sub`, `client_id` and string `azp`, deduplicated for 60 seconds per principal.
+Values over 256 characters are cut and end in `…`; never copy a cut value into
+a binding. The token, its other claims and the request headers are never
+logged, and `azp` is read for this line only, never for validation.
+
 ## Discovery and validation
 
 GET or HEAD on `/.well-known/oauth-protected-resource/mcp` and the root

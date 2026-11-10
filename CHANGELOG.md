@@ -17,6 +17,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- A rejected OAuth principal with no matching binding now logs its `sub`,
+  `client_id` and `azp` once per minute per principal, so operators can correct
+  the binding without decoding tokens by hand. The 403 response is unchanged.
 - Five positive and three negative OpenAI review scenarios, imported into the
   portable submission ZIP, with synthetic-data setup and an explicit pending
   reviewer-account validation status.
