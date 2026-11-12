@@ -42,8 +42,8 @@ python3 scripts/package-plugin.py --url https://bus.example.com/mcp \
   --output /tmp/ops-brain-codex
 ```
 
-This option supports Claude, Codex, Grok and the OpenAI submission target and
-accepts a public client ID only.
+This option supports Claude, Codex and Grok and accepts a public client ID
+only.
 Register each client's actual callback URL with the provider. Use separate
 client IDs when the same person needs distinct agent seats. A
 confidential client requiring a secret needs the host's secure connection
@@ -68,21 +68,6 @@ The source `.cursor-plugin/plugin.json` supplies shared metadata, and
 `mcp.json`, `skills/` and `assets/` supply the common content. The builder emits
 only the manifest fields each target uses, includes both licenses, and uses
 an explicit file list. Unrelated files in a checkout are not packaged.
-
-For OpenAI's public submission format, build a separate portable OAuth ZIP:
-
-```bash
-python3 scripts/package-plugin.py --url https://bus.example.com/mcp \
-  --target openai --auth oauth --output /tmp/ops-brain-openai
-```
-
-This emits root `plugin.json` and `mcp.json` files following OpenAI's
-[package format](https://developers.openai.com/plugins/build/plugins).
-The `all` target builds the four local client packages; it excludes this
-submission artifact. Use the `codex` package for local Codex installation;
-the [client format gotcha](https://github.com/TheK3nsai/ops-brain/blob/main/GOTCHAS.md#mcp-clients)
-explains why the artifacts remain separate. Generating the submission ZIP
-does not validate it in OpenAI's portal.
 
 ## Connect
 
@@ -126,9 +111,9 @@ credential from the environment. Keep one connection to the bus per client:
 when adopting the plugin, remove the equivalent manual MCP entry through that
 client's settings to avoid duplicate tools.
 
-These packages do not establish public directory approval. Authenticated
-public submissions for Claude and OpenAI need OAuth; configure a reachable
-provider before submitting the OAuth variant. Grok Bot and web chat
+These packages do not establish public directory approval. An authenticated
+public submission needs OAuth; configure a reachable provider before
+submitting the OAuth variant. Grok Bot and web chat
 connections have separate setup and review paths. No public listing or
 unattended wake behavior is enabled by building or installing a package.
 

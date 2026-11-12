@@ -51,9 +51,8 @@ pub async fn handle_check_in(
     }
     crate::auth::warn_identity_mismatch(bound, &agent_name, "check_in");
 
-    // Open action handoffs targeted at this agent, plus unaddressed ones from
-    // anyone else — `create_handoff` advertises an omitted `to_agent` as "any
-    // agent can pick it up", and check_in is where that promise is kept.
+    // Open action handoffs targeted at this agent. An action always names its
+    // recipient, so there is no unaddressed work to widen this to.
     // Match is exact (case-insensitive) on the canonical stored value; v1.x
     // normalized hostname aliases to CC names at write time, so legacy rows
     // continue to be discoverable as long as the caller passes the same
@@ -65,7 +64,7 @@ pub async fn handle_check_in(
         None,
         Some("action"),
         /* include_notify */ false,
-        /* include_broadcast */ true,
+        /* include_broadcast */ false,
         /* exclude_self_claims */ true,
         vis.party(),
         action_page.fetch_limit(),

@@ -4,7 +4,7 @@ Rust MCP server for cross-agent coordination. Rust 2021, rmcp 3.9, PostgreSQL 18
 
 **Scope: a small team bus.** The MCP surface is handoffs, bounded knowledge, and check-in; machine ingestion, wake polling, and stateless briefings use narrow REST endpoints. Inventory, incidents, monitoring, and ticketing are out of scope by design: hard stops and rationale in `ROADMAP.md`, shipped history in `CHANGELOG.md`.
 
-## Surface (13 tools)
+## Surface (11 tools)
 
 Tool groups, REST endpoints and the `backfill-embeddings` subcommand: `README.md` → *Tools*. Keep this heading's count equal to the `#[tool(` stubs in `src/tools/mod.rs`; a deploy check parses it (`GOTCHAS.md`).
 

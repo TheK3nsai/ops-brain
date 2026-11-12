@@ -297,7 +297,7 @@ def mcp(provider, token):
     client.send("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
                 "clientInfo": {"name": "oauth-fixture", "version": "1"}})
     client.send("notifications/initialized", notification=True)
-    assert len(client.send("tools/list")["tools"]) == 13
+    assert len(client.send("tools/list")["tools"]) == 11
     return client
 
 
@@ -319,11 +319,12 @@ def exercise(provider, recipient_token, recipient=None, recipient_agent="Fixture
     recipient.call("add_knowledge", {"author": recipient_agent, "title": "refuse client data",
                     "content": "fixture", "category": "gotcha", "client_slug": "private-client"}, expect_error=True)
     reply = recipient.call("create_handoff", dict(arguments, from_agent=recipient_agent,
-                            to_agent="Fixture-Claude", category="notify", in_reply_to=identifier))
-    recipient.call("complete_handoff", {"handoff_id": identifier})
+                            to_agent="Fixture-Claude", category="notify", in_reply_to=identifier,
+                            complete_parent=True))
+    assert reply["_parent_completed"] is True
+    inbox = sender.call("check_in", {"agent_name": "Fixture-Claude"})
+    assert any(row["id"] == reply["id"] for row in inbox["recent_notifications"]["items"])
     sender.call("complete_handoff", {"handoff_id": reply["id"]})
-    replies = sender.call("list_replies_to_me", {"agent_name": "Fixture-Claude"})
-    assert any(row["id"] == reply["id"] for row in replies["replies"])
     assert sender.call("get_handoff", {"handoff_id": identifier})["status"] == "completed"
     for token, path, status in (
             (recipient_token, "/api/briefing", 401),
@@ -475,7 +476,7 @@ def native_codex(provider, root, binary=None):
         assert completed["success"]
         app.request("config/mcpServer/reload", {})
         servers = app.request("mcpServerStatus/list", {"threadId": thread})["data"]
-        assert len(servers) == 1 and len(servers[0]["tools"]) == 13
+        assert len(servers) == 1 and len(servers[0]["tools"]) == 11
         assert servers[0]["authStatus"] == "oAuth" and not servers[0].get("toolsError")
         exercise(provider, provider.tokens["codex-fixture"], CodexMCP(app, server, thread))
     finally:
@@ -655,7 +656,7 @@ def native_grok(provider, root, binary=None):
                 grok_fixture_consent(app, session, provider, log, callback_port)
                 servers = grok_servers(app, session)
             assert servers[0]["session"]["status"] == "ready"
-            assert len(servers[0]["session"]["tools"]) == 13
+            assert len(servers[0]["session"]["tools"]) == 11
             assert provider.authenticated_initializations.get("grok-fixture", 0) > before
             if phase == "sign-in":
                 exercise(provider, provider.tokens["grok-fixture"], GrokMCP(app, session),
@@ -768,7 +769,7 @@ def main():
                         if args.codex:
                             STAGE = "native Codex plugin install/sign-in/tool calls"
                             native_codex(provider, root, args.codex_binary)
-                            print("PASS: installed Codex plugin, native OAuth sign-in, 13 tools and native handoff/thread/identity checks")
+                            print("PASS: installed Codex plugin, native OAuth sign-in, 11 tools and native handoff/thread/identity checks")
                         if args.claude:
                             STAGE = "native Claude Code plugin install/sign-in"
                             native_claude(provider, root, args.claude_binary)
@@ -776,7 +777,7 @@ def main():
                         if args.grok:
                             STAGE = "native Grok Build plugin install/sign-in/tool calls/reconnection"
                             native_grok(provider, root, args.grok_binary)
-                            print("PASS: installed Grok plugin, native OAuth, fixed callback/scopes, 13 tools, native handoff/thread/identity checks and persisted-grant reconnection; no model requests")
+                            print("PASS: installed Grok plugin, native OAuth, fixed callback/scopes, 11 tools, native handoff/thread/identity checks and persisted-grant reconnection; no model requests")
                     finally:
                         process.terminate()
                         process.wait(timeout=10)

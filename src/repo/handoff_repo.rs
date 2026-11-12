@@ -10,8 +10,7 @@ use crate::models::handoff::Handoff;
 /// wire on read paths. Writes keep `RETURNING *`.
 pub const HANDOFF_COLS: &str =
     "id, from_agent, to_agent, status, accepted_by, priority, category, title, body, context, \
-     in_reply_to, commit_hash, merge_commit, merged_at, origin, dedupe_key, \
-     repeat_count, created_at, updated_at";
+     in_reply_to, commit_hash, origin, dedupe_key, repeat_count, created_at, updated_at";
 
 /// How long a notify-class handoff stays visible in operational queries
 /// (list_handoffs, check_in) before being filtered out at read time. The row
@@ -27,6 +26,45 @@ pub async fn get_handoff(pool: &PgPool, id: Uuid) -> Result<Option<Handoff>, sql
     .await
 }
 
+const INSERT_HANDOFF: &str =
+    "INSERT INTO handoffs (id, from_agent, to_agent, priority, category, title, body, context, in_reply_to)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *";
+
+/// The caller-supplied fields of a new agent-filed handoff.
+pub struct NewHandoff<'a> {
+    pub from_agent: &'a str,
+    pub to_agent: Option<&'a str>,
+    pub priority: &'a str,
+    pub category: &'a str,
+    pub title: &'a str,
+    pub body: &'a str,
+    pub context: Option<&'a serde_json::Value>,
+    pub in_reply_to: Option<Uuid>,
+}
+
+fn insert_handoff<'q>(
+    new: &NewHandoff<'q>,
+) -> sqlx::query::QueryAs<'q, sqlx::Postgres, Handoff, sqlx::postgres::PgArguments> {
+    sqlx::query_as::<_, Handoff>(INSERT_HANDOFF)
+        .bind(Uuid::now_v7())
+        .bind(new.from_agent)
+        .bind(new.to_agent)
+        .bind(new.priority)
+        .bind(new.category)
+        .bind(new.title)
+        .bind(new.body)
+        .bind(new.context)
+        .bind(new.in_reply_to)
+}
+
+pub async fn create_handoff_from(
+    pool: &PgPool,
+    new: &NewHandoff<'_>,
+) -> Result<Handoff, sqlx::Error> {
+    insert_handoff(new).fetch_one(pool).await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn create_handoff(
     pool: &PgPool,
@@ -39,23 +77,54 @@ pub async fn create_handoff(
     context: Option<&serde_json::Value>,
     in_reply_to: Option<Uuid>,
 ) -> Result<Handoff, sqlx::Error> {
-    let id = Uuid::now_v7();
-    sqlx::query_as::<_, Handoff>(
-        "INSERT INTO handoffs (id, from_agent, to_agent, priority, category, title, body, context, in_reply_to)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *",
+    create_handoff_from(
+        pool,
+        &NewHandoff {
+            from_agent,
+            to_agent,
+            priority,
+            category,
+            title,
+            body,
+            context,
+            in_reply_to,
+        },
     )
-    .bind(id)
-    .bind(from_agent)
-    .bind(to_agent)
-    .bind(priority)
-    .bind(category)
-    .bind(title)
-    .bind(body)
-    .bind(context)
-    .bind(in_reply_to)
-    .fetch_one(pool)
     .await
+}
+
+/// File a reply and complete its parent in one transaction: the reply that
+/// reports the work and the close of the work it reports commit together.
+///
+/// The parent closes only when it is still open and `new.from_agent` is the
+/// agent it was addressed to or accepted by, so a sender following up on its
+/// own thread cannot close the recipient's open work with a stray flag. When
+/// the parent does not close, the reply is still filed and the second value
+/// is `None`; the caller reports why.
+pub async fn create_reply_completing_parent(
+    pool: &PgPool,
+    new: &NewHandoff<'_>,
+    parent: Uuid,
+    commit_hash: Option<&str>,
+) -> Result<(Handoff, Option<Handoff>), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let reply = insert_handoff(new).fetch_one(&mut *tx).await?;
+    let closed = sqlx::query_as::<_, Handoff>(
+        "UPDATE handoffs
+            SET status = 'completed',
+                commit_hash = COALESCE($2, commit_hash),
+                updated_at = now()
+          WHERE id = $1 AND status IN ('pending', 'accepted')
+            AND (LOWER(to_agent) = LOWER($3) OR LOWER(accepted_by) = LOWER($3))
+          RETURNING *",
+    )
+    .bind(parent)
+    .bind(commit_hash)
+    .bind(new.from_agent)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok((reply, closed))
 }
 
 /// Insert a machine-filed handoff (`origin = 'machine'`), idempotent on
@@ -127,8 +196,7 @@ pub async fn list_pending_for_agent(
         "SELECT {HANDOFF_COLS} FROM handoffs
           WHERE status IN ('pending', 'accepted')
             AND category = 'action'
-            AND (LOWER(to_agent) = LOWER($1)
-                 OR (to_agent IS NULL AND status = 'accepted' AND LOWER(accepted_by) = LOWER($1)))
+            AND LOWER(to_agent) = LOWER($1)
             AND {NOT_SELF_CLAIM}"
     );
     if since.is_some() {
@@ -177,6 +245,8 @@ pub async fn accept_handoff_as(
 ///
 /// Atomic: only open (pending/accepted) rows transition. `None` means the
 /// row is missing or already terminal — callers re-read to report which.
+/// (`merged` is a legacy terminal status: rows flipped by the removed
+/// `mark_merged` tool keep it.)
 pub async fn complete_handoff_with_commit(
     pool: &PgPool,
     id: Uuid,
@@ -194,67 +264,6 @@ pub async fn complete_handoff_with_commit(
     .bind(commit_hash)
     .fetch_optional(pool)
     .await
-}
-
-/// Mark a handoff as merged. Records the merge commit (typically the
-/// merge-to-main commit that bundled the work) and the merge timestamp.
-/// Does NOT require `commit_hash` to be set; callers who care about that
-/// linkage can verify it client-side before invoking.
-///
-/// Atomic: only 'completed' rows transition, so a concurrent merge (or a
-/// re-open) between the caller's precondition read and this write loses
-/// cleanly with `None` instead of overwriting.
-pub async fn mark_merged(
-    pool: &PgPool,
-    id: Uuid,
-    merge_commit: &str,
-) -> Result<Option<Handoff>, sqlx::Error> {
-    sqlx::query_as::<_, Handoff>(
-        "UPDATE handoffs
-            SET status = 'merged',
-                merge_commit = $2,
-                merged_at = now(),
-                updated_at = now()
-          WHERE id = $1 AND status = 'completed'
-          RETURNING *",
-    )
-    .bind(id)
-    .bind(merge_commit)
-    .fetch_optional(pool)
-    .await
-}
-
-/// Replies addressed to `agent`: handoffs whose `in_reply_to` references a
-/// handoff that `agent` originally sent. Optional `since` filters by the
-/// reply's `created_at`.
-pub async fn list_replies_to_me(
-    pool: &PgPool,
-    agent: &str,
-    since: Option<chrono::DateTime<chrono::Utc>>,
-    party: Option<&str>,
-    limit: i64,
-) -> Result<Vec<Handoff>, sqlx::Error> {
-    let mut q = format!(
-        "SELECT {}
-           FROM handoffs r
-           JOIN handoffs parent ON parent.id = r.in_reply_to
-          WHERE LOWER(parent.from_agent) = LOWER($1) AND {}",
-        super::aliased_cols(HANDOFF_COLS, "r"),
-        super::party_clause(2, "r.")
-    );
-    if since.is_some() {
-        q.push_str(" AND r.created_at > $3");
-        q.push_str(" ORDER BY r.created_at DESC LIMIT $4");
-    } else {
-        q.push_str(" ORDER BY r.created_at DESC LIMIT $3");
-    }
-
-    let mut query = sqlx::query_as::<_, Handoff>(&q).bind(agent).bind(party);
-    if let Some(ts) = since {
-        query = query.bind(ts);
-    }
-    query = query.bind(limit);
-    query.fetch_all(pool).await
 }
 
 /// How the status column is constrained in `list_handoffs_filtered`.
@@ -277,12 +286,11 @@ enum StatusFilter<'a> {
 /// spot.
 ///
 /// `include_broadcast` only matters alongside a `to_agent` filter: it widens
-/// that filter to also match rows with no recipient at all (`to_agent IS
-/// NULL`), excluding the agent's own broadcasts. `create_handoff` advertises an
-/// omitted `to_agent` as "any agent can pick it up", so somebody has to see
-/// those rows — but only `check_in` opts in. `list_handoffs`' explicit
-/// `to_agent` filter stays literal, and `list_pending_for_agent` (wake shims)
-/// includes only claimed broadcasts, so a new broadcast cannot wake every host.
+/// that filter to also match rows with no recipient, excluding the agent's own.
+/// Only notify handoffs can be filed without a recipient, so only `check_in`'s
+/// notification page opts in. `list_handoffs`' explicit `to_agent` filter stays
+/// literal, and `list_pending_for_agent` (wake shims) never matches a
+/// broadcast, so an announcement cannot wake every host.
 #[allow(clippy::too_many_arguments)]
 async fn list_handoffs_filtered(
     pool: &PgPool,
@@ -316,14 +324,10 @@ async fn list_handoffs_filtered(
     // reasoning as list_pending_for_agent).
     if to_agent.is_some() {
         if include_broadcast {
-            // Pending broadcasts go to everyone except the sender. Once
-            // claimed, only the recorded acceptor keeps the broadcast.
+            // Broadcasts go to everyone except the sender.
             conditions.push(format!(
                 "(LOWER(to_agent) = LOWER(${param_idx}) \
-                 OR (to_agent IS NULL AND status = 'pending' \
-                     AND LOWER(from_agent) <> LOWER(${param_idx})) \
-                 OR (to_agent IS NULL AND status = 'accepted' \
-                     AND LOWER(accepted_by) = LOWER(${param_idx})))"
+                 OR (to_agent IS NULL AND LOWER(from_agent) <> LOWER(${param_idx})))"
             ));
         } else {
             conditions.push(format!("LOWER(to_agent) = LOWER(${param_idx})"));
@@ -561,55 +565,18 @@ pub async fn list_open_action_briefs(
     .await
 }
 
-/// Has any handoff other than `exclude_id` ever named `agent` as sender or
-/// recipient? The bus deliberately has no agent registry — an agent exists
-/// because it has appeared on a handoff. Used by `create_handoff` to warn (not
-/// refuse) when a recipient slug is brand new, so a typo'd recipient doesn't
-/// silently sit unread. `exclude_id` is the row just inserted, which of course
-/// names the slug.
-pub async fn agent_seen_before(
-    pool: &PgPool,
-    agent: &str,
-    exclude_id: Uuid,
-) -> Result<bool, sqlx::Error> {
+/// Has any handoff ever named `agent` as sender or recipient? The briefing
+/// uses it to tell an empty operator queue from a misspelled operator slug.
+pub async fn agent_seen(pool: &PgPool, agent: &str) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (
             SELECT 1 FROM handoffs
-             WHERE id <> $2
-               AND (LOWER(from_agent) = LOWER($1) OR LOWER(to_agent) = LOWER($1))
+             WHERE LOWER(from_agent) = LOWER($1) OR LOWER(to_agent) = LOWER($1)
          )",
     )
     .bind(agent)
-    .bind(exclude_id)
     .fetch_one(pool)
     .await
-}
-
-/// Up to 3 known agent slugs most similar to `attempted`, by pg_trgm trigram
-/// similarity over the distinct sender/recipient values already on the bus.
-/// Suggestion only — never a gate. Errors degrade to no suggestions.
-pub async fn suggest_similar_agents(
-    pool: &PgPool,
-    attempted: &str,
-    exclude_id: Uuid,
-) -> Vec<String> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT agent FROM (
-             SELECT DISTINCT from_agent AS agent FROM handoffs WHERE id <> $2
-             UNION
-             SELECT DISTINCT to_agent AS agent FROM handoffs
-              WHERE id <> $2 AND to_agent IS NOT NULL
-         ) known
-          WHERE LOWER(agent) <> LOWER($1)
-            AND similarity(agent, $1) > 0.2
-          ORDER BY similarity(agent, $1) DESC
-          LIMIT 3",
-    )
-    .bind(attempted)
-    .bind(exclude_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default()
 }
 
 /// Hard delete that leaves an `audit_log` tombstone. One statement, so the

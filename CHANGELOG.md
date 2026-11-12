@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [7.0.0] — 2026-11-12
+
+### Removed (breaking)
+
+- **`mark_merged` and `list_replies_to_me`** (13 → 11 tools). Of the 200 most
+  recent handoffs, 4 were ever marked merged and nothing read the status; a
+  reply addressed to an agent already shows in its `check_in`. Rows already
+  `merged` keep that status as a legacy terminal state. `merge_commit` and
+  `merged_at` stay in the table and are no longer returned. Remove both tool
+  names from any client-side allowlist.
+- **Broadcast `action` handoffs.** `create_handoff` now requires `to_agent`
+  for an `action`; only a `notify` can be sent to everyone. `check_in` no
+  longer lists unaddressed actions, and `accept_handoff` no longer has an
+  unbound-broadcast rule. Before upgrading, readdress or close any open
+  unaddressed action (`to_agent IS NULL`, `category = 'action'`, status
+  pending or accepted): afterwards it leaves every agent's `check_in` and
+  wake queue and shows only in the operator briefing.
+- **The OpenAI submission target** of `scripts/package-plugin.py`, its review
+  cases and its investigation notes. It was never released.
+
+### Added
+
+- **`complete_parent` on `create_handoff`.** A reply with `in_reply_to` and
+  `complete_parent: true` files the reply and completes the parent in one
+  transaction; `commit_hash` records the work on the parent. The parent closes
+  only when it is open and addressed to, or accepted by, the replying agent.
+  Otherwise the reply is still filed and the result carries
+  `_parent_completed: false` and a `_warning`.
+- **Recipient check against configured credentials.** `create_handoff` warns,
+  and still files, when no agent token, OAuth binding or machine-token
+  `agents` list names the recipient: a misspelled slug, a retired seat or a
+  machine producer's sender name, none of which an agent or poller picks up. This replaces the "never seen on the bus
+  before" heuristic, which passed retired seats and warned on new ones. With
+  no bindings configured there is no check.
+
+### Changed
+
+- `accept_handoff` is described as optional: for work that will outlive the
+  session. `complete_handoff` already worked from `pending`.
+- The plugin skill (0.3.0) follows the shorter routine: do the work, then
+  reply with `complete_parent`.
+- Distribution is frozen at the listings that update themselves
+  (`ROADMAP.md` → *Decided*, `docs/listings.md`).
+
 ### Security
 
 - **rmcp 3.9.0** fixes RUSTSEC-2026-0462 (unbounded response buffering in
@@ -20,9 +64,6 @@ All notable changes to this project will be documented in this file.
 - A rejected OAuth principal with no matching binding now logs its `sub`,
   `client_id` and `azp` once per minute per principal, so operators can correct
   the binding without decoding tokens by hand. The 403 response is unchanged.
-- Five positive and three negative OpenAI review scenarios, imported into the
-  portable submission ZIP, with synthetic-data setup and an explicit pending
-  reviewer-account validation status.
 - An opt-in guarded GitHub REST publisher for PRs, issues, comments, reviews
   and release notes, plus metadata-only CI detection that also covers conflicting PRs.
 - Pre-registered Grok OAuth client packages with explicit scopes and a fixed
@@ -31,11 +72,11 @@ All notable changes to this project will be documented in this file.
 - Optional external OAuth resource-server validation, restored independently
   of event delivery: protected-resource discovery, RS256/ES256 access tokens,
   bounded HTTPS JWKS fetching and explicit subject/client-to-agent bindings.
-  Fixed-token authentication and the 13 MCP tools remain available.
+  Fixed-token authentication remains available.
 - `--auth oauth` plugin packages and a local HTTPS/PKCE provider fixture that
   exercises distinct seats and handoffs without deployment credentials.
-- Pre-registered public OAuth client IDs for Claude and Codex packages, a
-  separate portable OpenAI submission ZIP, and isolated native plugin tests:
+- Pre-registered public OAuth client IDs for Claude and Codex packages, and
+  isolated native plugin tests:
   Codex sign-in/tool calls and Claude Code sign-in/persisted-grant reconnection.
 - `scripts/package-plugin.py` builds self-hosted Claude Code, Codex CLI,
   Grok Build and Cursor plugin folders, local marketplace catalogs and
@@ -44,8 +85,6 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- Portable OpenAI submission packages include the required developer name and
-  composer icon, reusing the bundled square SVG logo.
 - Plugin packaging rejects OAuth scopes outside the server's RFC 6749 grammar
   before writing an artifact.
 - Codex local OAuth packages use its native client-ID setting and compatibility
@@ -75,7 +114,6 @@ All notable changes to this project will be documented in this file.
   restricted seat, its risks and its unverified status (`docs/clients.md`).
 - Recorded real Auth0 verification for installed Codex and Grok plugins,
   including saved-grant reconnection and a model-selected fleet handoff.
-  OpenAI submission-portal validation remains open.
 - Replace the direct-SQL handoff closeout workaround after a server restart
   with MCP reconnection, preserving the tool's visibility and transition checks.
 

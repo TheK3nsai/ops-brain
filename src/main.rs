@@ -153,20 +153,6 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
 
-            let embedding_client_http = embedding_client.clone();
-            let session_instructions = instructions;
-            let mcp_service = StreamableHttpService::new(
-                move || {
-                    Ok(OpsBrain::with_instructions(
-                        pool.clone(),
-                        embedding_client_http.clone(),
-                        session_instructions.clone(),
-                    ))
-                },
-                session_manager,
-                http_config,
-            );
-
             // Machine tokens: scoped credentials for the REST ingestion path
             // (POST /api/handoff) and wake poll (GET /api/pending). Parse
             // failures abort startup — a silently dropped token would read
@@ -253,6 +239,35 @@ async fn main() -> anyhow::Result<()> {
                      and keep the main bearer on the server."
                 );
             }
+
+            let embedding_client_http = embedding_client.clone();
+            let session_instructions = instructions;
+            // Who can read the bus, from the operator's static bindings: agent
+            // tokens, OAuth bindings, and the queues machine tokens poll.
+            let known_agents: Vec<String> = auth_state
+                .agent_tokens
+                .iter()
+                .map(|t| t.from_agent.clone())
+                .chain(
+                    auth_state
+                        .machine_tokens
+                        .iter()
+                        .flat_map(|t| t.agents.iter().cloned()),
+                )
+                .chain(oauth.iter().flat_map(|o| o.bound_agents()))
+                .collect();
+            let mcp_service = StreamableHttpService::new(
+                move || {
+                    Ok(OpsBrain::with_instructions(
+                        pool.clone(),
+                        embedding_client_http.clone(),
+                        session_instructions.clone(),
+                    )
+                    .with_known_agents(known_agents.clone()))
+                },
+                session_manager,
+                http_config,
+            );
 
             let api_routes = axum::Router::new()
                 .route("/briefing", axum::routing::post(api::generate_briefing))

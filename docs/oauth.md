@@ -122,24 +122,6 @@ For providers requiring an exact loopback redirect, add
 `http://127.0.0.1:47832/callback`. The callback-port and scope options are
 Grok-specific. See the [package commands](../plugins/ops-brain-bus/README.md#build-for-your-client).
 
-Use `--target openai --auth oauth` for the separate portable public-submission
-artifact. It contains root `plugin.json` and `mcp.json` files following the
-[OpenAI package contract](https://developers.openai.com/plugins/build/plugins).
-Use `--target codex` for local installation; the
-[client format gotcha](../GOTCHAS.md#mcp-clients) explains why the artifacts
-remain separate. Public portal validation remains untested.
-
-### OpenAI review cases
-
-[`contrib/openai/review-cases.json`](../contrib/openai/review-cases.json) supplies
-five positive and three negative cases, included only in the `openai` package
-under `extensions.com.openai.review.test_cases`. These are prepared review
-scenarios, not recorded passes in ChatGPT or Codex with a reviewer account.
-The existing fixture and transport tests establish related behavior only;
-the builder creates no review account, credentials or seeded data. Current
-submission gates and synthetic-data setup are in the
-[open investigation](investigations/openai-submission.md).
-
 ## Validation status
 
 Packaging checks passed Claude Code 2.1.312's strict directory/marketplace

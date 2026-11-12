@@ -83,6 +83,9 @@ pub struct OpsBrain {
     /// Initialize text for this process: the built-in conventions, plus the
     /// optional deployment line resolved at startup.
     pub(crate) instructions: String,
+    /// Slugs the operator's static credentials are bound to. Empty when none
+    /// are configured. Used only to warn about a recipient nobody reads as.
+    pub(crate) known_agents: std::sync::Arc<Vec<String>>,
 }
 
 #[tool_router]
@@ -100,7 +103,16 @@ impl OpsBrain {
             pool,
             embedding_client,
             instructions,
+            known_agents: Default::default(),
         }
+    }
+
+    /// Record the slugs credentials are bound to (sorted, deduplicated).
+    pub fn with_known_agents(mut self, mut agents: Vec<String>) -> Self {
+        agents.sort_by_key(|a| a.to_ascii_lowercase());
+        agents.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        self.known_agents = std::sync::Arc::new(agents);
+        self
     }
 
     // ===== KNOWLEDGE TOOLS =====
@@ -198,7 +210,8 @@ impl OpsBrain {
         description = "Create a handoff for another agent; this is sufficient notification. \
         Category `action` = the recipient must do it; `notify` = FYI, \
         pruned from operational queries after 7 days. Replying? Pass `in_reply_to` to stay \
-        in the existing thread instead of opening a parallel handoff.",
+        in the existing thread instead of opening a parallel handoff, and `complete_parent` \
+        when the reply reports the work the parent asked you for.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -239,9 +252,10 @@ impl OpsBrain {
 
     #[tool(
         name = "accept_handoff",
-        description = "Claim a pending handoff and record its acceptor. Bound tokens use their \
-        own identity; family credentials and unbound broadcast claims require a concrete \
-        agent_name. Follow with complete_handoff.",
+        description = "Mark a pending handoff as taken and record its acceptor. Optional: use it \
+        for work you will not finish in this session, so the sender sees it is in hand. \
+        complete_handoff works straight from pending. Bound tokens use their own identity; \
+        family credentials require a concrete agent_name.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -262,9 +276,9 @@ impl OpsBrain {
 
     #[tool(
         name = "complete_handoff",
-        description = "Mark a handoff as completed. Optional `commit_hash` records the work \
-        ref (typically a git SHA) so `mark_merged` can later flip the same handoff to \
-        `merged` when the bundle reaches main.",
+        description = "Mark an open handoff (pending or accepted) as completed. Optional \
+        `commit_hash` records the work ref (typically a git SHA). To close a handoff and \
+        answer it in one call, use create_handoff with `in_reply_to` and `complete_parent`.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -283,54 +297,10 @@ impl OpsBrain {
     }
 
     #[tool(
-        name = "list_replies_to_me",
-        description = "List handoffs that reply to ones you sent. Returns handoffs whose \
-        `in_reply_to` references a handoff with your `agent_name` as `from_agent`. \
-        Optional ISO-8601 `since` filters by reply timestamp.",
-        annotations(
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    async fn list_replies_to_me(
-        &self,
-        params: Parameters<coordination::ListRepliesToMeParams>,
-        ext: Extensions,
-    ) -> Result<CallToolResult, McpError> {
-        let restricted = helpers::restricted_agent(&ext);
-        let vis = Visibility::from_restricted(restricted.as_deref());
-        let bound = helpers::bound_agent(&ext);
-        Ok(coordination::handle_list_replies_to_me(self, params.0, bound.as_deref(), vis).await)
-    }
-
-    #[tool(
-        name = "mark_merged",
-        description = "Flip a handoff to status=merged and record the merge commit. \
-        Typically called by an integrator script after the bundle containing the \
-        handoff's commit_hash lands in main. Idempotent on identical merge_commit; \
-        refuses to overwrite a different one.",
-        annotations(
-            read_only_hint = false,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    async fn mark_merged(
-        &self,
-        params: Parameters<coordination::MarkMergedParams>,
-        ext: Extensions,
-    ) -> Result<CallToolResult, McpError> {
-        let restricted = helpers::restricted_agent(&ext);
-        let vis = Visibility::from_restricted(restricted.as_deref());
-        Ok(coordination::handle_mark_merged(self, params.0, vis).await)
-    }
-
-    #[tool(
         name = "list_handoffs",
-        description = "List handoffs with optional filters. Use status='pending' to see what needs attention.",
+        description = "List handoffs with optional filters, newest first. Use `from_agent` to \
+        follow what you sent, or `to_agent` with `include_notify` to see every reply and FYI \
+        addressed to you.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -375,11 +345,13 @@ impl OpsBrain {
 
     #[tool(
         name = "check_in",
-        description = "Pending-work query: open action handoffs addressed to you or to \
-        nobody in particular (max 20), plus recent notify-class handoffs to you or broadcast (max 5, compact). \
+        description = "Pending-work query: open action handoffs addressed to you (max 20), \
+        plus recent notify-class handoffs to you or broadcast (max 5, compact). A reply \
+        addressed to you arrives here like any other handoff. \
         `has_more` on a section means the cap was hit — use list_handoffs for the rest. \
         Accepted handoffs you filed to yourself are locks: counted in `self_claims_held`, not listed. \
-        Next step is get_handoff for the full body, then accept_handoff. Pass `agent_name` \
+        Next step is get_handoff for the full body, then complete_handoff or a reply with \
+        `complete_parent`. Pass `agent_name` \
         (your free-form agent slug — e.g. 'Claude-Laptop', 'Codex-Buildbox').",
         annotations(
             read_only_hint = true,
@@ -509,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_surface_is_exactly_thirteen_tools() {
+    fn tool_surface_is_exactly_eleven_tools() {
         let tools = OpsBrain::tool_router().list_all();
         let mut names: Vec<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
         names.sort();
@@ -525,8 +497,6 @@ mod tests {
                 "delete_knowledge",
                 "get_handoff",
                 "list_handoffs",
-                "list_replies_to_me",
-                "mark_merged",
                 "search_bus",
                 "update_knowledge",
             ]

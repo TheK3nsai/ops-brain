@@ -15,9 +15,9 @@ pub struct CreateHandoffParams {
     /// Examples: "Claude-Laptop", "Codex-Buildbox".
     #[serde(alias = "from_machine")]
     pub from_agent: String,
-    /// Target agent (free-form slug, same form as `from_agent`). Omit to
-    /// broadcast: the handoff then appears in every other agent's `check_in`
-    /// until one of them accepts it.
+    /// Target agent (free-form slug, same form as `from_agent`). Required for
+    /// `action`. Omit only to broadcast a `notify`, which then shows in every
+    /// other agent's `check_in` for 7 days.
     #[serde(alias = "to_machine")]
     pub to_agent: Option<String>,
     /// Priority: low, normal, high, or critical
@@ -34,11 +34,17 @@ pub struct CreateHandoffParams {
     /// Optional structured context: a JSON object, max 8,192 bytes serialized.
     /// Point at evidence (paths, IDs, URLs) instead of inlining it.
     pub context: Option<serde_json::Value>,
-    /// Parent handoff ID (UUID) when this handoff is a reply to another.
-    /// Enables threaded discovery via `list_replies_to_me`. The reply's
-    /// `category` is preserved as written — a reply can legitimately be
-    /// `action` (it requires a response) or `notify` (pure FYI).
+    /// Parent handoff ID (full UUID) when this handoff is a reply. A reply is
+    /// `action` when it needs a response and `notify` when it only reports.
     pub in_reply_to: Option<String>,
+    /// With `in_reply_to`: also complete the parent in the same call. Use it
+    /// when this reply reports the work the parent asked you for. The parent
+    /// closes only if it is open and addressed to (or accepted by) you;
+    /// otherwise the reply is still filed and `_warning` says why not.
+    pub complete_parent: Option<bool>,
+    /// With `complete_parent`: commit ref (typically a git SHA) of the work
+    /// that closed the parent, recorded on the parent.
+    pub commit_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -51,9 +57,9 @@ pub struct GetHandoffParams {
 pub struct UpdateHandoffStatusParams {
     /// Handoff ID (UUID)
     pub handoff_id: String,
-    /// Concrete acceptor identity. Required for family credentials and for
-    /// unbound/stdio broadcast claims. Fixed agent tokens record their bound
-    /// identity; a supplied name must match the fixed identity or family.
+    /// Concrete acceptor identity. Required for family credentials. Fixed
+    /// agent tokens record their bound identity; a supplied name must match
+    /// the fixed identity or family.
     pub agent_name: Option<String>,
 }
 
@@ -62,37 +68,14 @@ pub struct CompleteHandoffParams {
     /// Handoff ID (UUID)
     pub handoff_id: String,
     /// Optional commit ref (typically a git SHA) recording the work that
-    /// closed this handoff. When set, lets `mark_merged` link this handoff
-    /// to a merge commit later.
+    /// closed this handoff.
     pub commit_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListRepliesToMeParams {
-    /// Your agent identifier (free-form slug). Returns handoffs whose
-    /// `in_reply_to` references a handoff you originally sent.
-    #[serde(alias = "my_name")]
-    pub agent_name: String,
-    /// Optional ISO-8601 timestamp; only replies created after this time
-    /// are returned.
-    pub since: Option<String>,
-    /// Max results (default 20, clamped to 1..=200)
-    #[serde(default, deserialize_with = "deserialize_flexible_i64")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarkMergedParams {
-    /// Handoff ID (UUID) to mark as merged.
-    pub handoff_id: String,
-    /// Merge commit ref (typically the merge-to-main SHA that bundled the
-    /// work). Free-form — any opaque identifier works.
-    pub merge_commit: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListHandoffsParams {
-    /// Filter by status: pending, accepted, completed, or merged
+    /// Filter by status: pending, accepted, or completed (`merged` matches
+    /// legacy rows only)
     pub status: Option<String>,
     /// Filter by target agent (free-form slug; exact match, case-insensitive).
     #[serde(alias = "to_machine")]
@@ -218,6 +201,29 @@ pub async fn handle_create_handoff(
         },
         None => None,
     };
+    // An action nobody is named on is work nobody owns. Only an announcement
+    // can go to everyone.
+    if to_agent.is_none() && category == "action" {
+        return error_result(
+            "to_agent is required for an action handoff; only a notify can be broadcast",
+        );
+    }
+
+    let complete_parent = p.complete_parent.unwrap_or(false);
+    if complete_parent && in_reply_to.is_none() {
+        return error_result("complete_parent needs in_reply_to: there is no parent to complete");
+    }
+    let commit_hash = p
+        .commit_hash
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    if commit_hash.is_some() && !complete_parent {
+        return error_result(
+            "commit_hash is recorded on the parent: set complete_parent, or pass it to \
+             complete_handoff",
+        );
+    }
 
     if let (Some(parent), Some(raw)) = (in_reply_to, p.in_reply_to.as_deref()) {
         if let Err(r) = ensure_handoff_visible(brain, parent, raw, vis).await {
@@ -225,55 +231,75 @@ pub async fn handle_create_handoff(
         }
     }
 
-    match crate::repo::handoff_repo::create_handoff(
-        &brain.pool,
-        &from_agent,
-        to_agent.as_deref(),
+    let new = crate::repo::handoff_repo::NewHandoff {
+        from_agent: &from_agent,
+        to_agent: to_agent.as_deref(),
         priority,
         category,
-        &p.title,
-        &p.body,
-        p.context.as_ref(),
+        title: &p.title,
+        body: &p.body,
+        context: p.context.as_ref(),
         in_reply_to,
-    )
-    .await
-    {
-        Ok(handoff) => {
-            let text = crate::embeddings::prepare_handoff_text(&handoff);
-            embed_and_store(
-                &brain.pool,
-                &brain.embedding_client,
-                "handoffs",
-                handoff.id,
-                &text,
-            )
-            .await;
+    };
+    let created = match in_reply_to.filter(|_| complete_parent) {
+        Some(parent) => crate::repo::handoff_repo::create_reply_completing_parent(
+            &brain.pool,
+            &new,
+            parent,
+            commit_hash,
+        )
+        .await
+        .map(|(reply, closed)| (reply, Some(closed.is_some()))),
+        None => crate::repo::handoff_repo::create_handoff_from(&brain.pool, &new)
+            .await
+            .map(|reply| (reply, None)),
+    };
+    let (handoff, parent_closed) = match created {
+        Ok(v) => v,
+        Err(e) => return error_result(&format!("Database error: {e}")),
+    };
 
-            // The novelty check scans every handoff, so for a restricted
-            // caller its presence and its suggestions would describe traffic
-            // outside the boundary. Skipped for them.
-            let warning = match to_agent.as_deref() {
-                Some(target) if vis.party().is_none() => {
-                    unknown_recipient_warning(&brain.pool, target, handoff.id).await
-                }
-                _ => None,
-            };
-            match warning {
-                Some(msg) => {
-                    let mut value = match serde_json::to_value(&handoff) {
-                        Ok(v) => v,
-                        Err(_) => return json_result(&handoff),
-                    };
-                    if let Some(obj) = value.as_object_mut() {
-                        obj.insert("_warning".to_string(), serde_json::Value::String(msg));
-                    }
-                    json_result(&value)
-                }
-                None => json_result(&handoff),
-            }
-        }
-        Err(e) => error_result(&format!("Database error: {e}")),
+    let text = crate::embeddings::prepare_handoff_text(&handoff);
+    embed_and_store(
+        &brain.pool,
+        &brain.embedding_client,
+        "handoffs",
+        handoff.id,
+        &text,
+    )
+    .await;
+
+    let mut warnings: Vec<String> = Vec::new();
+    if parent_closed == Some(false) {
+        warnings.push(
+            "reply filed, but the parent was not completed and no commit_hash was recorded: it \
+             is already closed, or it is not addressed to or accepted by you (use \
+             complete_handoff)"
+                .to_string(),
+        );
     }
+    // The roster would describe the deployment to a caller that is kept
+    // outside it, so a restricted caller gets no recipient check.
+    if let (Some(target), None) = (to_agent.as_deref(), vis.party()) {
+        warnings.extend(unbound_recipient_warning(&brain.known_agents, target));
+    }
+
+    if parent_closed.is_none() && warnings.is_empty() {
+        return json_result(&handoff);
+    }
+    let mut value = match serde_json::to_value(&handoff) {
+        Ok(v) => v,
+        Err(_) => return json_result(&handoff),
+    };
+    if let Some(obj) = value.as_object_mut() {
+        if let Some(closed) = parent_closed {
+            obj.insert("_parent_completed".to_string(), closed.into());
+        }
+        if !warnings.is_empty() {
+            obj.insert("_warning".to_string(), warnings.join("; ").into());
+        }
+    }
+    json_result(&value)
 }
 
 /// Error for a family credential that claims without naming its member.
@@ -285,37 +311,31 @@ fn family_claim_hint(binding: &str) -> String {
     )
 }
 
-/// Soft warning for a recipient slug the bus has never seen before. There is no
-/// agent registry by design — new agents must be addressable, so this never
-/// refuses the write. It exists because the alternative failure mode is silent:
-/// a typo'd recipient produces a perfectly valid handoff that nobody's
-/// `check_in` will ever match. Returns `None` for known slugs, and on any DB
-/// error (a warning is not worth failing a successful create over).
-async fn unknown_recipient_warning(
-    pool: &sqlx::PgPool,
-    target: &str,
-    created_id: uuid::Uuid,
-) -> Option<String> {
-    match crate::repo::handoff_repo::agent_seen_before(pool, target, created_id).await {
-        Ok(true) => None,
-        Ok(false) => {
-            let similar =
-                crate::repo::handoff_repo::suggest_similar_agents(pool, target, created_id).await;
-            let tail = if similar.is_empty() {
-                "no similar known slugs".to_string()
-            } else {
-                format!("similar known slugs: {}", similar.join(", "))
-            };
-            Some(format!(
-                "first handoff ever addressed to '{target}'; if this is a typo it will sit \
-                 unread; {tail}"
-            ))
-        }
-        Err(e) => {
-            tracing::warn!("recipient-novelty check failed for '{target}': {e}");
-            None
-        }
+/// The most slugs a recipient warning lists before it stops being a hint.
+const KNOWN_AGENTS_LISTED: usize = 20;
+
+/// Soft warning for a recipient no credential on this deployment is bound to.
+/// There is no agent registry by design, but the operator's static token
+/// bindings already say who can read the bus: agent tokens, OAuth bindings,
+/// and the queues machine tokens poll (which is how an operator slug or a
+/// wake shim's agent gets here). A slug outside that set is a typo, a retired
+/// seat, or a machine producer's sender name, and in each case no agent or
+/// poller picks the handoff up (only a human reading the briefing would see
+/// it). Never refuses the write. With no bindings configured
+/// (stdio, dev, a main-bearer-only server) there is nothing to check against.
+fn unbound_recipient_warning(known: &[String], target: &str) -> Option<String> {
+    if known.is_empty() || known.iter().any(|b| crate::auth::slug_matches(b, target)) {
+        return None;
     }
+    let tail = if known.len() <= KNOWN_AGENTS_LISTED {
+        format!("bound slugs: {}", known.join(", "))
+    } else {
+        format!("{} slugs are bound; check the spelling", known.len())
+    };
+    Some(format!(
+        "no credential on this deployment is bound to '{target}', so no agent or poller will \
+         pick this handoff up; {tail}"
+    ))
 }
 
 pub async fn handle_get_handoff(
@@ -372,17 +392,6 @@ pub async fn handle_accept_handoff(
         },
         _ => bound.or(supplied),
     };
-    if acceptor.is_none() {
-        match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
-            Ok(Some(h)) if h.to_agent.is_none() => {
-                return error_result(
-                    "agent_name is required to accept a broadcast with an unbound connection",
-                )
-            }
-            Ok(_) => {}
-            Err(e) => return error_result(&format!("Database error: {e}")),
-        }
-    }
     // Atomic accept records the winner alongside the pending precondition.
     match crate::repo::handoff_repo::accept_handoff_as(&brain.pool, id, acceptor).await {
         Ok(Some(handoff)) => json_result(&handoff),
@@ -428,130 +437,6 @@ pub async fn handle_complete_handoff(
             Ok(Some(h)) if h.status == "merged" => error_result("Handoff is already merged"),
             Ok(Some(h)) => error_result(&format!(
                 "Handoff is '{}', cannot complete from that state",
-                h.status
-            )),
-            Ok(None) => not_found("Handoff", &p.handoff_id),
-            Err(e) => error_result(&format!("Database error: {e}")),
-        },
-        Err(e) => error_result(&format!("Database error: {e}")),
-    }
-}
-
-pub async fn handle_list_replies_to_me(
-    brain: &super::OpsBrain,
-    p: ListRepliesToMeParams,
-    bound: Option<&str>,
-    vis: crate::auth::Visibility<'_>,
-) -> CallToolResult {
-    let agent = match crate::validation::validate_agent_name(&p.agent_name) {
-        Ok(n) => n.to_string(),
-        Err(e) => return error_result(&e),
-    };
-    // Read path: an agent normally polls its own thread replies. Querying
-    // another slug is legitimate during triage, so it is served — but logged,
-    // because "token X reading Y's replies" is a signal worth seeing.
-    // A restricted token has no triage role: its own replies only.
-    if let Err(msg) = vis.check_own_queue(&agent) {
-        return error_result(&msg);
-    }
-    crate::auth::warn_identity_mismatch(bound, &agent, "list_replies_to_me");
-    let since = match p.since.as_deref() {
-        Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
-            Ok(ts) => Some(ts.with_timezone(&chrono::Utc)),
-            Err(_) => {
-                return error_result(&format!(
-                    "Invalid `since` timestamp (expected RFC3339): {raw}"
-                ))
-            }
-        },
-        None => None,
-    };
-    let page = crate::pagination::PageRequest::new(p.limit, 20);
-
-    match crate::repo::handoff_repo::list_replies_to_me(
-        &brain.pool,
-        &agent,
-        since,
-        vis.party(),
-        page.fetch_limit(),
-    )
-    .await
-    {
-        Ok(mut replies) => {
-            let has_more = page.trim(&mut replies);
-            json_result(&serde_json::json!({
-                "replies": replies,
-                "limit": page.limit,
-                "limit_clamped": page.limit_clamped,
-                "has_more": has_more,
-            }))
-        }
-        Err(e) => error_result(&format!("Database error: {e}")),
-    }
-}
-
-pub async fn handle_mark_merged(
-    brain: &super::OpsBrain,
-    p: MarkMergedParams,
-    vis: crate::auth::Visibility<'_>,
-) -> CallToolResult {
-    let id = match uuid::Uuid::parse_str(&p.handoff_id) {
-        Ok(id) => id,
-        Err(_) => return error_result(&format!("Invalid UUID: {}", p.handoff_id)),
-    };
-    if let Err(r) = ensure_handoff_visible(brain, id, &p.handoff_id, vis).await {
-        return r;
-    }
-    let merge_commit = p.merge_commit.trim();
-    if merge_commit.is_empty() {
-        return error_result("merge_commit cannot be empty");
-    }
-
-    // Idempotency: if already merged with the same commit, return current
-    // state; if merged with a different commit, surface the conflict so
-    // the caller doesn't silently overwrite.
-    match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
-        Ok(Some(h)) if h.status == "merged" => {
-            if h.merge_commit.as_deref() == Some(merge_commit) {
-                return json_result(&h);
-            }
-            return error_result(&format!(
-                "Handoff already merged with commit {:?}; refusing to overwrite",
-                h.merge_commit.as_deref().unwrap_or("(unknown)")
-            ));
-        }
-        Ok(Some(h)) if h.status != "completed" => {
-            return error_result(&format!(
-                "Handoff must be completed before it can be marked merged (current status: '{}')",
-                h.status
-            ));
-        }
-        Ok(Some(h)) if h.commit_hash.as_deref().unwrap_or("").trim().is_empty() => {
-            return error_result("Handoff must have commit_hash before it can be marked merged")
-        }
-        Ok(Some(_)) => {}
-        Ok(None) => return not_found("Handoff", &p.handoff_id),
-        Err(e) => return error_result(&format!("Database error: {e}")),
-    }
-
-    // Atomic transition: only a 'completed' row can flip to merged, so a
-    // concurrent merge between the precondition read above and this write
-    // loses cleanly instead of overwriting merge_commit.
-    match crate::repo::handoff_repo::mark_merged(&brain.pool, id, merge_commit).await {
-        Ok(Some(handoff)) => json_result(&handoff),
-        Ok(None) => match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
-            Ok(Some(h)) if h.status == "merged" => {
-                if h.merge_commit.as_deref() == Some(merge_commit) {
-                    json_result(&h)
-                } else {
-                    error_result(&format!(
-                        "Handoff already merged with commit {:?}; refusing to overwrite",
-                        h.merge_commit.as_deref().unwrap_or("(unknown)")
-                    ))
-                }
-            }
-            Ok(Some(h)) => error_result(&format!(
-                "Handoff must be completed before it can be marked merged (current status: '{}')",
                 h.status
             )),
             Ok(None) => not_found("Handoff", &p.handoff_id),

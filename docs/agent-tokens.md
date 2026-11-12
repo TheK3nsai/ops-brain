@@ -22,7 +22,6 @@ the main bearer and from each other.
 | write | `add_knowledge` | `author` must match the token's slug or family, else rejected |
 | claim | `accept_handoff` | records `accepted_by`; family credentials require a concrete matching `agent_name` |
 | read | `check_in` | served for any `agent_name`, but a mismatch is **warn-logged** |
-| read | `list_replies_to_me` | served for any `agent_name`, but a mismatch is **warn-logged** |
 
 Writes fail loud on a mismatch — better to break than to file under the wrong
 identity. Reads stay permissive because cross-agent reads are legitimate (an
@@ -39,12 +38,14 @@ deployed, no agent host keeps a copy, not even a dormant one for emergencies.
 The binding guarantees **provenance on creation and claim** — a handoff's
 `from_agent` and `accepted_by`, and a knowledge entry's `author`, cannot be
 forged outside the credential's bound slug or family. Object mutations remain collaborative:
-`accept_handoff`, `complete_handoff`, `delete_handoff`, `mark_merged`,
-`update_knowledge` and `delete_knowledge` are not ownership-checked. An
-unrestricted token may act on any object; restricted tokens retain the
-visibility and author boundaries below. That is deliberate (you accept a handoff
-another agent addressed *to* you; an integrator script marks others' work
-merged) and enforcing per-object ownership there would break normal workflow.
+`accept_handoff`, `complete_handoff`, `delete_handoff`, `update_knowledge` and
+`delete_knowledge` are not ownership-checked. An unrestricted token may act on
+any object; restricted tokens retain the visibility and author boundaries
+below. That is deliberate (the agent that was blocked on the operator completes
+the item it addressed to them) and enforcing per-object ownership there would
+break normal workflow. The one narrower path is `complete_parent` on a reply:
+it closes the parent only for the agent the parent was addressed to or
+accepted by, so a follow-up from the sender cannot close the recipient's work.
 
 The consequence to hold in mind: a stolen unrestricted agent token is still a fleet-wide
 *mutate/delete* primitive — it just can't *forge new provenance*. This is no
@@ -55,10 +56,8 @@ bound identity), not a silent extension of this feature.
 
 Over the **stdio transport** (local dev) there is no HTTP auth layer, so durable
 write bindings are inert. Unbound callers can supply `agent_name` when claiming
-a handoff; broadcasts require it, while addressed handoffs default to their
-recipient. Preexisting accepted rows have no recorded acceptor and are not
-backfilled by guessing. Accepted broadcasts with a known acceptor stay in
-that seat's check-in, wake queue and briefing.
+a handoff; without one the acceptor defaults to the recipient. Preexisting
+accepted rows have no recorded acceptor and are not backfilled by guessing.
 
 Shared credentials share provenance across all workers that use them; see
 [client setup](clients.md).
@@ -126,11 +125,12 @@ A flagged token:
 | Surface | Behavior |
 |---|---|
 | knowledge reads (`search_bus`, browse, duplicate detection on `add_knowledge`) | global rows only (`client_id IS NULL`). A client row stays out even when it is `cross_client_safe`. |
-| handoff reads (`search_bus` handoffs, `list_handoffs`, `check_in`, `list_replies_to_me`) | only rows whose sender or recipient matches the token's slug or family. Broadcasts are excluded, since anyone may have written them for anyone. |
-| `check_in`, `list_replies_to_me` | its bound slug or a concrete family member only; other queues are rejected |
-| by-id tools (`get_handoff`, `accept_handoff`, `complete_handoff`, `mark_merged`, `delete_handoff`, `update_knowledge`, `delete_knowledge`) | a row outside the boundary returns **not found**, so the reply doesn't confirm it exists |
+| handoff reads (`search_bus` handoffs, `list_handoffs`, `check_in`) | only rows whose sender or recipient matches the token's slug or family. Broadcasts are excluded, since anyone may have written them for anyone. |
+| `check_in` | its bound slug or a concrete family member only; other queues are rejected |
+| by-id tools (`get_handoff`, `accept_handoff`, `complete_handoff`, `delete_handoff`, `update_knowledge`, `delete_knowledge`) | a row outside the boundary returns **not found**, so the reply doesn't confirm it exists |
 | `update_knowledge`, `delete_knowledge` on a global row | allowed only on rows the token authored, so it can't rewrite rules other agents rely on |
 | `create_handoff` with `in_reply_to` | the parent must be inside the boundary |
+| `create_handoff` recipient warning | not given: the list of bound slugs describes the deployment |
 | `create_handoff` to a never-seen recipient | no first-recipient `_warning`: that check scans every handoff, so its answer would describe traffic outside the boundary |
 | `add_knowledge`, `search_bus` with `client_slug` | rejected |
 

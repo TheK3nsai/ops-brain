@@ -191,7 +191,7 @@ pub async fn generate_briefing_inner(
     let operator_seen = if open.iter().any(|r| r.is_operator) {
         true
     } else {
-        crate::repo::handoff_repo::agent_seen_before(pool, operator, uuid::Uuid::nil())
+        crate::repo::handoff_repo::agent_seen(pool, operator)
             .await
             .unwrap_or(true)
     };
