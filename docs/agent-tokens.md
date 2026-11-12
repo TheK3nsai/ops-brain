@@ -1,7 +1,7 @@
 # Per-agent tokens
 
 Interactive agents reach ops-brain over MCP (`/mcp`). Without per-agent
-tokens, `from_agent` and `author` are caller-supplied strings: any holder of the
+tokens, `from_agent` is a caller-supplied string: any holder of the
 shared main bearer can file as any slug.
 
 Per-agent tokens close it. Each interactive agent gets its own token with a
@@ -19,7 +19,6 @@ the main bearer and from each other.
 | Path | Tool | Behavior on a bound token |
 |---|---|---|
 | write | `create_handoff` | `from_agent` must match the token's slug or configured `-*` family, else rejected |
-| write | `add_knowledge` | `author` must match the token's slug or family, else rejected |
 | claim | `accept_handoff` | records `accepted_by`; family credentials require a concrete matching `agent_name` |
 | read | `check_in` | served for any `agent_name`, but a mismatch is **warn-logged** |
 
@@ -36,11 +35,11 @@ deployed, no agent host keeps a copy, not even a dormant one for emergencies.
 ### Scope boundary: provenance, not per-object ownership
 
 The binding guarantees **provenance on creation and claim** — a handoff's
-`from_agent` and `accepted_by`, and a knowledge entry's `author`, cannot be
+`from_agent` and `accepted_by` cannot be
 forged outside the credential's bound slug or family. Object mutations remain collaborative:
-`accept_handoff`, `complete_handoff`, `delete_handoff`, `update_knowledge` and
-`delete_knowledge` are not ownership-checked. An unrestricted token may act on
-any object; restricted tokens retain the visibility and author boundaries
+`accept_handoff`, `complete_handoff` and `delete_handoff` are not
+ownership-checked. An unrestricted token may act on
+any object; restricted tokens retain the visibility boundary
 below. That is deliberate (the agent that was blocked on the operator completes
 the item it addressed to them) and enforcing per-object ownership there would
 break normal workflow. The one narrower path is `complete_parent` on a reply:
@@ -89,11 +88,9 @@ Configured server-side via `OPS_BRAIN_AGENT_TOKENS` (JSON array):
   bot files as `Grok-Bot-<BotName>`, e.g. `Grok-Bot-Builder`). The
   family members can impersonate each other, so it is provenance per
   credential, not per bot. Each member writes as its own slug
-  (`from_agent`, `author`), not the bare base, and passes it as `agent_name`
+  (`from_agent`), not the bare base, and passes it as `agent_name`
   to `accept_handoff`, which rejects a family claim without one.
-- `client` — informational, logged for audit. Not yet enforced on MCP calls
-  (tools carry an explicit `client_slug`); reserved so a future per-client MCP
-  binding needs no config change.
+- `client` — informational, logged for audit. Not enforced on MCP calls.
 - `exclude_client_data` — optional, default `false`. When `true`, the token
   is kept out of client data entirely. See "Keeping an agent out of client
   data" below.
@@ -115,32 +112,21 @@ agent tokens configured count=1 bindings=["Claude-Laptop (client=acme)"]
 
 `"exclude_client_data": true` is for an agent you want on the bus but not near
 client data, typically one whose vendor hasn't cleared a data-handling review.
-Without the flag, the client-scope guard is only a disclosure gate: any token
-can read client-scoped knowledge by acknowledging it, and every token can read
-all handoffs. A convention of "don't send it client data" binds the senders,
+Without the flag every token can read all handoffs. A convention of "don't send it client data" binds the senders,
 not the reader. The flag moves that boundary into the server.
 
 A flagged token:
 
 | Surface | Behavior |
 |---|---|
-| knowledge reads (`search_bus`, browse, duplicate detection on `add_knowledge`) | global rows only (`client_id IS NULL`). A client row stays out even when it is `cross_client_safe`. |
-| handoff reads (`search_bus` handoffs, `list_handoffs`, `check_in`) | only rows whose sender or recipient matches the token's slug or family. Broadcasts are excluded, since anyone may have written them for anyone. |
+| handoff reads (`search_bus`, `list_handoffs`, `check_in`) | only rows whose sender or recipient matches the token's slug or family. Broadcasts are excluded, since anyone may have written them for anyone. |
 | `check_in` | its bound slug or a concrete family member only; other queues are rejected |
-| by-id tools (`get_handoff`, `accept_handoff`, `complete_handoff`, `delete_handoff`, `update_knowledge`, `delete_knowledge`) | a row outside the boundary returns **not found**, so the reply doesn't confirm it exists |
-| `update_knowledge`, `delete_knowledge` on a global row | allowed only on rows the token authored, so it can't rewrite rules other agents rely on |
+| by-id tools (`get_handoff`, `accept_handoff`, `complete_handoff`, `delete_handoff`) | a row outside the boundary returns **not found**, so the reply doesn't confirm it exists |
 | `create_handoff` with `in_reply_to` | the parent must be inside the boundary |
 | `create_handoff` recipient warning | not given: the list of bound slugs describes the deployment |
-| `create_handoff` to a never-seen recipient | no first-recipient `_warning`: that check scans every handoff, so its answer would describe traffic outside the boundary |
-| `add_knowledge`, `search_bus` with `client_slug` | rejected |
 
-The filters run in the SQL, inside each search leg, so nothing outside the
-boundary reaches the response. That includes the cross-client withheld
-notices, which name the owning client. `search_bus` responses carry
-`_restricted` so the agent can tell an empty result from a filtered one. One
-recall caveat: an HNSW vector scan filters after it picks its candidates, so a
-restricted semantic search can come back short when most near neighbours are
-outside the boundary. FTS legs are unaffected.
+The filters run in the SQL, so nothing outside the boundary reaches the
+response and a page is never shortened after the fact.
 
 ### Before enabling it
 
@@ -148,12 +134,6 @@ outside the boundary. FTS legs are unaffected.
   string, not on the token. Rebinding a retired slug (say a former test seat)
   makes everything ever written to or from it readable. Check first:
   `SELECT count(*) FROM handoffs WHERE lower(from_agent) = lower('<slug>') OR lower(to_agent) = lower('<slug>');`
-- **Audit global knowledge.** The boundary is `client_id IS NULL`, so it
-  trusts every global row to be client-free. A row filed without
-  `client_slug` that carries client detail (hostnames, paths, staff) is
-  visible. Browse `search_bus` with `query: "*"` and re-scope or delete those
-  rows first. Deleting a client can't add to that set: `knowledge.client_id`
-  is `ON DELETE RESTRICT`, so the delete fails while the client owns rows.
 - **Confirm it took.** Unknown keys in an `OPS_BRAIN_AGENT_TOKENS` entry abort
   startup, so a misspelled flag can't silently default to off. After
   recreating the container, the binding summary must show
@@ -268,6 +248,10 @@ leaked):
 
 A gate discovered *after* the mint is a leaked credential: use *Revoking a
 compromised token* and gate the re-install instead.
+
+An agent that regains bus access after a cut re-reads its queue before it
+does anything else: the instructions issued during the gap are the ones it
+missed.
 
 ### What "revoked" does and does not mean
 

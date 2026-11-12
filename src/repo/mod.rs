@@ -19,28 +19,6 @@ pub(crate) fn build_or_tsquery_text(query: &str) -> Option<String> {
     Some(words.join(" | "))
 }
 
-/// Prefix a comma-separated column list with a table alias, e.g.
-/// `aliased_cols("id, title", "k")` -> `"k.id, k.title"`. Used by join
-/// queries (RRF hydration, reply threading) that need `SELECT k.*` replaced
-/// with an explicit alias-qualified list — keeps the column set defined once.
-pub(crate) fn aliased_cols(cols: &str, alias: &str) -> String {
-    cols.split(", ")
-        .map(|c| format!("{alias}.{c}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Knowledge filter for a caller restricted to global rows: a static SQL
-/// fragment (no bind parameter) appended to an existing `WHERE`. Empty when
-/// unrestricted, so the query text is unchanged for everyone else.
-pub(crate) fn global_only_clause(global_only: bool) -> &'static str {
-    if global_only {
-        " AND client_id IS NULL"
-    } else {
-        ""
-    }
-}
-
 /// Handoff filter for a caller restricted to its own traffic: the row must
 /// name `$param` as sender or recipient. The parameter is always bound (as
 /// NULL when unrestricted), so placeholder numbering stays fixed. `prefix` is
@@ -63,12 +41,7 @@ pub(crate) fn party_clause(param: u32, prefix: &str) -> String {
     )
 }
 
-pub mod audit_log_repo;
-pub mod client_repo;
-pub mod embedding_repo;
 pub mod handoff_repo;
-pub mod knowledge_repo;
-pub mod suggest_repo;
 
 #[cfg(test)]
 mod tests {
@@ -111,18 +84,5 @@ mod tests {
     #[test]
     fn or_tsquery_bare_punctuation_filtered() {
         assert_eq!(build_or_tsquery_text("- --"), None);
-    }
-
-    #[test]
-    fn aliased_cols_prefixes_every_column() {
-        assert_eq!(
-            aliased_cols("id, title, body", "h"),
-            "h.id, h.title, h.body"
-        );
-    }
-
-    #[test]
-    fn aliased_cols_single_column() {
-        assert_eq!(aliased_cols("id", "k"), "k.id");
     }
 }

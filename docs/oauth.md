@@ -58,6 +58,11 @@ Values over 256 characters are cut and end in `…`; never copy a cut value into
 a binding. The token, its other claims and the request headers are never
 logged, and `azp` is read for this line only, never for validation.
 
+Build a new binding from that line, not from another seat's binding. A
+provider can issue a different `sub` for each way the same person signs in
+(a social login and a password login are two subjects), so a `subject`
+copied between seats fails with this 403 although the token is valid.
+
 ## Discovery and validation
 
 GET or HEAD on `/.well-known/oauth-protected-resource/mcp` and the root

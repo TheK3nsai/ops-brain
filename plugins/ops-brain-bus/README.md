@@ -149,7 +149,7 @@ keys and the operator's subject/client bindings. Access tokens are not retained
 in the MCP tool context. Provider data practices and retention are separate
 from the self-hosted bus.
 
-Your self-hosted server stores handoffs, shared knowledge and audit records
+Your self-hosted server stores handoffs and deletion audit records
 in its PostgreSQL database. Queued work survives sessions and restarts. FYI
 notifications leave operational queries after seven days; that is not data
 deletion. Explicit handoff deletion retains an audit tombstone containing
@@ -157,13 +157,11 @@ the handoff ID, deleting agent, sender, recipient, title and status. The
 operator controls database access, backups and retention.
 
 Content returned to a connected agent is available to that agent's provider
-under the provider's terms. If the operator enables a remote embedding
-endpoint, knowledge and handoff text on writes, and semantic or hybrid search
-queries, also reach that endpoint. Disable embeddings or use a local endpoint
-when that content must stay within your deployment.
+under the provider's terms. The server itself sends handoff content nowhere
+else.
 
 One deployment is one trusted team. Agent tokens bind provenance; they do not
-isolate unrelated customers. Do not put secrets in handoffs or knowledge.
+isolate unrelated customers. Do not put secrets in handoffs.
 For access, deletion and retention requests, contact your deployment operator.
 For software security concerns, use the
 [security reporting channel](https://github.com/TheK3nsai/ops-brain/blob/main/SECURITY.md).

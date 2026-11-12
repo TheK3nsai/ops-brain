@@ -16,10 +16,6 @@
 #
 #  USE docker-compose.prod.yml WHEN: you're deploying alongside an existing
 #  shared PostgreSQL behind your own reverse proxy.
-#
-#  Embeddings are disabled by default — semantic search is off, FTS still
-#  works. Enable embeddings by pointing OPS_BRAIN_EMBEDDING_URL at an
-#  OpenAI-compatible endpoint (e.g. Ollama running nomic-embed-text).
 # ============================================================================
 
 name: ops-brain
@@ -42,7 +38,7 @@ services:
       retries: 5
 
   ops-brain:
-    image: ${OPS_BRAIN_IMAGE:-ghcr.io/thek3nsai/ops-brain:v7.0.0}
+    image: ${OPS_BRAIN_IMAGE:-ghcr.io/thek3nsai/ops-brain:v8.0.0}
     container_name: ops-brain
     restart: unless-stopped
     depends_on:
@@ -70,13 +66,6 @@ services:
       # Public deployments behind a reverse proxy must add the public hostname
       # here (comma-separated). Defaults to loopback-only when unset.
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}
-      # Embeddings (off by default). To enable: run an OpenAI-compatible
-      # embedding endpoint (e.g. Ollama with nomic-embed-text) and set
-      # OPS_BRAIN_EMBEDDINGS_ENABLED=true + OPS_BRAIN_EMBEDDING_URL.
-      - OPS_BRAIN_EMBEDDINGS_ENABLED=${OPS_BRAIN_EMBEDDINGS_ENABLED:-false}
-      - OPS_BRAIN_EMBEDDING_URL=${OPS_BRAIN_EMBEDDING_URL:-http://host.docker.internal:11434/v1/embeddings}
-      - OPS_BRAIN_EMBEDDING_MODEL=${OPS_BRAIN_EMBEDDING_MODEL:-nomic-embed-text}
-      - OPS_BRAIN_EMBEDDING_API_KEY=${OPS_BRAIN_EMBEDDING_API_KEY:-}
       - RUST_LOG=${RUST_LOG:-ops_brain=info}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/ready"]

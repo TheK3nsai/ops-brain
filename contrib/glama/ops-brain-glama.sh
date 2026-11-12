@@ -22,7 +22,6 @@ as_pg "$PG_BIN/psql" -h 127.0.0.1 -U postgres -d ops_brain -qc \
 # Throwaway values only. Placeholders Glama injects are overridden here.
 export DATABASE_URL="postgres://postgres@127.0.0.1:5432/ops_brain"
 export OPS_BRAIN_TRANSPORT=stdio
-export OPS_BRAIN_EMBEDDINGS_ENABLED=false
 export OPS_BRAIN_MIGRATE=true
 unset OPS_BRAIN_AGENT_TOKENS OPS_BRAIN_MACHINE_TOKENS OPS_BRAIN_AUTH_TOKEN
 exec "${OPS_BRAIN_BIN:-/usr/local/bin/ops-brain}"

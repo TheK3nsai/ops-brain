@@ -1,10 +1,5 @@
 use clap::Parser;
-use ops_brain::{
-    api, auth,
-    config::{Command, Config},
-    db, embeddings, oauth,
-    tools::OpsBrain,
-};
+use ops_brain::{api, auth, config::Config, db, oauth, tools::OpsBrain};
 use rmcp::service::ServiceExt;
 use tracing_subscriber::EnvFilter;
 
@@ -29,41 +24,6 @@ async fn main() -> anyhow::Result<()> {
         db::run_migrations(&pool).await?;
     }
 
-    let embedding_client = if let Some(url) = config.embedding_endpoint() {
-        tracing::info!(
-            "Embeddings configured: url={url}, model={}",
-            config.embedding_model
-        );
-        Some(embeddings::EmbeddingClient::new(
-            url.to_string(),
-            config.embedding_model.clone(),
-            config.embedding_api_key.clone(),
-        ))
-    } else {
-        tracing::info!("Embeddings off: set OPS_BRAIN_EMBEDDING_URL to enable");
-        None
-    };
-
-    if let Some(Command::BackfillEmbeddings { table, batch_size }) = config.command.as_ref() {
-        let client = embedding_client.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("embeddings are off; set OPS_BRAIN_EMBEDDING_URL to backfill")
-        })?;
-        if let Some(table) = table.as_deref() {
-            if !matches!(table, "knowledge" | "handoffs") {
-                anyhow::bail!("unknown table '{table}'; use knowledge or handoffs");
-            }
-        }
-        let result = ops_brain::tools::search::backfill_embeddings(
-            &pool,
-            client,
-            table.as_deref(),
-            *batch_size,
-        )
-        .await?;
-        println!("{}", serde_json::to_string_pretty(&result)?);
-        return Ok(());
-    }
-
     let instructions = ops_brain::tools::resolve_instructions(config.instructions_extra.as_deref())
         .map_err(anyhow::Error::msg)?;
     if instructions != ops_brain::tools::INSTRUCTIONS {
@@ -76,8 +36,7 @@ async fn main() -> anyhow::Result<()> {
     match config.transport.as_str() {
         "stdio" => {
             tracing::info!("Starting ops-brain MCP server (stdio transport)");
-            let server =
-                OpsBrain::with_instructions(pool.clone(), embedding_client.clone(), instructions);
+            let server = OpsBrain::with_instructions(pool.clone(), instructions);
             let transport = rmcp::transport::io::stdio();
             let service = server.serve(transport).await?;
             service.waiting().await?;
@@ -240,7 +199,6 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
 
-            let embedding_client_http = embedding_client.clone();
             let session_instructions = instructions;
             // Who can read the bus, from the operator's static bindings: agent
             // tokens, OAuth bindings, and the queues machine tokens poll.
@@ -258,12 +216,10 @@ async fn main() -> anyhow::Result<()> {
                 .collect();
             let mcp_service = StreamableHttpService::new(
                 move || {
-                    Ok(OpsBrain::with_instructions(
-                        pool.clone(),
-                        embedding_client_http.clone(),
-                        session_instructions.clone(),
+                    Ok(
+                        OpsBrain::with_instructions(pool.clone(), session_instructions.clone())
+                            .with_known_agents(known_agents.clone()),
                     )
-                    .with_known_agents(known_agents.clone()))
                 },
                 session_manager,
                 http_config,

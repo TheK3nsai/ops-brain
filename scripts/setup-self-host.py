@@ -18,7 +18,7 @@ def agent_slug(value):
 
 def initialize(directory, agents, image_tag):
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", image_tag):
-        raise ValueError("image tag must be an explicit release such as v7.0.0")
+        raise ValueError("image tag must be an explicit release such as v8.0.0")
     if not agents or len(set(a.lower() for a in agents)) != len(agents):
         raise ValueError("supply distinct agent names (case insensitive)")
     for agent in agents:
@@ -51,7 +51,6 @@ def initialize(directory, agents, image_tag):
                 f"POSTGRES_PASSWORD={secrets.token_hex(32)}\n"
                 f"OPS_BRAIN_AUTH_TOKEN={secrets.token_hex(32)}\n"
                 "OPS_BRAIN_AGENT_TOKENS='" + json.dumps(bindings, separators=(",", ":")) + "'\n"
-                "OPS_BRAIN_EMBEDDINGS_ENABLED=false\n"
                 "OPS_BRAIN_BIND=127.0.0.1\n"
                 "OPS_BRAIN_PORT=3000\n"
             )
@@ -67,7 +66,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--agent", action="append", type=agent_slug, required=True)
-    parser.add_argument("--image-tag", required=True, help="an existing published release, e.g. v7.0.0")
+    parser.add_argument("--image-tag", required=True, help="an existing published release, e.g. v8.0.0")
     args = parser.parse_args()
     try:
         env_path, token_directory = initialize(args.directory, args.agent, args.image_tag)

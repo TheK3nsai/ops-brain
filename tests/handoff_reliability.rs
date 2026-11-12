@@ -75,7 +75,7 @@ async fn racing_acceptors_record_exactly_one_winner() {
             .unwrap();
         assert!(!wake.iter().any(|h| h.id == row.id));
     }
-    let brain = OpsBrain::new(pool.clone(), None);
+    let brain = OpsBrain::new(pool.clone());
     let hidden = handle_get_handoff(
         &brain,
         GetHandoffParams {
@@ -94,7 +94,7 @@ async fn accept_handler_binds_identity_and_keeps_restricted_boundary() {
     let sender = format!("Sender-{}", Uuid::now_v7());
     let agent = format!("Bound-{}", Uuid::now_v7());
     let row = create(&pool, &sender, "broadcast").await;
-    let brain = OpsBrain::new(pool.clone(), None);
+    let brain = OpsBrain::new(pool.clone());
     let params = |name: Option<String>| UpdateHandoffStatusParams {
         handoff_id: row.id.to_string(),
         agent_name: name,
@@ -149,7 +149,7 @@ async fn family_accepts_require_explicit_concrete_identity() {
     let base = format!("Family-{}", Uuid::now_v7());
     let binding = format!("{base}-*");
     let member = format!("{base}-Coder");
-    let brain = OpsBrain::new(pool.clone(), None);
+    let brain = OpsBrain::new(pool.clone());
 
     // Both the base and a suffix member are valid concrete family identities.
     // Explicit identity is required even when the recipient could be inferred.
@@ -225,7 +225,7 @@ async fn delete_leaves_audit_tombstone_with_actor() {
     let sender = format!("Delete-Sender-{}", Uuid::now_v7());
     let actor = format!("Delete-Actor-{}", Uuid::now_v7());
     let row = create(&pool, &sender, "doomed").await;
-    let brain = OpsBrain::new(pool.clone(), None);
+    let brain = OpsBrain::new(pool.clone());
 
     let r = handle_delete_handoff(
         &brain,

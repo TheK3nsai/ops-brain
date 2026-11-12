@@ -21,7 +21,7 @@ You should receive an acknowledgment within 48 hours. I'll work with you to unde
 The following are in scope:
 - SQL injection or query manipulation
 - Authentication/authorization bypass (HTTP bearer token, MCP transport)
-- Cross-client data leakage (bypassing the client-scope safety gate)
+- A restricted token (`exclude_client_data`) reading or changing a handoff it neither sent nor received
 - Arbitrary code execution
 - Path traversal or file access
 - Denial of service via crafted MCP tool parameters
@@ -40,9 +40,9 @@ another's data.
 
 Key security features:
 
-- **Client-scope disclosure guard**: Scoped knowledge searches withhold unsafe cross-client content until the caller explicitly acknowledges it. Unscoped searches are fleet-wide, so this guard is not a hostile-user security boundary.
-- **Audit logging**: All cross-client access attempts are logged
+- **Restricted tokens**: a token with `exclude_client_data` is limited, in the queries themselves, to handoffs it sent or received
+- **Audit logging**: every handoff deletion leaves a tombstone in `audit_log`
 - **Bearer token auth**: HTTP transport requires authentication; scoped machine tokens and identity-bound agent tokens reduce accidental misuse
-- **Explicit embedding egress**: A remote embedding endpoint receives knowledge/handoff text and semantic or hybrid search queries; use a local endpoint or disable embeddings when content must stay inside the deployment boundary
+- **No outbound content**: the server sends handoff text to no other service; its only outbound request is the optional OAuth JWKS fetch
 - **No secrets in code**: All credentials via environment variables
-- **Input validation**: Slug resolution, UUID parsing, and bounded text/context validation on tool and REST inputs
+- **Input validation**: agent-slug shape, UUID parsing, and bounded text/context validation on tool and REST inputs

@@ -297,7 +297,7 @@ def mcp(provider, token):
     client.send("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
                 "clientInfo": {"name": "oauth-fixture", "version": "1"}})
     client.send("notifications/initialized", notification=True)
-    assert len(client.send("tools/list")["tools"]) == 11
+    assert len(client.send("tools/list")["tools"]) == 8
     return client
 
 
@@ -316,8 +316,6 @@ def exercise(provider, recipient_token, recipient=None, recipient_agent="Fixture
     claimed = recipient.call("accept_handoff", {"handoff_id": identifier, "agent_name": recipient_agent})
     assert claimed["accepted_by"] == recipient_agent
     recipient.call("check_in", {"agent_name": "Fixture-Claude"}, expect_error=True)
-    recipient.call("add_knowledge", {"author": recipient_agent, "title": "refuse client data",
-                    "content": "fixture", "category": "gotcha", "client_slug": "private-client"}, expect_error=True)
     reply = recipient.call("create_handoff", dict(arguments, from_agent=recipient_agent,
                             to_agent="Fixture-Claude", category="notify", in_reply_to=identifier,
                             complete_parent=True))
@@ -476,7 +474,7 @@ def native_codex(provider, root, binary=None):
         assert completed["success"]
         app.request("config/mcpServer/reload", {})
         servers = app.request("mcpServerStatus/list", {"threadId": thread})["data"]
-        assert len(servers) == 1 and len(servers[0]["tools"]) == 11
+        assert len(servers) == 1 and len(servers[0]["tools"]) == 8
         assert servers[0]["authStatus"] == "oAuth" and not servers[0].get("toolsError")
         exercise(provider, provider.tokens["codex-fixture"], CodexMCP(app, server, thread))
     finally:
@@ -656,7 +654,7 @@ def native_grok(provider, root, binary=None):
                 grok_fixture_consent(app, session, provider, log, callback_port)
                 servers = grok_servers(app, session)
             assert servers[0]["session"]["status"] == "ready"
-            assert len(servers[0]["session"]["tools"]) == 11
+            assert len(servers[0]["session"]["tools"]) == 8
             assert provider.authenticated_initializations.get("grok-fixture", 0) > before
             if phase == "sign-in":
                 exercise(provider, provider.tokens["grok-fixture"], GrokMCP(app, session),
@@ -734,7 +732,7 @@ def main():
                                                                          ("grok-fixture", "Fixture-Grok", True))]}
                 environment = {"PATH": os.environ["PATH"], "RUST_LOG": "warn", "DATABASE_URL": url,
                     "OPS_BRAIN_TRANSPORT": "http", "OPS_BRAIN_LISTEN": urlsplit(provider.proxy).netloc,
-                    "OPS_BRAIN_AUTH_TOKEN": secrets.token_urlsafe(48), "OPS_BRAIN_EMBEDDINGS_ENABLED": "false",
+                    "OPS_BRAIN_AUTH_TOKEN": secrets.token_urlsafe(48),
                     "OPS_BRAIN_ALLOWED_HOSTS": urlsplit(provider.issuer).netloc,
                     "OPS_BRAIN_OAUTH_CONFIG": json.dumps(config), "OPS_BRAIN_OAUTH_RESOURCE_URL": provider.resource}
                 with (root / "server.log").open("wb") as log:
@@ -769,7 +767,7 @@ def main():
                         if args.codex:
                             STAGE = "native Codex plugin install/sign-in/tool calls"
                             native_codex(provider, root, args.codex_binary)
-                            print("PASS: installed Codex plugin, native OAuth sign-in, 11 tools and native handoff/thread/identity checks")
+                            print("PASS: installed Codex plugin, native OAuth sign-in, 8 tools and native handoff/thread/identity checks")
                         if args.claude:
                             STAGE = "native Claude Code plugin install/sign-in"
                             native_claude(provider, root, args.claude_binary)
@@ -777,7 +775,7 @@ def main():
                         if args.grok:
                             STAGE = "native Grok Build plugin install/sign-in/tool calls/reconnection"
                             native_grok(provider, root, args.grok_binary)
-                            print("PASS: installed Grok plugin, native OAuth, fixed callback/scopes, 11 tools, native handoff/thread/identity checks and persisted-grant reconnection; no model requests")
+                            print("PASS: installed Grok plugin, native OAuth, fixed callback/scopes, 8 tools, native handoff/thread/identity checks and persisted-grant reconnection; no model requests")
                     finally:
                         process.terminate()
                         process.wait(timeout=10)

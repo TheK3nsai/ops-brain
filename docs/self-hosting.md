@@ -1,7 +1,6 @@
 # Self-hosting
 
-ops-brain runs for one trusted team per deployment. It remains useful with
-full-text search alone; embeddings are optional.
+ops-brain runs for one trusted team per deployment.
 The examples are deployment guidance, not a claim of end-to-end validation
 on every hosting platform.
 
@@ -11,7 +10,7 @@ From a checkout, choose a published release explicitly:
 
 ```bash
 python3 scripts/setup-self-host.py --directory /path/to/deployment \
-  --image-tag v7.0.0 --agent Claude-Laptop --agent Codex-Buildbox
+  --image-tag v8.0.0 --agent Claude-Laptop --agent Codex-Buildbox
 ```
 
 The helper writes `.env` with mode 0600 and an `agent-tokens/` directory with
@@ -59,7 +58,7 @@ Connect clients using [clients.md](clients.md).
 The built-in MCP instructions are the same on every deployment. To add one
 rule of your own, set `OPS_BRAIN_INSTRUCTIONS_EXTRA` to a single line and
 recreate the service. Agents see it on their next initialize. The line is
-rejected when it would push that text past 1400 bytes (213 bytes of room
+rejected when it would push that text past 1300 bytes (219 bytes of room
 with the current built-in text). Leave the variable unset or empty when
 you have no such rule. The production compose file does not supply one.
 
@@ -84,7 +83,8 @@ old migration files must never be edited. Check `/ready` and run the
 read-only MCP smoke check. MCP sessions are process-local, so clients may
 need to reconnect after a restart; run one replica per deployment.
 
-Restore into a fresh database with pgvector available, using the matching
+Restore into a fresh database with pgvector available (the migrations still
+create its column type, though nothing reads it), using the matching
 application release and configuration:
 
 ```bash

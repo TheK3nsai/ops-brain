@@ -4,6 +4,56 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [8.0.0] — unreleased
+
+### Removed (breaking)
+
+- **The knowledge store** (11 → 8 tools): `add_knowledge`, `update_knowledge`
+  and `delete_knowledge`, with near-duplicate detection, staleness warnings
+  and per-entry provenance. Of its 107 entries, 15 concerned more than one
+  agent and now live in a git reference repo; the rest were one host's local
+  lessons, already in this repo's docs, or generic. The `knowledge` table
+  keeps its rows, unread.
+- **The client-scope disclosure guard**: `client_slug`,
+  `acknowledge_cross_client`, `cross_client_safe`, the withheld notices and
+  their audit rows. It guarded only the knowledge store. Restricted tokens
+  (`exclude_client_data`) are unchanged for handoffs: a restricted seat still
+  reads and acts on only the handoffs it sent or received.
+- **Embeddings, semantic and hybrid search, and the `backfill-embeddings`
+  subcommand**, with `OPS_BRAIN_EMBEDDING_URL`, `OPS_BRAIN_EMBEDDING_MODEL`,
+  `OPS_BRAIN_EMBEDDING_API_KEY` and `OPS_BRAIN_EMBEDDINGS_ENABLED`. The server
+  no longer sends handoff text to any other service. Remove the four
+  variables from your `.env`; they are ignored if left. The `pgvector` crate
+  is gone, but a fresh database still needs the pgvector extension, because
+  the existing migrations create its columns and cannot be edited.
+- `seed/seed.sql` and the `just seed` recipe: the `clients` table it filled is
+  no longer read.
+
+### Changed
+
+- **`search_bus` searches handoffs only**: full-text over titles and bodies,
+  every word first and any word as a fallback, best match first. An empty
+  query or `*` lists the most recent handoffs of every status and category.
+  Results are compact (a 200-byte `_snippet`) unless `compact` is false, where
+  they used to be full bodies by default. It takes `query`, `limit` and
+  `compact`; the old `tables`, `mode`, `category`, `client_slug` and
+  `acknowledge_cross_client` parameters are ignored. The result is
+  `{handoffs, limit, limit_clamped, has_more}`.
+- The built-in MCP instructions drop the knowledge and cross-client lines and
+  say instead that the bus carries handoffs, not documentation. The cap on
+  the instructions plus a deployment addendum is now 1300 bytes, leaving 219
+  for `OPS_BRAIN_INSTRUCTIONS_EXTRA` (was 213 of 1400).
+
+### Documentation
+
+- Lines the knowledge store held about ops-brain itself that the docs lacked:
+  comparison artifacts of credentials stay off the bus (`docs/bus-trust.md`),
+  build an OAuth binding from the logged principal (`docs/oauth.md`), re-read
+  the queue after regaining access (`docs/agent-tokens.md`), and three
+  entries in `GOTCHAS.md`.
+- `docs/agent-tokens.md` no longer describes the removed never-seen-recipient
+  check, which v7.0.0 left in one table row.
+
 ## [7.0.0] — 2026-11-12
 
 ### Removed (breaking)

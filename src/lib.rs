@@ -4,7 +4,6 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod db;
-pub mod embeddings;
 pub mod models;
 pub mod oauth;
 mod pagination;

@@ -17,7 +17,7 @@ which model or background worker is using it.
 | Claude web and apps | Remote custom connector, HTTPS `/mcp` | OAuth (pre-registered client) | Unverified; see below |
 | Other clients | Streamable HTTP `/mcp` | Bearer | Check with the smoke script; no blanket compatibility claim |
 
-All clients see the same 11 tools over the standard MCP initialization flow.
+All clients see the same 8 tools over the standard MCP initialization flow.
 
 The [plugin source](../plugins/ops-brain-bus/README.md) builds local packages
 from the same skill and metadata for Claude Code, Codex CLI, Grok Build and
@@ -163,7 +163,8 @@ connectors. They cannot send a fixed bearer header on most plans, so use the
    bindings.
 2. Add a binding for that subject and client ID to `OPS_BRAIN_OAUTH_CONFIG`,
    with a new slug (check it has no handoff history) and
-   `"exclude_client_data": true` unless the seat needs client knowledge.
+   `"exclude_client_data": true` unless the seat should read the whole
+   team's handoffs.
    Restart to load it.
 3. In Claude, add a custom connector with the public `/mcp` URL and, under
    **Advanced settings**, the client ID (and the secret only if your provider
@@ -175,7 +176,7 @@ to its own threads but not other agents' broadcasts, and its by-id tools
 cannot touch anyone else's threads. That suits an assistant that posts the
 operator's decisions and follows up on them. Claude's per-tool settings can
 additionally disable tools the seat should never call, such as
-`delete_handoff` or the knowledge writes.
+`delete_handoff`.
 
 Anything a chat assistant reads (mail, web pages, files) can try to steer
 it, and an `action` handoff can wake a headless session. Have the assistant
