@@ -17,7 +17,7 @@ which model or background worker is using it.
 | Claude web and apps | Remote custom connector, HTTPS `/mcp` | OAuth (pre-registered client) | Unverified; see below |
 | Other clients | Streamable HTTP `/mcp` | Bearer | Check with the smoke script; no blanket compatibility claim |
 
-All clients see the same 13 tools over the standard MCP initialization flow.
+All clients see the same 11 tools over the standard MCP initialization flow.
 
 The [plugin source](../plugins/ops-brain-bus/README.md) builds local packages
 from the same skill and metadata for Claude Code, Codex CLI, Grok Build and
@@ -28,8 +28,7 @@ Grok handoffs. Codex and Grok plugins also passed real Auth0 production
 connections and saved-grant reconnection. A model-selected handoff between
 their regular profiles passed acceptance, completion and a threaded reply.
 That page records tested versions and remaining gaps. Use `--target codex`
-for local installation and `--target openai --auth oauth` for the separate
-portable submission artifact; see the [format gotcha](../GOTCHAS.md#mcp-clients).
+for local Codex installation; see the [format gotcha](../GOTCHAS.md#mcp-clients).
 These checks do not establish public directory approval.
 
 ## Claude Code and Codex

@@ -14,7 +14,6 @@ import zipfile
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "plugins" / "ops-brain-bus"
 TARGETS = ("claude", "codex", "grok", "cursor")
-SUBMISSION_TARGET = "openai"
 NAME = "ops-brain-bus"
 
 
@@ -36,34 +35,15 @@ def valid_oauth_scope(value):
         character == "!" or "#" <= character <= "[" or "]" <= character <= "~" for character in value)
 
 
-def submission_review_cases(repo):
-    cases = json.loads(read_file(repo, "contrib/openai/review-cases.json"))
-    if not isinstance(cases, dict) or set(cases) != {"positive", "negative"}:
-        raise ValueError("OpenAI review cases must contain positive and negative lists")
-    for kind, count in (("positive", 5), ("negative", 3)):
-        required = {"description", "prompt", "expected_behavior"}
-        if kind == "positive":
-            required.add("tools_triggered")
-        if not isinstance(cases[kind], list) or len(cases[kind]) != count:
-            raise ValueError(f"OpenAI review requires exactly {count} {kind} cases")
-        for case in cases[kind]:
-            if (not isinstance(case, dict) or set(case) != required
-                    or any(not isinstance(value, str) or not value.strip() for value in case.values())):
-                raise ValueError(f"Invalid OpenAI {kind} review case")
-    return cases
-
-
 def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_client_id=None,
                   oauth_callback_port=None, oauth_scopes=None):
-    if target not in (*TARGETS, SUBMISSION_TARGET):
+    if target not in TARGETS:
         raise ValueError("Unknown plugin target")
     if auth not in ("token", "oauth"):
         raise ValueError("Unknown plugin authentication mode")
-    if target == SUBMISSION_TARGET and auth != "oauth":
-        raise ValueError("The OpenAI submission package requires --auth oauth")
     if oauth_client_id is not None:
-        if auth != "oauth" or target not in ("claude", "codex", "grok", SUBMISSION_TARGET):
-            raise ValueError("A provided OAuth client ID requires --auth oauth and one Claude, Codex, Grok or OpenAI target")
+        if auth != "oauth" or target not in ("claude", "codex", "grok"):
+            raise ValueError("A provided OAuth client ID requires --auth oauth and one Claude, Codex or Grok target")
         if not oauth_client_id or len(oauth_client_id) > 2048 or any(
                 character.isspace() or ord(character) < 32 for character in oauth_client_id):
             raise ValueError("Invalid OAuth client ID")
@@ -142,8 +122,7 @@ def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_cli
                                    "longDescription": metadata["description"],
                                    "privacyPolicyURL": metadata["homepage"] + "#privacy-and-data-handling",
                                    "logo": "./assets/logo.svg"})
-        if target == "codex":
-            files[".codex-plugin/plugin.json"] = json_bytes(manifest)
+        files[".codex-plugin/plugin.json"] = json_bytes(manifest)
         codex_mcp = copy.deepcopy(mcp)
         codex_server = codex_mcp["mcpServers"]["ops-brain"]
         if auth == "oauth":
@@ -151,27 +130,13 @@ def package_files(target, url, source=SOURCE, repo=REPO, auth="token", oauth_cli
             if oauth_client_id is not None:
                 oauth["client"] = {"mode": "provided", "clientId": oauth_client_id,
                                    "tokenEndpointAuthMethod": "none"}
-                if target == "codex":
-                    # Installed Codex uses its native config key; the OpenAI
-                    # extension declares the public submission contract.
-                    codex_server["oauth"] = {"client_id": oauth_client_id}
+                # Installed Codex reads its native config key.
+                codex_server["oauth"] = {"client_id": oauth_client_id}
             codex_server["extensions"] = {"com.openai": {"auth": oauth}}
-            if target == SUBMISSION_TARGET:
-                # Submission follows the published portable contract. Keep it
-                # separate: Codex 0.165.0 skips bundled MCP servers when a root
-                # plugin.json is present, even though the plugin is installed.
-                portable = dict(common)
-                portable["$schema"] = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
-                portable["extensions"] = {"com.openai": {"interface": dict(manifest["interface"],
-                    developerName=common["author"]["name"], composerIcon="./assets/logo.svg")}}
-                portable["extensions"]["com.openai"]["review"] = {"test_cases": submission_review_cases(repo)}
-                files["plugin.json"] = json_bytes(portable)
-                codex_mcp["$schema"] = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
-                codex_server["type"] = "streamable-http"
         else:
             codex_server.pop("headers")
             codex_server["bearer_token_env_var"] = "OPS_BRAIN_AGENT_TOKEN"
-        files["mcp.json" if target == SUBMISSION_TARGET else ".mcp.json"] = json_bytes(codex_mcp)
+        files[".mcp.json"] = json_bytes(codex_mcp)
     return files
 
 
@@ -196,9 +161,7 @@ def build(output, url, targets=TARGETS, source=SOURCE, repo=REPO, auth="token", 
                 destination = root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(data)
-            if target == SUBMISSION_TARGET:
-                catalog_path = None  # Public submission artifact, not a local marketplace.
-            elif target == "codex":
+            if target == "codex":
                 catalog_path = output / target / ".agents/plugins/marketplace.json"
                 catalog = {"name": "ops-brain-local",
                            "interface": {"displayName": "ops-brain self-hosted"},
@@ -216,9 +179,8 @@ def build(output, url, targets=TARGETS, source=SOURCE, repo=REPO, auth="token", 
                     catalog["description"] = description
                 else:
                     catalog["metadata"] = {"description": description}
-            if catalog_path is not None:
-                catalog_path.parent.mkdir(parents=True, exist_ok=True)
-                catalog_path.write_bytes(json_bytes(catalog))
+            catalog_path.parent.mkdir(parents=True, exist_ok=True)
+            catalog_path.write_bytes(json_bytes(catalog))
             archive = output / f"{NAME}-{target}.zip"
             with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
                 for relative, data in sorted(files.items()):
@@ -236,11 +198,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="new directory for folders and ZIPs")
     parser.add_argument("--url", required=True, help="your non-secret MCP endpoint; embedded in the packages")
-    parser.add_argument("--target", choices=(*TARGETS, SUBMISSION_TARGET, "all"), default="all",
-                        help="client for local installation; openai is a separate portable OAuth submission artifact")
+    parser.add_argument("--target", choices=(*TARGETS, "all"), default="all",
+                        help="client for local installation")
     parser.add_argument("--auth", choices=("token", "oauth"), default="token",
                         help="fixed per-agent token (default), or external OAuth sign-in")
-    parser.add_argument("--oauth-client-id", help="public, pre-registered PKCE client ID (one Claude, Codex, Grok or OpenAI target only; never a secret)")
+    parser.add_argument("--oauth-client-id", help="public, pre-registered PKCE client ID (one Claude, Codex or Grok target only; never a secret)")
     parser.add_argument("--oauth-callback-port", type=int, help="fixed loopback callback port for a Grok public OAuth client")
     parser.add_argument("--oauth-scope", action="append", dest="oauth_scopes",
                         help="scope requested by a Grok public OAuth client; repeat for multiple scopes")

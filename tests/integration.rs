@@ -455,8 +455,8 @@ mod coordination_tests {
             .unwrap();
     }
 
-    /// in_reply_to threads a child handoff to a parent and list_replies_to_me
-    /// surfaces it via the parent's from_agent (not the reply's).
+    /// in_reply_to threads a child handoff to a parent, and the reply reaches
+    /// the parent's sender through the ordinary open queue.
     #[tokio::test]
     async fn handoff_in_reply_to_threading() {
         let pool = pool().await;
@@ -495,13 +495,23 @@ mod coordination_tests {
         // Category is preserved — the reply stays `action` even though it's a reply.
         assert_eq!(reply.category, "action");
 
-        let replies =
-            ops_brain::repo::handoff_repo::list_replies_to_me(&pool, &alice, None, None, 10)
-                .await
-                .unwrap();
-        assert!(replies.iter().any(|h| h.id == reply.id));
-        // Parent author asking for *their* replies shouldn't see unrelated rows.
-        assert!(replies.iter().all(|h| h.in_reply_to == Some(parent.id)));
+        let queue = ops_brain::repo::handoff_repo::list_open_handoffs(
+            &pool,
+            Some(&alice),
+            None,
+            Some("action"),
+            false,
+            false,
+            true,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            queue.iter().map(|h| h.id).collect::<Vec<_>>(),
+            vec![reply.id]
+        );
 
         // Cleanup — order matters because of the FK.
         sqlx::query("DELETE FROM handoffs WHERE id = $1")
@@ -591,43 +601,6 @@ mod coordination_tests {
 
         assert_eq!(completed.status, "completed");
         assert_eq!(completed.commit_hash.as_deref(), Some("abc1234"));
-
-        sqlx::query("DELETE FROM handoffs WHERE id = $1")
-            .bind(h.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    /// mark_merged flips completed handoffs to merged and records merge_commit + merged_at.
-    #[tokio::test]
-    async fn handoff_mark_merged_flips_status_and_records_commit() {
-        let pool = pool().await;
-        let from = format!("from-{}", Uuid::now_v7());
-
-        let h = ops_brain::repo::handoff_repo::create_handoff(
-            &pool, &from, None, "normal", "action", "Work", "body", None, None,
-        )
-        .await
-        .unwrap();
-        let _ = ops_brain::repo::handoff_repo::complete_handoff_with_commit(
-            &pool,
-            h.id,
-            Some("feedf00d"),
-        )
-        .await
-        .unwrap();
-
-        let merged = ops_brain::repo::handoff_repo::mark_merged(&pool, h.id, "deadbeef0001")
-            .await
-            .unwrap()
-            .expect("completed handoff should mark merged");
-
-        assert_eq!(merged.status, "merged");
-        assert_eq!(merged.merge_commit.as_deref(), Some("deadbeef0001"));
-        assert!(merged.merged_at.is_some());
-        // commit_hash from the completion step is preserved.
-        assert_eq!(merged.commit_hash.as_deref(), Some("feedf00d"));
 
         sqlx::query("DELETE FROM handoffs WHERE id = $1")
             .bind(h.id)
@@ -1095,66 +1068,48 @@ mod check_in_tests {
             .await
             .unwrap();
     }
-
-    /// `create_handoff` advertises an omitted `to_agent` as "any agent can pick
-    /// it up". check_in is the only surface that keeps that promise: the sender
-    /// doesn't see its own broadcast, and the wake-shim poll
-    /// (`list_pending_for_agent`) deliberately stays narrow so one broadcast
-    /// can't wake every host in the fleet.
+    /// Only a notify can be filed without a recipient. It reaches every other
+    /// agent's notification page, never the sender's, and never the wake-shim
+    /// poll, so one announcement can't wake every host. An unaddressed action
+    /// (a legacy row) reaches nobody's queue.
     #[tokio::test]
-    async fn check_in_surfaces_broadcasts_to_everyone_but_the_sender() {
+    async fn check_in_surfaces_broadcast_notifies_to_everyone_but_the_sender() {
         let pool = pool().await;
         let sender = format!("Claude-Sender-{}", Uuid::now_v7().simple());
         let other = format!("Claude-Other-{}", Uuid::now_v7().simple());
-        let title = format!("broadcast-{}", Uuid::now_v7().simple());
 
-        let id = file_action(&pool, &sender, None, &title).await;
-
-        let theirs = check_in_json(pool.clone(), &other).await;
-        assert!(
-            theirs["open_handoffs_to_you"]["items"]
+        let notify = ops_brain::repo::handoff_repo::create_handoff(
+            &pool, &sender, None, "normal", "notify", "announce", "body", None, None,
+        )
+        .await
+        .unwrap()
+        .id;
+        let legacy_action = file_action(&pool, &sender, None, "legacy unaddressed").await;
+        let has = |v: &serde_json::Value, section: &str, id: Uuid| {
+            v[section]["items"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|h| h["id"].as_str() == Some(&id.to_string())),
-            "an unaddressed handoff must be visible to another agent: {theirs}"
+                .any(|h| h["id"].as_str() == Some(&id.to_string()))
+        };
+
+        let theirs = check_in_json(pool.clone(), &other).await;
+        assert!(has(&theirs, "recent_notifications", notify), "{theirs}");
+        assert!(
+            !has(&theirs, "open_handoffs_to_you", legacy_action),
+            "{theirs}"
         );
 
         let mine = check_in_json(pool.clone(), &sender).await;
-        assert!(
-            !mine["open_handoffs_to_you"]["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|h| h["id"].as_str() == Some(&id.to_string())),
-            "the sender must not see its own broadcast queued back at it: {mine}"
-        );
+        assert!(!has(&mine, "recent_notifications", notify), "{mine}");
 
         let woken = ops_brain::repo::handoff_repo::list_pending_for_agent(&pool, &other, None, 50)
             .await
             .unwrap();
-        assert!(
-            !woken.iter().any(|h| h.id == id),
-            "broadcasts must not reach the wake-shim poll — it would wake every host"
-        );
+        assert!(woken.is_empty(), "a broadcast must not wake a host");
 
-        // Accept records no acceptor, so once anyone claims a broadcast it must
-        // leave every other queue — otherwise two agents work the same item.
-        ops_brain::repo::handoff_repo::accept_handoff(&pool, id)
-            .await
-            .unwrap();
-        let after = check_in_json(pool.clone(), &other).await;
-        assert!(
-            !after["open_handoffs_to_you"]["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|h| h["id"].as_str() == Some(&id.to_string())),
-            "an accepted broadcast must drop out of other agents' check_in: {after}"
-        );
-
-        sqlx::query("DELETE FROM handoffs WHERE id = $1")
-            .bind(id)
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![notify, legacy_action])
             .execute(&pool)
             .await
             .unwrap();
@@ -1167,9 +1122,7 @@ mod check_in_tests {
 // idempotency) the locked design promises.
 mod coordination_handler_tests {
     use super::*;
-    use ops_brain::tools::coordination::{
-        handle_create_handoff, handle_mark_merged, CreateHandoffParams, MarkMergedParams,
-    };
+    use ops_brain::tools::coordination::{handle_create_handoff, CreateHandoffParams};
 
     fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
         ops_brain::tools::OpsBrain::new(pool, None)
@@ -1200,6 +1153,8 @@ mod coordination_handler_tests {
                 body: "body".to_string(),
                 context: None,
                 in_reply_to: Some("not-a-uuid".to_string()),
+                complete_parent: None,
+                commit_hash: None,
             },
             None,
             ops_brain::auth::Visibility::Full,
@@ -1223,6 +1178,8 @@ mod coordination_handler_tests {
             body: "body".to_string(),
             context: None,
             in_reply_to: None,
+            complete_parent: None,
+            commit_hash: None,
         }
     }
 
@@ -1282,303 +1239,249 @@ mod coordination_handler_tests {
         );
     }
 
-    /// A typo'd recipient is a silent failure: the row is valid, nobody's
-    /// `check_in` ever matches it, and the sender believes it was delivered.
-    /// There is no agent registry by design (new agents must be addressable),
-    /// so the bus warns from what it has actually seen and still writes the row.
-    #[tokio::test]
-    async fn create_handoff_warns_on_a_recipient_slug_the_bus_has_never_seen() {
-        let pool = pool().await;
-        let brain = build_brain(pool.clone());
-        let suffix = Uuid::now_v7().simple().to_string();
-        let known = format!("Codex-Orion{suffix}");
-        let typo = format!("Codex-Orian{suffix}");
-
-        let to = |agent: &str| CreateHandoffParams {
-            from_agent: "Claude-Laptop".to_string(),
-            to_agent: Some(agent.to_string()),
+    fn params(from: &str, to: Option<&str>, category: &str) -> CreateHandoffParams {
+        CreateHandoffParams {
+            from_agent: from.to_string(),
+            to_agent: to.map(str::to_string),
             priority: None,
-            category: Some("notify".to_string()),
-            title: "novel recipient smoke".to_string(),
+            category: Some(category.to_string()),
+            title: "surface smoke".to_string(),
             body: "body".to_string(),
             context: None,
             in_reply_to: None,
-        };
+            complete_parent: None,
+            commit_hash: None,
+        }
+    }
 
-        // First contact with `known` teaches the bus that slug exists.
-        let first =
-            handle_create_handoff(&brain, to(&known), None, ops_brain::auth::Visibility::Full)
-                .await;
-        assert_eq!(first.is_error, Some(false), "{}", extract_text(&first));
+    async fn create(
+        brain: &ops_brain::tools::OpsBrain,
+        p: CreateHandoffParams,
+    ) -> rmcp::model::CallToolResult {
+        handle_create_handoff(brain, p, None, ops_brain::auth::Visibility::Full).await
+    }
 
-        // A near-miss of it is brand new: warn, suggest, and still create.
-        let typoed =
-            handle_create_handoff(&brain, to(&typo), None, ops_brain::auth::Visibility::Full).await;
-        assert_eq!(typoed.is_error, Some(false), "{}", extract_text(&typoed));
-        let body = typoed
+    fn body(result: &rmcp::model::CallToolResult) -> serde_json::Value {
+        assert_eq!(result.is_error, Some(false), "{}", extract_text(result));
+        result
             .structured_content
-            .as_ref()
-            .expect("create_handoff returns structured JSON");
-        let warning = body["_warning"]
-            .as_str()
-            .unwrap_or_else(|| panic!("expected a _warning on a never-seen recipient: {body}"));
+            .clone()
+            .expect("create_handoff returns structured JSON")
+    }
+
+    async fn status_of(pool: &PgPool, id: Uuid) -> (String, Option<String>) {
+        let h = ops_brain::repo::handoff_repo::get_handoff(pool, id)
+            .await
+            .unwrap()
+            .expect("handoff exists");
+        (h.status, h.commit_hash)
+    }
+
+    /// An action nobody is named on is work nobody owns, so it is refused.
+    /// An announcement can still go to everyone.
+    #[tokio::test]
+    async fn only_a_notify_can_be_broadcast() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let sender = format!("Claude-Sender-{}", Uuid::now_v7().simple());
+
+        let action = create(&brain, params(&sender, None, "action")).await;
+        assert_eq!(action.is_error, Some(true));
         assert!(
-            warning.contains(&typo) && warning.contains("sit unread"),
+            extract_text(&action).contains("to_agent is required"),
+            "{}",
+            extract_text(&action)
+        );
+
+        let notify = body(&create(&brain, params(&sender, None, "notify")).await);
+        assert!(notify["to_agent"].is_null());
+
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = $1")
+            .bind(&sender)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// The common closing motion in one call: the recipient's reply completes
+    /// the parent and records the commit on it.
+    #[tokio::test]
+    async fn reply_from_the_recipient_completes_the_parent() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+        let (alice, bob) = (format!("Alice-{suffix}"), format!("Bob-{suffix}"));
+
+        let parent = body(&create(&brain, params(&alice, Some(&bob), "action")).await);
+        let parent_id = Uuid::parse_str(parent["id"].as_str().unwrap()).unwrap();
+
+        let mut reply = params(&bob, Some(&alice), "notify");
+        reply.in_reply_to = Some(parent_id.to_string());
+        reply.complete_parent = Some(true);
+        reply.commit_hash = Some(" abc1234 ".to_string());
+        let reply = body(&create(&brain, reply).await);
+
+        assert_eq!(reply["_parent_completed"], true);
+        assert!(reply.get("_warning").is_none(), "{reply}");
+        assert_eq!(
+            status_of(&pool, parent_id).await,
+            ("completed".to_string(), Some("abc1234".to_string()))
+        );
+
+        // A second closing reply still files, and says the parent was closed.
+        let mut again = params(&bob, Some(&alice), "notify");
+        again.in_reply_to = Some(parent_id.to_string());
+        again.complete_parent = Some(true);
+        let again = body(&create(&brain, again).await);
+        assert_eq!(again["_parent_completed"], false);
+        assert!(
+            again["_warning"]
+                .as_str()
+                .unwrap()
+                .contains("not completed"),
+            "{again}"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = ANY($1)")
+            .bind(vec![alice, bob])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A sender following up on its own thread must not close the
+    /// recipient's open work with a stray flag.
+    #[tokio::test]
+    async fn complete_parent_only_closes_work_addressed_to_the_replier() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+        let (alice, bob) = (format!("Alice-{suffix}"), format!("Bob-{suffix}"));
+
+        let parent = body(&create(&brain, params(&alice, Some(&bob), "action")).await);
+        let parent_id = Uuid::parse_str(parent["id"].as_str().unwrap()).unwrap();
+
+        let mut follow_up = params(&alice, Some(&bob), "notify");
+        follow_up.in_reply_to = Some(parent_id.to_string());
+        follow_up.complete_parent = Some(true);
+        let follow_up = body(&create(&brain, follow_up).await);
+
+        assert_eq!(follow_up["_parent_completed"], false);
+        assert!(
+            follow_up["id"].as_str().is_some(),
+            "the reply is still filed"
+        );
+        assert_eq!(status_of(&pool, parent_id).await.0, "pending");
+
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = ANY($1)")
+            .bind(vec![alice, bob])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A family member that accepted work addressed to the family base slug
+    /// closes it by reply, and slug case does not matter.
+    #[tokio::test]
+    async fn complete_parent_honours_the_recorded_acceptor() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+        let (alice, family) = (format!("Alice-{suffix}"), format!("Fam-{suffix}"));
+        let member = format!("{family}-Builder");
+
+        let parent = body(&create(&brain, params(&alice, Some(&family), "action")).await);
+        let parent_id = Uuid::parse_str(parent["id"].as_str().unwrap()).unwrap();
+        ops_brain::repo::handoff_repo::accept_handoff_as(&pool, parent_id, Some(&member))
+            .await
+            .unwrap()
+            .expect("pending parent accepts");
+
+        let mut reply = params(&member.to_lowercase(), Some(&alice), "notify");
+        reply.in_reply_to = Some(parent_id.to_string());
+        reply.complete_parent = Some(true);
+        let reply = body(&create(&brain, reply).await);
+        assert_eq!(reply["_parent_completed"], true, "{reply}");
+        assert_eq!(status_of(&pool, parent_id).await.0, "completed");
+
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = ANY($1)")
+            .bind(vec![alice, member.to_lowercase()])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn complete_parent_and_commit_hash_need_their_companions() {
+        let brain = build_brain(pool().await);
+
+        let mut orphan = params("Claude-Laptop", Some("Claude-Cloud"), "notify");
+        orphan.complete_parent = Some(true);
+        let orphan = create(&brain, orphan).await;
+        assert_eq!(orphan.is_error, Some(true));
+        assert!(extract_text(&orphan).contains("needs in_reply_to"));
+
+        let mut hash_only = params("Claude-Laptop", Some("Claude-Cloud"), "notify");
+        hash_only.in_reply_to = Some(Uuid::now_v7().to_string());
+        hash_only.commit_hash = Some("abc1234".to_string());
+        let hash_only = create(&brain, hash_only).await;
+        assert_eq!(hash_only.is_error, Some(true));
+        assert!(extract_text(&hash_only).contains("set complete_parent"));
+    }
+
+    /// A recipient nobody holds a credential for is a typo, a retired seat or
+    /// a machine producer's sender name. Each one sits unread, so the bus
+    /// warns from the operator's static bindings and still writes the row.
+    #[tokio::test]
+    async fn create_handoff_warns_on_a_recipient_no_credential_is_bound_to() {
+        let pool = pool().await;
+        let suffix = Uuid::now_v7().simple().to_string();
+        let sender = format!("Claude-Laptop-{suffix}");
+        let brain = build_brain(pool.clone()).with_known_agents(vec![
+            "Codex-Orion".to_string(),
+            "Grok-Bot-*".to_string(),
+            "codex-orion".to_string(),
+        ]);
+
+        let typo = body(&create(&brain, params(&sender, Some("Codex-Orian"), "notify")).await);
+        let warning = typo["_warning"]
+            .as_str()
+            .unwrap_or_else(|| panic!("expected a _warning on an unbound recipient: {typo}"));
+        assert!(
+            warning.contains("'Codex-Orian'") && warning.contains("no agent or poller"),
             "warning must name the slug and the failure mode: {warning}"
         );
         assert!(
-            warning.contains(&known),
-            "warning must offer the near-miss slug as a suggestion: {warning}"
+            warning.contains("bound slugs: Codex-Orion, Grok-Bot-*"),
+            "warning must list the deduplicated bound slugs: {warning}"
         );
         assert!(
-            body["id"].as_str().is_some(),
-            "the handoff must still be created: {body}"
+            typo["id"].as_str().is_some(),
+            "the handoff is still created"
         );
 
-        // Second handoff to `known` — now a familiar slug, so no warning.
-        let repeat =
-            handle_create_handoff(&brain, to(&known), None, ops_brain::auth::Visibility::Full)
-                .await;
-        assert_eq!(repeat.is_error, Some(false), "{}", extract_text(&repeat));
-        let repeat_body = repeat
-            .structured_content
-            .as_ref()
-            .expect("create_handoff returns structured JSON");
-        assert!(
-            repeat_body.get("_warning").is_none(),
-            "a known recipient must not be warned about: {repeat_body}"
-        );
+        for bound in ["codex-orion", "Grok-Bot", "Grok-Bot-Builder"] {
+            let ok = body(&create(&brain, params(&sender, Some(bound), "notify")).await);
+            assert!(ok.get("_warning").is_none(), "{bound} is bound: {ok}");
+        }
 
-        sqlx::query("DELETE FROM handoffs WHERE to_agent = ANY($1)")
-            .bind(vec![known, typo])
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn mark_merged_returns_not_found_for_missing_handoff() {
-        let brain = build_brain(pool().await);
-        let missing = Uuid::now_v7();
-        let result = handle_mark_merged(
+        // A caller kept outside client data gets no roster.
+        let restricted = handle_create_handoff(
             &brain,
-            MarkMergedParams {
-                handoff_id: missing.to_string(),
-                merge_commit: "abc1234".to_string(),
-            },
-            ops_brain::auth::Visibility::Full,
+            params(&sender, Some("Codex-Orian"), "notify"),
+            Some(&sender),
+            ops_brain::auth::Visibility::Restricted(&sender),
         )
         .await;
-        assert_eq!(result.is_error, Some(true));
-        let text = extract_text(&result);
-        assert!(
-            text.contains("not found") || text.contains("Handoff"),
-            "expected not-found surface, got: {text}"
-        );
-    }
+        assert!(body(&restricted).get("_warning").is_none());
 
-    #[tokio::test]
-    async fn mark_merged_is_idempotent_on_same_commit() {
-        let pool = pool().await;
-        let brain = build_brain(pool.clone());
-        let from = format!("from-{}", Uuid::now_v7());
+        // With no bindings configured there is nothing to check against.
+        let unbound = build_brain(pool.clone());
+        let quiet = body(&create(&unbound, params(&sender, Some("Codex-Orian"), "notify")).await);
+        assert!(quiet.get("_warning").is_none(), "{quiet}");
 
-        let h = ops_brain::repo::handoff_repo::create_handoff(
-            &pool,
-            &from,
-            None,
-            "normal",
-            "action",
-            "idempotency-smoke",
-            "body",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        let _ = ops_brain::repo::handoff_repo::complete_handoff_with_commit(
-            &pool,
-            h.id,
-            Some("work-abc"),
-        )
-        .await
-        .unwrap();
-
-        let params = || MarkMergedParams {
-            handoff_id: h.id.to_string(),
-            merge_commit: "merge-abc".to_string(),
-        };
-
-        let first = handle_mark_merged(&brain, params(), ops_brain::auth::Visibility::Full).await;
-        assert_eq!(
-            first.is_error,
-            Some(false),
-            "first mark_merged should succeed"
-        );
-
-        let second = handle_mark_merged(&brain, params(), ops_brain::auth::Visibility::Full).await;
-        assert_eq!(
-            second.is_error,
-            Some(false),
-            "second mark_merged with same commit should be a no-op success"
-        );
-
-        sqlx::query("DELETE FROM handoffs WHERE id = $1")
-            .bind(h.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn mark_merged_refuses_to_overwrite_with_different_commit() {
-        let pool = pool().await;
-        let brain = build_brain(pool.clone());
-        let from = format!("from-{}", Uuid::now_v7());
-
-        let h = ops_brain::repo::handoff_repo::create_handoff(
-            &pool,
-            &from,
-            None,
-            "normal",
-            "action",
-            "conflict-refuse-smoke",
-            "body",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        let _ = ops_brain::repo::handoff_repo::complete_handoff_with_commit(
-            &pool,
-            h.id,
-            Some("work-conflict"),
-        )
-        .await
-        .unwrap();
-
-        let first = handle_mark_merged(
-            &brain,
-            MarkMergedParams {
-                handoff_id: h.id.to_string(),
-                merge_commit: "first-merge".to_string(),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await;
-        assert_eq!(first.is_error, Some(false));
-
-        let second = handle_mark_merged(
-            &brain,
-            MarkMergedParams {
-                handoff_id: h.id.to_string(),
-                merge_commit: "different-merge".to_string(),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await;
-        assert_eq!(
-            second.is_error,
-            Some(true),
-            "second mark_merged with different commit should refuse"
-        );
-        let text = extract_text(&second);
-        assert!(
-            text.contains("already merged") || text.contains("refusing to overwrite"),
-            "expected conflict-refuse error, got: {text}"
-        );
-
-        sqlx::query("DELETE FROM handoffs WHERE id = $1")
-            .bind(h.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn mark_merged_rejects_uncompleted_handoff() {
-        let pool = pool().await;
-        let brain = build_brain(pool.clone());
-        let from = format!("from-{}", Uuid::now_v7());
-
-        let h = ops_brain::repo::handoff_repo::create_handoff(
-            &pool,
-            &from,
-            None,
-            "normal",
-            "action",
-            "pending-merge-refuse-smoke",
-            "body",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        let result = handle_mark_merged(
-            &brain,
-            MarkMergedParams {
-                handoff_id: h.id.to_string(),
-                merge_commit: "merge-pending".to_string(),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await;
-        assert_eq!(result.is_error, Some(true));
-        let text = extract_text(&result);
-        assert!(
-            text.contains("must be completed"),
-            "expected completed-before-merged error, got: {text}"
-        );
-
-        sqlx::query("DELETE FROM handoffs WHERE id = $1")
-            .bind(h.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn mark_merged_rejects_completed_handoff_without_commit_hash() {
-        let pool = pool().await;
-        let brain = build_brain(pool.clone());
-        let from = format!("from-{}", Uuid::now_v7());
-
-        let h = ops_brain::repo::handoff_repo::create_handoff(
-            &pool,
-            &from,
-            None,
-            "normal",
-            "action",
-            "missing-work-ref-smoke",
-            "body",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        let _ = ops_brain::repo::handoff_repo::complete_handoff_with_commit(&pool, h.id, None)
-            .await
-            .unwrap();
-
-        let result = handle_mark_merged(
-            &brain,
-            MarkMergedParams {
-                handoff_id: h.id.to_string(),
-                merge_commit: "merge-no-work-ref".to_string(),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await;
-        assert_eq!(result.is_error, Some(true));
-        let text = extract_text(&result);
-        assert!(
-            text.contains("commit_hash"),
-            "expected commit_hash requirement error, got: {text}"
-        );
-
-        sqlx::query("DELETE FROM handoffs WHERE id = $1")
-            .bind(h.id)
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = $1")
+            .bind(&sender)
             .execute(&pool)
             .await
             .unwrap();
@@ -2444,9 +2347,7 @@ mod pagination_surface_tests {
     use ops_brain::api::{ApiState, PendingQuery};
     use ops_brain::auth::CallerClass;
     use ops_brain::embeddings::EmbeddingClient;
-    use ops_brain::tools::coordination::{
-        handle_list_handoffs, handle_list_replies_to_me, ListHandoffsParams, ListRepliesToMeParams,
-    };
+    use ops_brain::tools::coordination::{handle_list_handoffs, ListHandoffsParams};
     use ops_brain::tools::knowledge::{handle_search_knowledge, SearchKnowledgeParams};
     use ops_brain::tools::OpsBrain;
     use std::sync::Arc;
@@ -2533,24 +2434,6 @@ mod pagination_surface_tests {
         assert_eq!(listed["limit"], 2);
         assert_eq!(listed["limit_clamped"], false);
         assert_eq!(listed["has_more"], true);
-
-        let replies = handle_list_replies_to_me(
-            &brain,
-            ListRepliesToMeParams {
-                agent_name: sender.clone(),
-                since: None,
-                limit: Some(500),
-            },
-            None,
-            ops_brain::auth::Visibility::Full,
-        )
-        .await
-        .structured_content
-        .expect("structured replies response");
-        assert_eq!(replies["replies"].as_array().unwrap().len(), 3);
-        assert_eq!(replies["limit"], 200);
-        assert_eq!(replies["limit_clamped"], true);
-        assert_eq!(replies["has_more"], false);
 
         sqlx::query("DELETE FROM handoffs WHERE in_reply_to = $1")
             .bind(parent.id)
@@ -4123,6 +4006,8 @@ mod restricted_visibility_tests {
                 body: "body".to_string(),
                 context: None,
                 in_reply_to: Some(f.others.to_string()),
+                complete_parent: None,
+                commit_hash: None,
             },
             Some(&f.bot),
             restricted,
@@ -4136,8 +4021,8 @@ mod restricted_visibility_tests {
     #[tokio::test]
     async fn by_id_writes_refuse_foreign_rows() {
         use ops_brain::tools::coordination::{
-            handle_complete_handoff, handle_delete_handoff, handle_mark_merged,
-            CompleteHandoffParams, DeleteHandoffParams, MarkMergedParams,
+            handle_complete_handoff, handle_delete_handoff, CompleteHandoffParams,
+            DeleteHandoffParams,
         };
         let f = fixture().await;
         let restricted = Visibility::Restricted(&f.bot);
@@ -4148,16 +4033,6 @@ mod restricted_visibility_tests {
             CompleteHandoffParams {
                 handoff_id: id.clone(),
                 commit_hash: Some("abc123".to_string()),
-            },
-            restricted,
-        )
-        .await;
-        assert!(text(&r).contains("not found"), "{}", text(&r));
-        let r = handle_mark_merged(
-            &f.brain,
-            MarkMergedParams {
-                handoff_id: id.clone(),
-                merge_commit: "def456".to_string(),
             },
             restricted,
         )
@@ -4193,66 +4068,6 @@ mod restricted_visibility_tests {
         .await;
         assert_eq!(r.is_error, Some(false), "{}", text(&r));
 
-        cleanup(&f).await;
-    }
-
-    #[tokio::test]
-    async fn replies_are_party_filtered_with_since() {
-        use ops_brain::tools::coordination::{handle_list_replies_to_me, ListRepliesToMeParams};
-        let f = fixture().await;
-        let reply = |to: &str| {
-            let pool = f.pool.clone();
-            let to = to.to_string();
-            let parent = f.from_bot;
-            async move {
-                ops_brain::repo::handoff_repo::create_handoff(
-                    &pool,
-                    "Claude-Laptop",
-                    Some(&to),
-                    "normal",
-                    "notify",
-                    "reply",
-                    "body",
-                    None,
-                    Some(parent),
-                )
-                .await
-                .unwrap()
-                .id
-            }
-        };
-        let to_bot = reply(&f.bot).await;
-        let elsewhere = reply("Claude-Buildbox").await;
-
-        let since = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        let r = handle_list_replies_to_me(
-            &f.brain,
-            ListRepliesToMeParams {
-                agent_name: f.bot.clone(),
-                since: Some(since),
-                limit: Some(50),
-            },
-            Some(&f.bot),
-            Visibility::Restricted(&f.bot),
-        )
-        .await;
-        assert_eq!(r.is_error, Some(false), "{}", text(&r));
-        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
-        assert_eq!(ids(&v, "replies"), vec![to_bot]);
-
-        // Control: unrestricted, the same thread shows both replies.
-        let all =
-            ops_brain::repo::handoff_repo::list_replies_to_me(&f.pool, &f.bot, None, None, 50)
-                .await
-                .unwrap();
-        let all: Vec<Uuid> = all.iter().map(|h| h.id).collect();
-        assert!(all.contains(&to_bot) && all.contains(&elsewhere));
-
-        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
-            .bind(vec![to_bot, elsewhere])
-            .execute(&f.pool)
-            .await
-            .unwrap();
         cleanup(&f).await;
     }
 

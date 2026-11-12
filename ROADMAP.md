@@ -33,9 +33,14 @@ bloat is the main cost center. Every added field on `check_in`, every new tool
 stub, every extra sentence in `get_info` dilutes the briefing for everyone.
 Guard the surface area aggressively.
 
-The product bar is also codified in ops-brain knowledge entry
-`019e0d79-3a7f-7902-86cc-db4a573c1071` (cross-client-safe, global) — reference
-it when evaluating any new feature.
+**Distribution and docs face the same bar.** A listing, a packaging target or
+a setup guide is a feature: someone has to keep it true on every release. One
+that nobody in front of us uses gets the same treatment as a tool nobody
+calls.
+
+**Usage decides, and looking is cheap.** Before defending a surface, read what
+the bus actually carried: a page of recent handoffs answers "is this used"
+without building a metric. The v7.0.0 cuts came from one such read.
 
 ## Hard stops (don't build these, ever)
 
@@ -141,6 +146,27 @@ operator maintenance rather than agent coordination. Removing all four while
 adding exact `get_handoff` retrieval reduced the MCP surface from 16 to 13
 tools and made the next natural action clearer.
 
+### ❌ `mark_merged`, `list_replies_to_me`, broadcast actions
+
+Removed in v7.0.0 (2026-11-12), 13 → 11 tools, after reading the 200 most
+recent handoffs.
+
+- **`mark_merged` and the `merged` status.** 4 of 200 handoffs were ever
+  flipped, no code read the status, and on a squash-merging repo the ancestry
+  check it invites miscounts. It was the deploy-chain measurement above,
+  surviving as a tool. `commit_hash` on completion stays; it is used.
+- **`list_replies_to_me`.** A reply addressed to you is already in `check_in`,
+  and the tool also returned the caller's own follow-ups. `list_handoffs`
+  covers the rest.
+- **Broadcast action handoffs.** 1 of 200 handoffs had no recipient, and it
+  was an announcement. Every agent here has its own scope, so work addressed
+  to nobody is work nobody owns. An `action` now names its recipient; a
+  `notify` can still go to everyone.
+
+The same read showed what the workflow does want: 58% of handoffs are replies,
+and half the time the agent closing a handoff replies to it within minutes.
+Hence `complete_parent` on a reply, and `accept_handoff` described as optional.
+
 ### ❌ Live lane (online peer messaging)
 
 Removed 2026-09-29. `list_live_peers`, `send_live_message`, the `/live`
@@ -176,6 +202,20 @@ question from first principles.
   table already is the log. Operator visibility is a section in the briefing
   that already gets read; "how long did this sit on a human" is a metric
   nothing bleeds from. Reasoning: `docs/operator-notify.md`.
+- **Distribution is frozen (2026-11-12).** The release workflow keeps
+  publishing the image and the Official MCP Registry entry, and the listings
+  that draw from those keep updating themselves. Everything that needs a hand
+  on each release is dropped: the OpenAI submission and its packaging target
+  (no agent here runs Codex any more), refreshing catalog pins, chasing
+  pending reviews, new submissions. After a month of listing work the outside
+  signal was one star, two forks and one issue. Re-open on a real one: an
+  issue or a request for help from someone running it. Current state:
+  `docs/listings.md`.
+- **Pre-scrub residue in reachable history: exposure accepted.** A GC request
+  cannot reach merged history, and a history rewrite costs every clone and
+  recovers nothing, because the values are already disclosed. This is the same
+  reasoning as the migration waiver below, with the same exit: it does not
+  survive a change to the "already disclosed" premise.
 - **Audit declines.** Verbatim DB error strings to callers (every caller is our
   own authenticated agent — informative beats sanitised); client-lookup
   caching, backfill batching, embedding retry/backoff (irrelevant at this
@@ -204,8 +244,9 @@ patches, not cosmetic polish):
 3. Do NOT resurrect a dead item without re-opening the question from first
    principles. "Wait for demand" is not the same as "dead."
 4. ops-brain is in operator mode — new features should be the exception,
-   removals the norm. v5.0.0's 16 → 13 tool reduction is the model: consolidate
-   overlapping paths and keep maintenance out of agent context. The live lane
+   removals the norm. v5.0.0's 16 → 13 and v7.0.0's 13 → 11 tool reductions
+   are the model: consolidate overlapping paths, cut what the traffic shows
+   nobody calls, and keep maintenance out of agent context. The live lane
    was the exception that proved the rule: it earned its two tools on paper and
    was killed once its install and upgrade cost was measured. Read
    `CHANGELOG.md` for shipped history.

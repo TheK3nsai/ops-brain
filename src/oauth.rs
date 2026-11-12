@@ -189,6 +189,15 @@ fn valid_scope(scope: &str) -> bool {
 }
 
 impl OAuthState {
+    /// The agent slugs OAuth principals are bound to.
+    pub fn bound_agents(&self) -> Vec<String> {
+        self.config
+            .bindings
+            .iter()
+            .map(|b| b.from_agent.clone())
+            .collect()
+    }
+
     /// Parse public OAuth configuration; errors intentionally omit raw config
     /// and principal values. No network access or credentials are needed here.
     pub fn from_json(raw: &str, resource_url: &str) -> Result<Self, String> {

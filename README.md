@@ -37,9 +37,8 @@ Solo operators and small, trusted teams running **several AI agents across sever
 
 1. `Claude-Laptop` finishes a change that needs a build on another host and calls `create_handoff` with `to_agent: "Codex-Buildbox"`, a title, and a markdown body.
 2. `Codex-Buildbox` calls `check_in` when ready to pick up work and sees the open action handoff.
-3. It calls `accept_handoff`, does the work, then `complete_handoff` with the `commit_hash`.
-4. It replies with `create_handoff` and `in_reply_to`, so `Claude-Laptop` sees the answer via `list_replies_to_me`.
-5. Once the commit lands on main, whoever integrates it calls `mark_merged`.
+3. It calls `get_handoff` for the full body and does the work.
+4. It replies with `create_handoff`, passing `in_reply_to`, `complete_parent: true` and the `commit_hash`. That one call files the answer and closes the handoff it answers. `Claude-Laptop` sees the reply in its next `check_in`.
 
 Workflow conventions (reply in thread, verify before complying, action vs. notify) ship inside the server's MCP instructions, so every connected agent gets the same rules without per-host setup. A rule that is true only of your team — a release process, a named deployer — does not belong in that text. Set `OPS_BRAIN_INSTRUCTIONS_EXTRA` to one line and the server appends it for your deployment only.
 
@@ -67,7 +66,7 @@ Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below).
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
 
-The standalone example pins `:v6.3.2` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
+The standalone example pins `:v7.0.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
 
 Other deployment shapes:
 
@@ -116,17 +115,19 @@ Give every agent a stable `<Agent>-<Host>` name (`Claude-Laptop`, `Codex-Buildbo
 
 `Host` can also be a cloud workspace or logical seat. Shared credentials mean shared provenance, even when a vendor displays several Bot or Dot names.
 
-## Tools (13)
+## Tools (11)
 
 | Group | Tools | What they're for |
 |---|---|---|
-| **Handoffs** (8) | `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff`, `list_replies_to_me`, `mark_merged` | `action` handoffs are required work; `notify` handoffs are FYI broadcasts that drop out of operational queries after 7 days. Thread with `in_reply_to`; link commits with `commit_hash` on completion and `mark_merged` at integration. `delete_handoff` is a hard delete that leaves a `deleted` tombstone in `audit_log` (id, deleting agent, sender, recipient, title, status). |
+| **Handoffs** (6) | `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff` | `action` handoffs are required work and always name a recipient; `notify` handoffs are FYI, may be broadcast, and drop out of operational queries after 7 days. Thread with `in_reply_to`; a reply with `complete_parent` closes the handoff it answers, and `commit_hash` records the work that closed it. `delete_handoff` is a hard delete that leaves a `deleted` tombstone in `audit_log` (id, deleting agent, sender, recipient, title, status). |
 | **Knowledge** (4) | `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus` | Cross-agent gotchas, safety warnings, compliance rules, and vendor behavior, with per-agent provenance. `search_bus` searches knowledge by default (full-text, semantic, or hybrid) and can include handoffs. |
-| **Team bus** (1) | `check_in` | Open action handoffs (pending and accepted) plus recent notifications addressed to your `agent_name`. Accepted handoffs an agent filed to itself are lock records: counted in `self_claims_held`, not listed. |
+| **Team bus** (1) | `check_in` | Open action handoffs (pending and accepted) plus recent notifications addressed to your `agent_name`; a reply addressed to you arrives here like any other handoff. Accepted handoffs an agent filed to itself are lock records: counted in `self_claims_held`, not listed. |
 
 The tool list is small on purpose: every tool and field costs tokens in every agent's context, every session. The reasoning, and the list of things ops-brain will never build, is in [`ROADMAP.md`](ROADMAP.md).
 
-`accept_handoff` records the token-bound `accepted_by`; accepted broadcasts remain in that agent's queue. Family credentials and unbound broadcast claims need a concrete `agent_name`.
+`accept_handoff` is optional: it marks work as taken when it will outlive the session, and records the token-bound `accepted_by`. `complete_handoff` works straight from pending. Family credentials need a concrete `agent_name`.
+
+`create_handoff` warns, and still files, when no credential on the deployment is bound to the recipient: no agent or poller would pick up a handoff sent to a misspelled slug, a retired seat, or a machine producer's sender name. The check uses the agent tokens, OAuth bindings and machine-token `agents` lists you configured; there is no agent registry.
 
 **Briefings** stay off the MCP surface. `POST /api/briefing` returns a daily or weekly digest that opens with what is waiting on the operator (oldest first), then high and critical machine findings, then work stuck in another agent's queue past its age threshold, then the open set as counts. The `operator` field names the slug that first section reads (default `Operator`); a slug no handoff has ever used is called out rather than shown as an empty queue.
 
@@ -200,7 +201,7 @@ The server reads only the names above. Other `OPS_BRAIN_*` names in this repo ar
 | Component | Choice |
 |-----------|--------|
 | Language | Rust 2021 |
-| MCP SDK | [rmcp](https://github.com/modelcontextprotocol/rust-sdk) 1.6 |
+| MCP SDK | [rmcp](https://github.com/modelcontextprotocol/rust-sdk) 3.9 |
 | Database | PostgreSQL 18 via sqlx (runtime queries) |
 | Search | tsvector full-text + pgvector HNSW cosine, fused with Reciprocal Rank Fusion |
 | Embeddings | `nomic-embed-text` (768d) over any OpenAI-compatible API |

@@ -54,8 +54,7 @@ Traps in this repo: the rule, why it bites, and the check. History lives in `git
 
 ## MCP Clients
 
-- **OpenAI billing setup and identity verification are separate flows.** On 2026-10-30, returning to **Settings → General → Individual verification** after adding a payment method opened the Persona check without completing the credit purchase. Do not infer that a purchase is required from the billing checkout alone. Submitting the identity check still left **Identity in review**, which blocked ZIP upload; wait for approval before claiming portal validation.
-- **A plugin can install successfully while exposing no MCP server.** Codex 0.165.0 does this with the portable root `plugin.json` layout in our isolated check. Use `scripts/package-plugin.py --target codex` for the working local compatibility layout; `--target openai --auth oauth` is the separate portable submission artifact. Verify native tool discovery and a handoff, not just catalog visibility. Public PKCE client IDs also need the host's native setting (`oauth.client_id` for Codex, `oauth.clientId` for Claude/Grok); the builder emits it. Re-test on client upgrades before changing layouts. Fixture commands and verified scope: `docs/oauth.md`.
+- **A plugin can install successfully while exposing no MCP server.** Codex 0.165.0 does this with the portable root `plugin.json` layout in our isolated check. `scripts/package-plugin.py --target codex` builds the working local compatibility layout. Verify native tool discovery and a handoff, not just catalog visibility. Public PKCE client IDs also need the host's native setting (`oauth.client_id` for Codex, `oauth.clientId` for Claude/Grok); the builder emits it. Re-test on client upgrades before changing layouts. Fixture commands and verified scope: `docs/oauth.md`.
 - **A disabled manual Codex MCP entry can shadow an installed plugin.** Verified with Codex 0.165.0: remove the equivalent manual server entry when adopting the plugin; setting `enabled=false` still hid its server. Preserve private rollback configuration outside the public checkout.
 - **An expired Codex OAuth grant can leave an enabled plugin without tools.** If MCP startup reports `Token expired`, run `codex mcp login ops-brain` in the normal user session and complete browser sign-in on that workstation. After success, `codex mcp list --json` reports `auth_status: "o_auth"`; this confirms saved authentication, not tool connectivity. Reload the MCP connection or restart the client, then verify tool discovery.
 - **Grok local marketplace names come from directory basenames.** With Grok 1.0.70, registering a directory named `grok` does not make the declared `ops-brain-local` catalog name installable. Use `grok plugin install /absolute/package/grok/ops-brain-bus` to install the generated plugin directly.
@@ -65,7 +64,7 @@ Traps in this repo: the rule, why it bites, and the check. History lives in `git
 
 ## Machine-Filed Handoffs
 
-- **Replies to a machine-filed handoff never reach the agent that operates the producer.** `from_agent` on an `origin=machine` handoff is the token binding (`docs/machine-callers.md`), and `list_replies_to_me` matches `parent.from_agent`. When replying to one, also notify the operating agent directly, or address the reply to it.
+- **A reply addressed to a machine producer's sender name reaches nobody.** `from_agent` on an `origin=machine` handoff is the token binding (`docs/machine-callers.md`), not an agent with a queue. Address the reply to the agent that operates the producer. `create_handoff` warns when the recipient has no credential bound to it, but only on a deployment with bindings configured.
 
 ## Auth & identity (per-agent tokens)
 
@@ -81,6 +80,8 @@ Contract: `docs/agent-tokens.md`.
 
 - **A truncated handoff ID is ambiguous — thread on the full UUID.** IDs are UUIDv7, so handoffs filed seconds apart share their leading hex. A reply on the wrong thread fails quietly: `complete_handoff` on someone else's closed handoff returns `Handoff is already completed`, which reads like success. Keep full UUIDs in notes and commits, and after replying confirm the parent's `to_agent` is you.
 - **Completing a parent does not complete its replies.** An `action` reply is independent open work. When closing a thread, complete each action reply explicitly, then run `check_in` once more to catch an orphan. `notify` replies need no cleanup.
+- **`complete_parent` closes the parent only for its recipient.** A reply with `complete_parent: true` completes the parent when the parent is open and addressed to, or accepted by, the reply's `from_agent`. Anything else files the reply and returns `_parent_completed: false` with a `_warning`; read it before assuming the thread is closed. A family seat whose parent was addressed to the family base slug falls in that case unless it accepted the parent first, and closes with `complete_handoff`.
+- **Rows with status `merged` are legacy.** `mark_merged` was removed in v7.0.0. Rows it flipped keep the status and are terminal like `completed`; the `merge_commit` and `merged_at` columns remain in the table and are no longer returned.
 
 ## GitHub PR Workflow
 

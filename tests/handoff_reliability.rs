@@ -29,7 +29,7 @@ fn response_text(response: &rmcp::model::CallToolResult) -> String {
 }
 
 #[tokio::test]
-async fn racing_acceptors_keep_broadcast_only_in_winners_check_in_and_wake_queue() {
+async fn racing_acceptors_record_exactly_one_winner() {
     let pool = common::test_pool().await;
     let sender = format!("Sender-{}", Uuid::now_v7());
     let first = format!("Claimant-A-{}", Uuid::now_v7());
@@ -53,32 +53,28 @@ async fn racing_acceptors_keep_broadcast_only_in_winners_check_in_and_wake_queue
     assert!(brief.is_operator);
     assert_eq!(brief.accepted_by.as_deref(), Some(winner));
     assert!(brief.to_agent.is_none());
-    for (agent, expected) in [(winner, true), (loser.as_str(), false)] {
-        let operational =
-            repo::list_open_handoffs(&pool, Some(agent), None, None, false, true, true, None, 200)
-                .await
-                .unwrap();
-        assert_eq!(operational.iter().any(|h| h.id == row.id), expected);
+    // An unaddressed action is a legacy row: it reaches nobody's check_in or
+    // wake queue, claimed or not.
+    for agent in [winner, loser.as_str()] {
+        let operational = repo::list_open_handoffs(
+            &pool,
+            Some(agent),
+            None,
+            None,
+            false,
+            false,
+            true,
+            None,
+            200,
+        )
+        .await
+        .unwrap();
+        assert!(!operational.iter().any(|h| h.id == row.id));
         let wake = repo::list_pending_for_agent(&pool, agent, None, 200)
             .await
             .unwrap();
-        assert_eq!(wake.iter().any(|h| h.id == row.id), expected);
+        assert!(!wake.iter().any(|h| h.id == row.id));
     }
-    // Claimant attribution is provenance, not a new restricted-token grant.
-    let restricted = repo::list_open_handoffs(
-        &pool,
-        Some(winner),
-        None,
-        None,
-        false,
-        true,
-        true,
-        Some(winner),
-        200,
-    )
-    .await
-    .unwrap();
-    assert!(!restricted.iter().any(|h| h.id == row.id));
     let brain = OpsBrain::new(pool.clone(), None);
     let hidden = handle_get_handoff(
         &brain,
@@ -103,8 +99,6 @@ async fn accept_handler_binds_identity_and_keeps_restricted_boundary() {
         handoff_id: row.id.to_string(),
         agent_name: name,
     };
-    let no_identity = handle_accept_handoff(&brain, params(None), None, Visibility::Full).await;
-    assert!(no_identity.is_error.unwrap_or(false));
     let denied = handle_accept_handoff(
         &brain,
         params(None),
