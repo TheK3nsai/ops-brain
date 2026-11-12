@@ -1373,7 +1373,7 @@ mod tests {
             .connect_lazy("postgresql://unused:unused@127.0.0.1:1/unused")
             .unwrap();
         let mcp: StreamableHttpService<OpsBrain, LocalSessionManager> = StreamableHttpService::new(
-            move || Ok(OpsBrain::new(pool.clone(), None)),
+            move || Ok(OpsBrain::new(pool.clone())),
             Default::default(),
             StreamableHttpServerConfig::default()
                 .with_json_response(true)
@@ -1433,11 +1433,6 @@ mod tests {
             (
                 "check_in",
                 json!({"agent_name":"Other-Bot"}),
-                "excluded from client data",
-            ),
-            (
-                "add_knowledge",
-                json!({"author":"Test-Bot","title":"must reject","content":"must not reach PostgreSQL","category":"gotcha","client_slug":"private-client"}),
                 "excluded from client data",
             ),
         ] {

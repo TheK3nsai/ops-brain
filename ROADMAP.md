@@ -7,9 +7,8 @@ What we build, what we don't, why. Philosophy first. Shipped-work history lives 
 **ops-brain is the team bus, not a brain.** Local is the source of truth — each
 agent's per-machine instructions are its scope, its filesystem is its state, its
 git history is its memory. ops-brain exists for the handful of things agents
-genuinely cannot do alone: handoffs between machines and vendors, bounded
-cross-agent knowledge, exact work retrieval, and narrow machine-to-agent wake
-signals.
+genuinely cannot do alone: handoffs between machines and vendors, exact work
+retrieval, and narrow machine-to-agent wake signals.
 **If a question can be answered without ops-brain, it should be.**
 
 **We kill without mercy.** Any tool, feature, or scaffolding that an agent can
@@ -56,11 +55,11 @@ Non-negotiable. Any idea that violates one of these is DOA.
   dilutes the briefing for every call, for every agent, forever. (`has_more`
   is not a field in this sense: it reports that the capped page is incomplete,
   which a silent cap otherwise hides.)
-- **No generic wiki / documentation features.** Local docs + GitHub are truth.
-  ops-brain knowledge is strictly for cross-agent gotchas that cross scope
-  boundaries. "How we build the infrastructure we run" is documentation: it
-  lives in a git reference repo agents clone — reviewed, diffable, versioned —
-  and the bus carries at most a pointer to it.
+- **No knowledge store, wiki or documentation features.** Local docs + GitHub
+  are truth. A lesson about one host belongs in that host's docs; a lesson
+  for several agents belongs in a git reference repo they clone — reviewed,
+  diffable, versioned — and a handoff carries at most a link to it. The
+  knowledge store was removed in v8.0.0 (below).
 - **Conventions ship in the server.** The MCP `instructions` string and tool
   descriptions are the only text every agent on every host sees. A workflow
   convention that lives only in a repo or per-host instruction file reaches
@@ -85,7 +84,7 @@ Non-negotiable. Any idea that violates one of these is DOA.
   incidents, and monitoring were removed in v3.0.0; Zammad ticketing followed
   in v4.0.0. Configuration management owns inventory, Uptime Kuma owns
   monitoring, and tickets/incidents live in each client's own systems.
-  ops-brain stays on its lane: handoffs, bounded knowledge, and check-in.
+  ops-brain stays on its lane: handoffs and check-in.
 
 ## Dead forever (don't resurrect)
 
@@ -167,6 +166,35 @@ The same read showed what the workflow does want: 58% of handoffs are replies,
 and half the time the agent closing a handoff replies to it within minutes.
 Hence `complete_parent` on a reply, and `accept_handoff` described as optional.
 
+### ❌ Knowledge store, client-scope guard, embeddings
+
+Removed in v8.0.0 (11 → 8 tools): `add_knowledge`, `update_knowledge`,
+`delete_knowledge`, the knowledge half of `search_bus`, the `client_slug` /
+`acknowledge_cross_client` disclosure guard, semantic and hybrid search, and
+the `backfill-embeddings` subcommand.
+
+**Why dead:** the store was the last piece of "brain" in a project whose
+first line is "not a brain". A triage of all 107 entries on 2026-11-12 found
+15 that bite agents on more than one host, 19 about ops-brain itself (17
+already in this repo's docs), 40 that were one host's local lessons, and 33
+generic maxims, pointers or notes about retired things. Two thirds were
+written by a single agent, and new entries had fallen from 42 a month to 2.
+That is one host's gotcha log with a search engine attached, which is the
+"generic wiki" hard stop. The 15 moved to a git reference repo; the rest went
+to their owners' local docs or nowhere.
+
+The guard and the embeddings existed for that store. The disclosure guard
+covered three client-scoped entries while every handoff, the store that does
+carry client detail, was readable fleet-wide by design. Full-text search is
+enough for finding a handoff, and embeddings sent every handoff body to
+another service on write.
+
+What stays: `search_bus` as full-text search over handoffs, and restricted
+tokens (`exclude_client_data`), which bound what a seat can read to its own
+handoffs. The tables and vector columns stay in the schema, unread, because
+applied migrations cannot be edited (*Decided*, below); a fresh database
+still needs the pgvector extension for that reason.
+
 ### ❌ Live lane (online peer messaging)
 
 Removed 2026-09-29. `list_live_peers`, `send_live_message`, the `/live`
@@ -244,8 +272,8 @@ patches, not cosmetic polish):
 3. Do NOT resurrect a dead item without re-opening the question from first
    principles. "Wait for demand" is not the same as "dead."
 4. ops-brain is in operator mode — new features should be the exception,
-   removals the norm. v5.0.0's 16 → 13 and v7.0.0's 13 → 11 tool reductions
-   are the model: consolidate overlapping paths, cut what the traffic shows
+   removals the norm. The tool reductions (v5.0.0 16 → 13, v7.0.0 13 → 11,
+   v8.0.0 11 → 8) are the model: consolidate overlapping paths, cut what the traffic shows
    nobody calls, and keep maintenance out of agent context. The live lane
    was the exception that proved the rule: it earned its two tools on paper and
    was killed once its install and upgrade cost was measured. Read

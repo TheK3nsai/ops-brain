@@ -9,4 +9,7 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 ### Bus core
 
 - **`operator-notify.sh` mails an item once and then goes quiet.** The briefing's "waiting on you" section is the standing view, so decide whether the script needs a re-reminder at all once that has been lived with.
-- **Retire the knowledge store.** Every entry was triaged on 2026-11-12: the few that are cross-agent move to the operator's reference repo, host-local ones go to their owner's local docs, and the rest are dropped. Once the owners confirm their entries are moved, remove the four knowledge tools, the client-scope guard that exists only for that store, and embeddings (full-text search over handoffs stays). `search_bus` then searches handoffs only. Do not add entries meanwhile.
+
+### Tests
+
+- **`scripts/test-oauth-flow.py` times out at fixture startup on a local checkout** ("fixture ops-brain readiness timed out"), with and without `--start-postgres`, and on `main` before v7.0.0 as well. CI passes it. Cause not diagnosed: the script withholds the child's output by design, so start by keeping the fixture's `server.log`.

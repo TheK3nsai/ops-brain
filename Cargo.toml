@@ -1,9 +1,9 @@
 [package]
 name = "ops-brain"
-version = "7.0.0"
+version = "8.0.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "MCP server: a small team bus for cross-agent handoffs, bounded knowledge, and check-in"
+description = "MCP server: a small team bus for cross-agent handoffs and check-in"
 repository = "https://github.com/TheK3nsai/ops-brain"
 
 [dependencies]
@@ -32,7 +32,6 @@ sqlx = { version = "0.8", features = [
     "migrate",
     "derive",
 ] }
-pgvector = { version = "0.4", features = ["sqlx"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -54,7 +53,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # HTTP server
 axum = "0.7"
 
-# HTTP client (embedding API)
+# HTTP client (OAuth JWKS fetch)
 reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
 
 # Error handling

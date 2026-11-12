@@ -41,12 +41,6 @@ services:
       - OPS_BRAIN_MIGRATE=true
       # rmcp 1.4+ Host header allowlist (DNS-rebind mitigation, default loopback-only)
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}
-      # Embeddings (ollama on same Docker network)
-      - OPS_BRAIN_EMBEDDING_URL=http://ollama:11434/v1/embeddings
-      - OPS_BRAIN_EMBEDDING_MODEL=nomic-embed-text
-      - OPS_BRAIN_EMBEDDING_API_KEY=${OPS_BRAIN_EMBEDDING_API_KEY:-}
-      # `false` in .env turns embeddings off without removing the URL
-      - OPS_BRAIN_EMBEDDINGS_ENABLED=${OPS_BRAIN_EMBEDDINGS_ENABLED:-}
       # rmcp=info surfaces session lifecycle (create/KeepAliveTimeout) in `docker logs`
       - RUST_LOG=${RUST_LOG:-ops_brain=info,rmcp=info}
     networks:

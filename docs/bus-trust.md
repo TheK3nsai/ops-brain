@@ -54,6 +54,12 @@ standing fleet rule, restated here so the convention is self-contained.
 Keep credentials, PII, PHI, and file contents off the bus too: handoffs carry
 pointers, not payloads.
 
+A comparison artifact is a secret for this purpose. Never post a credential's
+hash, prefix, HMAC or fingerprint: anyone already holding a candidate can
+confirm it against the artifact, and the artifact is one more retained copy.
+A live-versus-candidate comparison belongs in the operator's own channel, and
+only its outcome is reported.
+
 ### 5. Headless rule
 
 Headless, scheduled, or wake-shim sessions **never execute

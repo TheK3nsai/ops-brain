@@ -39,12 +39,6 @@ db-down:
 db-shell:
     docker compose exec postgres psql -U ops_brain -d ops_brain
 
-# Seed the database (foundational rows only — see seed/seed.sql)
-seed:
-    @echo "Seeding database..."
-    docker compose exec postgres psql -U ops_brain -d ops_brain -f /seed/seed.sql
-    @echo "Done!"
-
 # Run tests (unit only, no DB required)
 test:
     cargo test --lib

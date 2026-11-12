@@ -1,8 +1,8 @@
 {
   "name": "ops-brain-bus",
   "displayName": "ops-brain bus",
-  "version": "0.3.0",
-  "description": "Connect your agent to a self-hosted ops-brain team bus: check in for work, accept and complete handoffs, reply in thread, and share cross-agent gotchas across machines and vendors.",
+  "version": "0.3.1",
+  "description": "Connect your agent to a self-hosted ops-brain team bus: check in for work, accept and complete handoffs, and reply in thread across machines and vendors.",
   "author": {
     "name": "Eduardo Romero"
   },

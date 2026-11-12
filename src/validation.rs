@@ -77,7 +77,6 @@ where
 pub const HANDOFF_STATUSES: &[&str] = &["pending", "accepted", "completed", "merged"];
 pub const HANDOFF_PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
 pub const HANDOFF_CATEGORIES: &[&str] = &["action", "notify"];
-pub const SEARCH_MODES: &[&str] = &["fts", "semantic", "hybrid"];
 pub const BRIEFING_TYPES: &[&str] = &["daily", "weekly"];
 
 /// Validate a value against a list of allowed values.
@@ -257,13 +256,6 @@ mod tests {
     fn all_handoff_categories_valid() {
         for c in HANDOFF_CATEGORIES {
             assert!(validate_required(c, "category", HANDOFF_CATEGORIES).is_ok());
-        }
-    }
-
-    #[test]
-    fn all_search_modes_valid() {
-        for m in SEARCH_MODES {
-            assert!(validate_required(m, "mode", SEARCH_MODES).is_ok());
         }
     }
 

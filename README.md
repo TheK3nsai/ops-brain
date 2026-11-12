@@ -5,9 +5,9 @@
 [![Image](https://img.shields.io/badge/ghcr.io-thek3nsai%2Fops--brain-blue?logo=docker&logoColor=white)](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
-**A small team bus for AI agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other, reply in thread, and share a small set of cross-agent gotchas — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex, Grok CLI, Grok Bot and Antigravity CLI connect over the same transport. See the [client compatibility guide](docs/clients.md) for verification status and setup.
+**A small team bus for AI agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other and reply in thread — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex, Grok CLI, Grok Bot and Antigravity CLI connect over the same transport. See the [client compatibility guide](docs/clients.md) for verification status and setup.
 
-ops-brain is **not** a source of truth. Inventory belongs in your config management, tickets and incidents in your ticketing system, monitoring in your monitoring stack. Reach for the bus only when an agent genuinely needs the rest of the team.
+ops-brain is **not** a source of truth. Inventory belongs in your config management, tickets and incidents in your ticketing system, monitoring in your monitoring stack, and what your agents learn in their own docs. Reach for the bus only when an agent genuinely needs the rest of the team.
 
 ```mermaid
 flowchart LR
@@ -25,8 +25,7 @@ flowchart LR
     M -- "REST /api/handoff<br/>/api/pending" --> OB
     OB -- "REST /api/briefing" --> O
 
-    OB["<b>ops-brain</b><br/>handoffs · knowledge · check-in"] --> PG[("PostgreSQL 18<br/>+ pgvector")]
-    OB -. "optional" .-> E["Embedding endpoint<br/>(e.g. Ollama)"]
+    OB["<b>ops-brain</b><br/>handoffs · check-in · search"] --> PG[("PostgreSQL 18")]
 ```
 
 ## Who this is for
@@ -44,7 +43,7 @@ Workflow conventions (reply in thread, verify before complying, action vs. notif
 
 ## Quick start
 
-No clone required. Grab the standalone compose file, set a token, and run it. The bundled PostgreSQL has pgvector preinstalled. Embeddings start disabled (full-text search still works); turn them on by pointing at an OpenAI-compatible endpoint such as [Ollama](https://ollama.com/) serving `nomic-embed-text`.
+No clone required. Grab the standalone compose file, set a token, and run it. The bundled PostgreSQL image carries pgvector, which the migrations still need (see [`GOTCHAS.md`](GOTCHAS.md)).
 
 ```bash
 curl -O https://raw.githubusercontent.com/TheK3nsai/ops-brain/main/docker-compose.example.yml
@@ -66,7 +65,7 @@ Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below).
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
 
-The standalone example pins `:v7.0.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
+The standalone example pins `:v8.0.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
 
 Other deployment shapes:
 
@@ -115,12 +114,12 @@ Give every agent a stable `<Agent>-<Host>` name (`Claude-Laptop`, `Codex-Buildbo
 
 `Host` can also be a cloud workspace or logical seat. Shared credentials mean shared provenance, even when a vendor displays several Bot or Dot names.
 
-## Tools (11)
+## Tools (8)
 
 | Group | Tools | What they're for |
 |---|---|---|
 | **Handoffs** (6) | `create_handoff`, `get_handoff`, `accept_handoff`, `complete_handoff`, `list_handoffs`, `delete_handoff` | `action` handoffs are required work and always name a recipient; `notify` handoffs are FYI, may be broadcast, and drop out of operational queries after 7 days. Thread with `in_reply_to`; a reply with `complete_parent` closes the handoff it answers, and `commit_hash` records the work that closed it. `delete_handoff` is a hard delete that leaves a `deleted` tombstone in `audit_log` (id, deleting agent, sender, recipient, title, status). |
-| **Knowledge** (4) | `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_bus` | Cross-agent gotchas, safety warnings, compliance rules, and vendor behavior, with per-agent provenance. `search_bus` searches knowledge by default (full-text, semantic, or hybrid) and can include handoffs. |
+| **Search** (1) | `search_bus` | Full-text search over handoff titles and bodies, best match first; an empty query lists the most recent handoffs. Results are compact unless asked otherwise. |
 | **Team bus** (1) | `check_in` | Open action handoffs (pending and accepted) plus recent notifications addressed to your `agent_name`; a reply addressed to you arrives here like any other handoff. Accepted handoffs an agent filed to itself are lock records: counted in `self_claims_held`, not listed. |
 
 The tool list is small on purpose: every tool and field costs tokens in every agent's context, every session. The reasoning, and the list of things ops-brain will never build, is in [`ROADMAP.md`](ROADMAP.md).
@@ -130,12 +129,6 @@ The tool list is small on purpose: every tool and field costs tokens in every ag
 `create_handoff` warns, and still files, when no credential on the deployment is bound to the recipient: no agent or poller would pick up a handoff sent to a misspelled slug, a retired seat, or a machine producer's sender name. The check uses the agent tokens, OAuth bindings and machine-token `agents` lists you configured; there is no agent registry.
 
 **Briefings** stay off the MCP surface. `POST /api/briefing` returns a daily or weekly digest that opens with what is waiting on the operator (oldest first), then high and critical machine findings, then work stuck in another agent's queue past its age threshold, then the open set as counts. The `operator` field names the slug that first section reads (default `Operator`); a slug no handoff has ever used is called out rather than shown as an empty queue.
-
-**Embedding maintenance** runs from an operator shell, not an agent:
-
-```bash
-ops-brain backfill-embeddings [--table knowledge|handoffs] [--batch-size 10]
-```
 
 ## HTTP endpoints
 
@@ -150,23 +143,11 @@ GET  /ready         database readiness         no auth
 
 Agent tokens reach `/mcp` only; machine tokens reach only their REST endpoints ([`docs/machine-callers.md`](docs/machine-callers.md)). `/health` and `/ready` need no bearer so healthchecks and reverse proxies can tell a running process from a database-ready service. The production compose file does not publish port 3000 on the host; reach it through your reverse proxy or from inside the container.
 
-## Trust model and cross-client safety
+## Trust model
 
 **One deployment is one trusted coordination domain.** Every authenticated agent can read fleet-wide handoffs and act on objects by ID. Per-agent tokens prove *who filed something*; they don't isolate tenants. Run separate instances when clients or operators must not see each other's data.
 
-Inside that domain, knowledge entries can be scoped to a client, and scoped searches guard against accidental disclosure:
-
-| Entry belongs to | Result |
-|---|---|
-| No client (global) | returned |
-| Same client as the query | returned |
-| Different client, marked `cross_client_safe` | returned, logged |
-| Different client, caller passes `acknowledge_cross_client: true` | released, logged |
-| Different client, otherwise | **withheld**, replaced with a scope-mismatch notice, logged |
-
-Every event lands in the `audit_log` table. The guard only applies when a search passes `client_slug`; unscoped searches return everything with provenance attached and a note that the guard is off. It is a guard against mistakes, not a security boundary against a hostile user.
-
-If you enable embeddings, the embedding endpoint receives knowledge and handoff text on writes, and search queries in semantic or hybrid mode. Use a local endpoint, or leave embeddings off, when that content must stay inside the deployment.
+Handoff bodies are therefore the wrong place for client data or secrets: point at the evidence instead of pasting it. An agent that must stay out of the rest of the team's traffic gets a token with `exclude_client_data`, which limits it to the handoffs it sent or received ([`docs/agent-tokens.md`](docs/agent-tokens.md)).
 
 Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 
@@ -181,15 +162,11 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for `/mcp`. Enforces identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
 | `OPS_BRAIN_OAUTH_CONFIG` | (none) | Optional external provider, JWKS, scopes and explicit subject/client-to-agent bindings. See [`docs/oauth.md`](docs/oauth.md). |
 | `OPS_BRAIN_OAUTH_RESOURCE_URL` | (none) | Canonical public HTTPS MCP resource URL. Required together with the OAuth config; empty leaves OAuth disabled. |
-| `OPS_BRAIN_INSTRUCTIONS_EXTRA` | (none) | One line appended to the built-in MCP instructions for this deployment only. No line breaks. Rejected when the initialize text would pass 1400 bytes (213 bytes of room with the current built-in text). |
+| `OPS_BRAIN_INSTRUCTIONS_EXTRA` | (none) | One line appended to the built-in MCP instructions for this deployment only. No line breaks. Rejected when the initialize text would pass 1300 bytes (219 bytes of room with the current built-in text). |
 | `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped tokens for `POST /api/handoff` and `GET /api/pending`. See [`docs/machine-callers.md`](docs/machine-callers.md). |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` values (DNS-rebinding protection). Set your public hostname when behind a reverse proxy. |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Serve HTTP with no auth. Dev only; never expose beyond localhost. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
-| `OPS_BRAIN_EMBEDDINGS_ENABLED` | `true` | `false` turns embeddings off even when a URL is set (the example compose file ships with them off). Blank means unset. |
-| `OPS_BRAIN_EMBEDDING_URL` | (none) | OpenAI-compatible embedding API, e.g. `http://localhost:11434/v1/embeddings` for local Ollama. Embeddings are off unless this is set; blank counts as unset. |
-| `OPS_BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
-| `OPS_BRAIN_EMBEDDING_API_KEY` | (none) | Bearer for the embedding API, if it needs one |
 
 The server reads only the names above. Other `OPS_BRAIN_*` names in this repo are not server settings:
 
@@ -203,8 +180,7 @@ The server reads only the names above. Other `OPS_BRAIN_*` names in this repo ar
 | Language | Rust 2021 |
 | MCP SDK | [rmcp](https://github.com/modelcontextprotocol/rust-sdk) 3.9 |
 | Database | PostgreSQL 18 via sqlx (runtime queries) |
-| Search | tsvector full-text + pgvector HNSW cosine, fused with Reciprocal Rank Fusion |
-| Embeddings | `nomic-embed-text` (768d) over any OpenAI-compatible API |
+| Search | PostgreSQL full-text (`tsvector`) over handoff titles and bodies |
 | Transport | stdio, or streamable HTTP on axum |
 
 ## Project docs

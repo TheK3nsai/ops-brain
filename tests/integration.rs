@@ -15,237 +15,6 @@ async fn pool() -> PgPool {
     common::test_pool().await
 }
 
-// ===== Client Repo =====
-
-mod client_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn upsert_and_get_client() {
-        let pool = pool().await;
-        let slug = format!("test-client-{}", Uuid::now_v7());
-
-        let client = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Test Client",
-            &slug,
-            Some("test notes"),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(client.name, "Test Client");
-        assert_eq!(client.slug, slug);
-        assert_eq!(client.notes.as_deref(), Some("test notes"));
-
-        // Get by slug
-        let fetched = ops_brain::repo::client_repo::get_client_by_slug(&pool, &slug)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.id, client.id);
-
-        // Get by ID
-        let fetched = ops_brain::repo::client_repo::get_client(&pool, client.id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.slug, slug);
-
-        // Cleanup
-        sqlx::query("DELETE FROM clients WHERE id = $1")
-            .bind(client.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn upsert_client_updates_on_conflict() {
-        let pool = pool().await;
-        let slug = format!("upsert-test-{}", Uuid::now_v7());
-
-        let _c1 = ops_brain::repo::client_repo::upsert_client(&pool, "Original", &slug, Some("v1"))
-            .await
-            .unwrap();
-
-        let c2 = ops_brain::repo::client_repo::upsert_client(&pool, "Updated", &slug, Some("v2"))
-            .await
-            .unwrap();
-
-        // Same slug, should update name and notes
-        assert_eq!(c2.slug, slug);
-        assert_eq!(c2.name, "Updated");
-        assert_eq!(c2.notes.as_deref(), Some("v2"));
-
-        // Cleanup
-        sqlx::query("DELETE FROM clients WHERE slug = $1")
-            .bind(&slug)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn list_clients() {
-        let pool = pool().await;
-        let clients = ops_brain::repo::client_repo::list_clients(&pool)
-            .await
-            .unwrap();
-        // Should at least return without error (may have seed data)
-        let _ = clients.len();
-    }
-}
-
-// ===== Knowledge Repo =====
-
-mod knowledge_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn add_and_get_knowledge() {
-        let pool = pool().await;
-
-        let k = ops_brain::repo::knowledge_repo::add_knowledge(
-            &pool,
-            "Test Knowledge Entry",
-            "Some important info about testing",
-            Some("testing"),
-            &["ci".to_string()],
-            None,
-            false,
-            Some("Claude-Laptop"),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(k.title, "Test Knowledge Entry");
-        assert!(!k.cross_client_safe);
-        assert_eq!(k.author.as_deref(), Some("Claude-Laptop"));
-
-        let fetched = ops_brain::repo::knowledge_repo::get_knowledge(&pool, k.id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.id, k.id);
-
-        // Cleanup
-        sqlx::query("DELETE FROM knowledge WHERE id = $1")
-            .bind(k.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn knowledge_cross_client_safe_field() {
-        let pool = pool().await;
-
-        let k = ops_brain::repo::knowledge_repo::add_knowledge(
-            &pool,
-            "Safe Knowledge",
-            "Content safe for all clients",
-            None,
-            &[],
-            None,
-            true,
-            Some("Claude-Laptop"),
-        )
-        .await
-        .unwrap();
-
-        assert!(k.cross_client_safe);
-
-        // Cleanup
-        sqlx::query("DELETE FROM knowledge WHERE id = $1")
-            .bind(k.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn content_edit_reverifies_but_metadata_edit_does_not() {
-        let pool = pool().await;
-
-        let k = ops_brain::repo::knowledge_repo::add_knowledge(
-            &pool,
-            "Staleness clock",
-            "Original body",
-            None,
-            &[],
-            None,
-            false,
-            Some("Claude-Laptop"),
-        )
-        .await
-        .unwrap();
-        assert!(k.last_verified_at.is_none());
-
-        let k = ops_brain::repo::knowledge_repo::update_knowledge(
-            &pool,
-            k.id,
-            Some("Renamed"),
-            None,
-            Some("gotcha"),
-            Some(&["tag".to_string()]),
-            None,
-        )
-        .await
-        .unwrap();
-        assert!(
-            k.last_verified_at.is_none(),
-            "title/category/tag edits must not reset the staleness clock"
-        );
-
-        let k = ops_brain::repo::knowledge_repo::update_knowledge(
-            &pool,
-            k.id,
-            None,
-            Some("Original body"),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        assert!(
-            k.last_verified_at.is_none(),
-            "resending the body unchanged must not reset the staleness clock"
-        );
-
-        let k = ops_brain::repo::knowledge_repo::update_knowledge(
-            &pool,
-            k.id,
-            None,
-            Some("Rewritten body"),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        assert!(
-            k.last_verified_at.is_some(),
-            "a content edit re-verifies the entry"
-        );
-
-        sqlx::query("DELETE FROM knowledge WHERE id = $1")
-            .bind(k.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-}
-
-// ===== Knowledge Provenance =====
-//
-// Pure-logic tests for `author` validation, `is_knowledge_stale`, and
-// `knowledge_entries_to_json` live in `src/tools/knowledge.rs`. The
-// integration tests above (`add_and_get_knowledge`,
-// `knowledge_cross_client_safe_field`) exercise the handler-layer paths
-// that need a real OpsBrain to round-trip through.
-
 // ===== Handoffs =====
 
 mod coordination_tests {
@@ -615,13 +384,12 @@ mod coordination_tests {
 mod v5_surface_tests {
     use super::*;
     use ops_brain::tools::coordination::{handle_get_handoff, GetHandoffParams};
-    use ops_brain::tools::knowledge::{handle_search_knowledge, SearchKnowledgeParams};
     use ops_brain::tools::OpsBrain;
 
     #[tokio::test]
     async fn get_handoff_returns_one_full_record() {
         let pool = pool().await;
-        let brain = OpsBrain::new(pool.clone(), None);
+        let brain = OpsBrain::new(pool.clone());
         let handoff = ops_brain::repo::handoff_repo::create_handoff(
             &pool,
             "Codex-Laptop",
@@ -657,52 +425,6 @@ mod v5_surface_tests {
     }
 
     #[tokio::test]
-    async fn search_bus_browse_preserves_knowledge_category_filter() {
-        let pool = pool().await;
-        let brain = OpsBrain::new(pool.clone(), None);
-        let category = format!("v5-category-{}", Uuid::now_v7().simple());
-        let entry = ops_brain::repo::knowledge_repo::add_knowledge(
-            &pool,
-            "v5 category browse",
-            "category-filtered knowledge",
-            Some(&category),
-            &[],
-            None,
-            false,
-            Some("Codex-Laptop"),
-        )
-        .await
-        .unwrap();
-
-        let result = handle_search_knowledge(
-            &brain,
-            SearchKnowledgeParams {
-                query: Some("*".to_string()),
-                mode: None,
-                tables: None,
-                category: Some(category),
-                client_slug: None,
-                acknowledge_cross_client: None,
-                limit: Some(20),
-                compact: Some(false),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await;
-        assert_eq!(result.is_error, Some(false));
-        let value = result.structured_content.expect("structured browse");
-        let items = value["knowledge"].as_array().unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["id"], entry.id.to_string());
-
-        sqlx::query("DELETE FROM knowledge WHERE id = $1")
-            .bind(entry.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
     async fn rest_briefing_is_stateless() {
         let pool = pool().await;
         let value = ops_brain::tools::briefings::generate_briefing_inner(
@@ -725,72 +447,6 @@ mod v5_surface_tests {
 
 // ===== Audit Log Repo =====
 
-mod audit_log_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn log_cross_client_access() {
-        let pool = pool().await;
-
-        // Create real clients for FK constraints
-        let slug_req = format!("audit-req-{}", Uuid::now_v7());
-        let slug_own = format!("audit-own-{}", Uuid::now_v7());
-
-        let req_client = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Requesting Client",
-            &slug_req,
-            None,
-        )
-        .await
-        .unwrap();
-
-        let own_client =
-            ops_brain::repo::client_repo::upsert_client(&pool, "Owning Client", &slug_own, None)
-                .await
-                .unwrap();
-
-        let entity_id = Uuid::now_v7();
-
-        // Should not error
-        ops_brain::repo::audit_log_repo::log_access(
-            &pool,
-            "search_knowledge",
-            Some(req_client.id),
-            "knowledge",
-            entity_id,
-            Some(own_client.id),
-            "withheld",
-        )
-        .await;
-
-        // Verify it was written
-        let row = sqlx::query_as::<_, (String, String)>(
-            "SELECT tool_name, action FROM audit_log WHERE entity_id = $1",
-        )
-        .bind(entity_id)
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
-
-        let (tool, action) = row.unwrap();
-        assert_eq!(tool, "search_knowledge");
-        assert_eq!(action, "withheld");
-
-        // Cleanup
-        sqlx::query("DELETE FROM audit_log WHERE entity_id = $1")
-            .bind(entity_id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM clients WHERE id = ANY($1)")
-            .bind([req_client.id, own_client.id])
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-}
-
 // ===== Delete Tools =====
 
 // ===== Fuzzy Slug Suggestion Tests =====
@@ -807,7 +463,7 @@ mod check_in_tests {
     use super::*;
 
     fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
-        ops_brain::tools::OpsBrain::new(pool, None)
+        ops_brain::tools::OpsBrain::new(pool)
     }
 
     fn extract_text(result: &rmcp::model::CallToolResult) -> String {
@@ -1125,7 +781,7 @@ mod coordination_handler_tests {
     use ops_brain::tools::coordination::{handle_create_handoff, CreateHandoffParams};
 
     fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
-        ops_brain::tools::OpsBrain::new(pool, None)
+        ops_brain::tools::OpsBrain::new(pool)
     }
 
     fn extract_text(result: &rmcp::model::CallToolResult) -> String {
@@ -1771,335 +1427,6 @@ mod machine_handoff_tests {
     }
 }
 
-// ===== Cross-client safety gate (end-to-end through the search handler) =====
-//
-// The pure-logic partitioning is unit-tested in `src/tools/mod.rs`; these
-// drive the whole `handle_search_knowledge` path so the withhold → acknowledge
-// → audit-log contract is locked against a real OpsBrain + Postgres. FTS mode
-// with a unique term keeps the embedding client out of the picture.
-mod knowledge_safety_tests {
-    use super::*;
-    use ops_brain::tools::knowledge::{handle_search_knowledge, SearchKnowledgeParams};
-
-    fn build_brain(pool: PgPool) -> ops_brain::tools::OpsBrain {
-        ops_brain::tools::OpsBrain::new(pool, None)
-    }
-
-    fn extract_json(result: &rmcp::model::CallToolResult) -> serde_json::Value {
-        let text = result
-            .content
-            .first()
-            .expect("result has content")
-            .as_text()
-            .expect("content is text")
-            .text
-            .clone();
-        serde_json::from_str(&text).expect("result body is JSON")
-    }
-
-    /// FTS single-table search scoped to `client_slug`, non-compact so bodies
-    /// (and provenance) are present on allowed items.
-    async fn search_as(
-        brain: &ops_brain::tools::OpsBrain,
-        query: &str,
-        client_slug: &str,
-        acknowledge: bool,
-    ) -> serde_json::Value {
-        let result = handle_search_knowledge(
-            brain,
-            SearchKnowledgeParams {
-                query: Some(query.to_string()),
-                mode: Some("fts".to_string()),
-                tables: None,
-                category: None,
-                client_slug: Some(client_slug.to_string()),
-                acknowledge_cross_client: Some(acknowledge),
-                limit: Some(50),
-                compact: Some(false),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await;
-        assert_eq!(result.is_error, Some(false), "search should not error");
-        extract_json(&result)
-    }
-
-    #[tokio::test]
-    async fn cross_client_gate_withhold_acknowledge_and_audit() {
-        let pool = pool().await;
-        let brain = build_brain(pool.clone());
-        let suffix = Uuid::now_v7().simple().to_string();
-
-        let client_a = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Alpha Gate Co",
-            &format!("alphagate-{suffix}"),
-            None,
-        )
-        .await
-        .unwrap();
-        let client_b = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Beta Gate Co",
-            &format!("betagate-{suffix}"),
-            None,
-        )
-        .await
-        .unwrap();
-
-        // Unique FTS term so only our entries match.
-        let secret_term = format!("zqxgate{suffix}");
-        let safe_term = format!("zqxsafe{suffix}");
-
-        // Client A entry, NOT cross-client safe.
-        let secret = ops_brain::repo::knowledge_repo::add_knowledge(
-            &pool,
-            &format!("gate {secret_term} secret"),
-            "sensitive content for A only",
-            Some("safety"),
-            &[],
-            Some(client_a.id),
-            false,
-            Some("Claude-Laptop"),
-        )
-        .await
-        .unwrap();
-
-        // Client A entry that IS cross-client safe.
-        let safe = ops_brain::repo::knowledge_repo::add_knowledge(
-            &pool,
-            &format!("gate {safe_term} shareable"),
-            "content marked safe for all clients",
-            Some("safety"),
-            &[],
-            Some(client_a.id),
-            true,
-            Some("Claude-Laptop"),
-        )
-        .await
-        .unwrap();
-
-        // 1) Client B searches the secret term WITHOUT acknowledgment → withheld.
-        let withheld = search_as(&brain, &secret_term, &client_b.slug, false).await;
-        let items = withheld["knowledge"].as_array().expect("knowledge array");
-        assert!(
-            items.is_empty(),
-            "secret entry must be withheld, got: {items:?}"
-        );
-        let notices = withheld["cross_client_withheld"]
-            .as_array()
-            .expect("withheld notices present");
-        assert_eq!(notices.len(), 1);
-        assert_eq!(notices[0]["count"], 1);
-        assert_eq!(notices[0]["owning_client_slug"], client_a.slug);
-        // Content must NOT leak anywhere in the withheld response.
-        assert!(
-            !withheld
-                .to_string()
-                .contains("sensitive content for A only"),
-            "withheld content must not appear in the response"
-        );
-
-        // 2) Client B re-calls WITH acknowledgment → released, content present,
-        //    provenance stamped to the owning client.
-        let released = search_as(&brain, &secret_term, &client_b.slug, true).await;
-        let items = released["knowledge"].as_array().expect("knowledge array");
-        assert_eq!(
-            items.len(),
-            1,
-            "acknowledged search should release the item"
-        );
-        assert_eq!(items[0]["id"], secret.id.to_string());
-        assert_eq!(items[0]["content"], "sensitive content for A only");
-        assert_eq!(items[0]["_client_slug"], client_a.slug);
-        assert_eq!(items[0]["_client_name"], client_a.name);
-
-        // 3) audit_log recorded the release for client B.
-        let released_rows: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM audit_log
-              WHERE entity_id = $1 AND requesting_client_id = $2
-                AND action = 'released' AND tool_name = 'search_bus'",
-        )
-        .bind(secret.id)
-        .bind(client_b.id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert!(
-            released_rows >= 1,
-            "a released audit_log row must exist for the acknowledged surfacing"
-        );
-
-        // 4) cross_client_safe=true entry passes for client B WITHOUT ack.
-        let safe_resp = search_as(&brain, &safe_term, &client_b.slug, false).await;
-        let items = safe_resp["knowledge"].as_array().expect("knowledge array");
-        assert_eq!(items.len(), 1, "safe entry passes without acknowledgment");
-        assert_eq!(items[0]["id"], safe.id.to_string());
-        assert_eq!(items[0]["_client_slug"], client_a.slug);
-        assert_eq!(items[0]["_client_name"], client_a.name);
-        assert!(
-            safe_resp.get("cross_client_withheld").is_none(),
-            "safe entry must not produce a withheld notice"
-        );
-
-        // Cleanup: audit_log FKs requesting_client_id → clients, so purge it
-        // before the clients. knowledge.client_id is ON DELETE RESTRICT.
-        sqlx::query("DELETE FROM audit_log WHERE entity_id = ANY($1)")
-            .bind(vec![secret.id, safe.id])
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM knowledge WHERE id = ANY($1)")
-            .bind(vec![secret.id, safe.id])
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM clients WHERE id = ANY($1)")
-            .bind(vec![client_a.id, client_b.id])
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    /// Step 8: an UNSCOPED search (no client_slug) applies no withholding but
-    /// still stamps provenance on every item and carries the `_note` banner.
-    #[tokio::test]
-    async fn unscoped_search_injects_note_and_provenance() {
-        let pool = pool().await;
-        let brain = build_brain(pool.clone());
-        let suffix = Uuid::now_v7().simple().to_string();
-
-        let client_a = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Unscoped Co",
-            &format!("unscoped-{suffix}"),
-            None,
-        )
-        .await
-        .unwrap();
-
-        let term = format!("zqxunscoped{suffix}");
-        let entry = ops_brain::repo::knowledge_repo::add_knowledge(
-            &pool,
-            &format!("open {term} entry"),
-            "unscoped body",
-            None,
-            &[],
-            Some(client_a.id),
-            false,
-            Some("Claude-Laptop"),
-        )
-        .await
-        .unwrap();
-
-        // No client_slug → unscoped.
-        let result = handle_search_knowledge(
-            &brain,
-            SearchKnowledgeParams {
-                query: Some(term.clone()),
-                mode: Some("fts".to_string()),
-                tables: None,
-                category: None,
-                client_slug: None,
-                acknowledge_cross_client: None,
-                limit: Some(50),
-                compact: Some(false),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await;
-        assert_eq!(result.is_error, Some(false));
-        let resp = extract_json(&result);
-
-        assert!(
-            resp["_note"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("unscoped query"),
-            "unscoped response must carry the _note banner, got: {resp}"
-        );
-        let items = resp["knowledge"].as_array().expect("knowledge array");
-        assert_eq!(items.len(), 1);
-        // Provenance is present even without a requesting client.
-        assert_eq!(items[0]["_client_slug"], client_a.slug);
-        assert_eq!(items[0]["_client_name"], client_a.name);
-        assert!(
-            resp.get("cross_client_withheld").is_none(),
-            "unscoped query never withholds"
-        );
-
-        sqlx::query("DELETE FROM knowledge WHERE id = $1")
-            .bind(entry.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM clients WHERE id = $1")
-            .bind(client_a.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    /// Global is `client_id IS NULL`, so a client delete that nulled its
-    /// knowledge would publish those rows to every caller. The FK refuses.
-    #[tokio::test]
-    async fn deleting_a_client_with_knowledge_is_refused() {
-        let pool = pool().await;
-        let suffix = Uuid::now_v7().simple().to_string();
-
-        let client = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Retiring Co",
-            &format!("retiring-{suffix}"),
-            None,
-        )
-        .await
-        .unwrap();
-        let entry = ops_brain::repo::knowledge_repo::add_knowledge(
-            &pool,
-            &format!("scoped {suffix} entry"),
-            "client-only body",
-            None,
-            &[],
-            Some(client.id),
-            false,
-            Some("Claude-Laptop"),
-        )
-        .await
-        .unwrap();
-
-        let err = sqlx::query("DELETE FROM clients WHERE id = $1")
-            .bind(client.id)
-            .execute(&pool)
-            .await
-            .expect_err("client delete must be refused while it owns knowledge");
-        assert_eq!(
-            err.as_database_error().and_then(|e| e.code()).as_deref(),
-            Some("23001"),
-            "expected restrict_violation, got {err}"
-        );
-
-        let client_id: Option<Uuid> =
-            sqlx::query_scalar("SELECT client_id FROM knowledge WHERE id = $1")
-                .bind(entry.id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(client_id, Some(client.id), "entry must stay client-scoped");
-
-        sqlx::query("DELETE FROM knowledge WHERE id = $1")
-            .bind(entry.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM clients WHERE id = $1")
-            .bind(client.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-}
-
 // ===== bearer_auth middleware enforcement =====
 //
 // Drives the real middleware over a tiny router via tower::oneshot — no DB.
@@ -2342,45 +1669,17 @@ mod readiness_tests {
 mod pagination_surface_tests {
     use super::*;
     use axum::extract::{Extension, Query, State};
-    use axum::routing::post;
-    use axum::{Json, Router};
     use ops_brain::api::{ApiState, PendingQuery};
     use ops_brain::auth::CallerClass;
-    use ops_brain::embeddings::EmbeddingClient;
     use ops_brain::tools::coordination::{handle_list_handoffs, ListHandoffsParams};
-    use ops_brain::tools::knowledge::{handle_search_knowledge, SearchKnowledgeParams};
+    use ops_brain::tools::search::{handle_search_bus, SearchBusParams};
     use ops_brain::tools::OpsBrain;
     use std::sync::Arc;
-
-    async fn embedding_response() -> Json<serde_json::Value> {
-        let mut embedding = vec![0.0; 768];
-        embedding[0] = 1.0;
-        Json(serde_json::json!({
-            "data": [{ "embedding": embedding, "index": 0 }]
-        }))
-    }
-
-    async fn start_embedding_server() -> (EmbeddingClient, tokio::task::JoinHandle<()>) {
-        let app = Router::new().route("/embeddings", post(embedding_response));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        (
-            EmbeddingClient::new(
-                format!("http://{addr}/embeddings"),
-                "test-embedding".to_string(),
-                None,
-            ),
-            server,
-        )
-    }
 
     #[tokio::test]
     async fn handoff_lists_report_probe_rows_and_limit_clamps() {
         let pool = pool().await;
-        let brain = OpsBrain::new(pool.clone(), None);
+        let brain = OpsBrain::new(pool.clone());
         let suffix = Uuid::now_v7().simple().to_string();
         let sender = format!("pagination-sender-{suffix}");
         let reply_sender = format!("pagination-replier-{suffix}");
@@ -2447,6 +1746,88 @@ mod pagination_surface_tests {
             .unwrap();
     }
 
+    /// Search and browse are capped pages that say when more exists, a
+    /// compact result carries a snippet instead of the body, and a query
+    /// whose words don't all match falls back to matching any of them.
+    #[tokio::test]
+    async fn search_bus_pages_compacts_and_falls_back_to_any_word() {
+        let pool = pool().await;
+        let brain = OpsBrain::new(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+        let sender = format!("Pagination-Search-{suffix}");
+        let term = format!("paginationterm{suffix}");
+        let long_body = "pagination body ".repeat(40);
+        for n in 0..3 {
+            ops_brain::repo::handoff_repo::create_handoff(
+                &pool,
+                &sender,
+                Some("Pagination-Peer"),
+                "normal",
+                if n == 0 { "notify" } else { "action" },
+                &format!("{term} handoff {n}"),
+                &long_body,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        let search = |query: &str, limit: i64, compact: Option<bool>| {
+            let brain = brain.clone();
+            let query = query.to_string();
+            async move {
+                handle_search_bus(
+                    &brain,
+                    SearchBusParams {
+                        query: Some(query),
+                        limit: Some(limit),
+                        compact,
+                    },
+                    ops_brain::auth::Visibility::Full,
+                )
+                .await
+                .structured_content
+                .expect("structured search response")
+            }
+        };
+
+        for query in ["*", term.as_str()] {
+            let page = search(query, 2, None).await;
+            assert_eq!(page["handoffs"].as_array().unwrap().len(), 2, "{query}");
+            assert_eq!(page["limit"], 2);
+            assert_eq!(page["limit_clamped"], false);
+            assert_eq!(page["has_more"], true, "{query}");
+        }
+
+        let all = search(&term, 50, None).await;
+        let rows = all["handoffs"].as_array().unwrap();
+        assert_eq!(rows.len(), 3, "the notify is searchable too: {all}");
+        assert_eq!(all["has_more"], false);
+        assert!(rows[0].get("body").is_none() && rows[0].get("context").is_none());
+        assert!(rows[0]["_snippet"].as_str().unwrap().len() <= 203);
+
+        let full = search(&term, 50, Some(false)).await;
+        assert_eq!(full["handoffs"][0]["body"], long_body);
+
+        // "<term> nosuchword" matches nothing as all-words, then any-word.
+        let fallback = search(&format!("{term} zzznosuchword{suffix}"), 50, None).await;
+        assert_eq!(fallback["handoffs"].as_array().unwrap().len(), 3);
+        let nothing = search(&format!("zzznosuchword{suffix}"), 50, None).await;
+        assert!(nothing["handoffs"].as_array().unwrap().is_empty());
+        // An exclusion is never loosened into "any word".
+        let excluded = search(&format!("{term} -handoff"), 50, None).await;
+        assert!(
+            excluded["handoffs"].as_array().unwrap().is_empty(),
+            "{excluded}"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = $1")
+            .bind(&sender)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn pending_rest_reports_when_another_row_exists() {
         let pool = pool().await;
@@ -2490,190 +1871,6 @@ mod pagination_surface_tests {
             .await
             .unwrap();
     }
-
-    #[tokio::test]
-    async fn search_and_browse_report_per_table_completeness() {
-        let pool = pool().await;
-        let brain = OpsBrain::new(pool.clone(), None);
-        let suffix = Uuid::now_v7().simple().to_string();
-        let category = format!("pagination-category-{suffix}");
-        let term = format!("paginationterm{suffix}");
-        for n in 0..3 {
-            ops_brain::repo::knowledge_repo::add_knowledge(
-                &pool,
-                &format!("{term} entry {n}"),
-                "pagination body",
-                Some(&category),
-                &[],
-                None,
-                false,
-                Some("Codex-Laptop"),
-            )
-            .await
-            .unwrap();
-        }
-        let handoff = ops_brain::repo::handoff_repo::create_handoff(
-            &pool,
-            "Pagination-Search",
-            None,
-            "normal",
-            "action",
-            &format!("{term} handoff"),
-            "pagination body",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        for query in ["*", term.as_str()] {
-            let response = handle_search_knowledge(
-                &brain,
-                SearchKnowledgeParams {
-                    query: Some(query.to_string()),
-                    mode: Some("fts".to_string()),
-                    tables: None,
-                    category: (query == "*").then(|| category.clone()),
-                    client_slug: None,
-                    acknowledge_cross_client: None,
-                    limit: Some(2),
-                    compact: Some(false),
-                },
-                ops_brain::auth::Visibility::Full,
-            )
-            .await
-            .structured_content
-            .expect("structured search response");
-            assert_eq!(response["knowledge"].as_array().unwrap().len(), 2);
-            assert_eq!(response["limit"], 2);
-            assert_eq!(response["limit_clamped"], false);
-            assert_eq!(response["has_more"], true);
-            assert_eq!(response["has_more_by_table"]["knowledge"], true);
-        }
-
-        let multi = handle_search_knowledge(
-            &brain,
-            SearchKnowledgeParams {
-                query: Some(term),
-                mode: Some("fts".to_string()),
-                tables: Some(vec!["knowledge".to_string(), "handoffs".to_string()]),
-                category: None,
-                client_slug: None,
-                acknowledge_cross_client: None,
-                limit: Some(2),
-                compact: Some(false),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await
-        .structured_content
-        .expect("structured multi-table search response");
-        assert_eq!(multi["has_more"], true);
-        assert_eq!(multi["has_more_by_table"]["knowledge"], true);
-        assert_eq!(multi["has_more_by_table"]["handoffs"], false);
-
-        sqlx::query("DELETE FROM knowledge WHERE category = $1")
-            .bind(&category)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM handoffs WHERE id = $1")
-            .bind(handoff.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn hybrid_search_probes_beyond_fifty_candidates_per_table() {
-        let pool = pool().await;
-        let (embedding_client, server) = start_embedding_server().await;
-        let brain = OpsBrain::new(pool.clone(), Some(embedding_client));
-        let suffix = Uuid::now_v7().simple().to_string();
-        let category = format!("hybrid-pagination-{suffix}");
-        let sender = format!("hybrid-pagination-{suffix}");
-        let term = format!("hybridpaginationterm{suffix}");
-        let mut embedding = vec![0.0; 768];
-        embedding[0] = 1.0;
-
-        // Every row is present in both the FTS and vector candidate sets. A
-        // hard-coded 50-row CTE cannot return the 51st probe row and would
-        // therefore make this handler response incorrectly report complete.
-        for n in 0..51 {
-            let knowledge = ops_brain::repo::knowledge_repo::add_knowledge(
-                &pool,
-                &format!("{term} knowledge {n}"),
-                "hybrid pagination body",
-                Some(&category),
-                &[],
-                None,
-                false,
-                Some("Codex-Laptop"),
-            )
-            .await
-            .unwrap();
-            ops_brain::repo::embedding_repo::store_knowledge_embedding(
-                &pool,
-                knowledge.id,
-                &embedding,
-            )
-            .await
-            .unwrap();
-
-            let handoff = ops_brain::repo::handoff_repo::create_handoff(
-                &pool,
-                &sender,
-                None,
-                "normal",
-                "action",
-                &format!("{term} handoff {n}"),
-                "hybrid pagination body",
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-            ops_brain::repo::embedding_repo::store_handoff_embedding(&pool, handoff.id, &embedding)
-                .await
-                .unwrap();
-        }
-
-        let response = handle_search_knowledge(
-            &brain,
-            SearchKnowledgeParams {
-                query: Some(term),
-                mode: Some("hybrid".to_string()),
-                tables: Some(vec!["knowledge".to_string(), "handoffs".to_string()]),
-                category: None,
-                client_slug: None,
-                acknowledge_cross_client: None,
-                limit: Some(50),
-                compact: Some(false),
-            },
-            ops_brain::auth::Visibility::Full,
-        )
-        .await
-        .structured_content
-        .expect("structured hybrid search response");
-
-        assert_eq!(response["knowledge"].as_array().unwrap().len(), 50);
-        assert_eq!(response["handoffs"].as_array().unwrap().len(), 50);
-        assert_eq!(response["has_more"], true);
-        assert_eq!(response["has_more_by_table"]["knowledge"], true);
-        assert_eq!(response["has_more_by_table"]["handoffs"], true);
-
-        sqlx::query("DELETE FROM knowledge WHERE category = $1")
-            .bind(&category)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM handoffs WHERE from_agent = $1")
-            .bind(&sender)
-            .execute(&pool)
-            .await
-            .unwrap();
-        server.abort();
-    }
 }
 
 // ===== Per-agent identity through the real HTTP MCP transport =====
@@ -2704,7 +1901,7 @@ mod mcp_identity_transport_tests {
         let pool_for_service = pool.clone();
         let mcp_service: StreamableHttpService<OpsBrain, LocalSessionManager> =
             StreamableHttpService::new(
-                move || Ok(OpsBrain::new(pool_for_service.clone(), None)),
+                move || Ok(OpsBrain::new(pool_for_service.clone())),
                 Default::default(),
                 StreamableHttpServerConfig::default().with_sse_keep_alive(None),
             );
@@ -2790,7 +1987,7 @@ mod mcp_identity_transport_tests {
             .unwrap();
         let mcp_service: StreamableHttpService<OpsBrain, LocalSessionManager> =
             StreamableHttpService::new(
-                move || Ok(OpsBrain::new(pool.clone(), None)),
+                move || Ok(OpsBrain::new(pool.clone())),
                 Default::default(),
                 StreamableHttpServerConfig::default().with_sse_keep_alive(None),
             );
@@ -3655,10 +2852,9 @@ mod briefing_operator_view_tests {
 
 // ===== exclude_client_data tokens: the restricted boundary end to end =====
 //
-// A restricted caller sees global knowledge and only the handoffs it sent or
-// received. These drive the real handlers against Postgres, with an
-// unrestricted control on the same rows so a filter that hid everything
-// couldn't pass. FTS with unique terms keeps embeddings out of the picture.
+// A restricted caller sees only the handoffs it sent or received. These drive
+// the real handlers against Postgres, with an unrestricted control on the
+// same rows so a filter that hid everything couldn't pass.
 mod restricted_visibility_tests {
     use super::*;
     use ops_brain::auth::Visibility;
@@ -3667,11 +2863,7 @@ mod restricted_visibility_tests {
         handle_accept_handoff, handle_create_handoff, handle_get_handoff, handle_list_handoffs,
         CreateHandoffParams, GetHandoffParams, ListHandoffsParams, UpdateHandoffStatusParams,
     };
-    use ops_brain::tools::knowledge::{
-        handle_add_knowledge, handle_delete_knowledge, handle_search_knowledge,
-        handle_update_knowledge, AddKnowledgeParams, DeleteKnowledgeParams, SearchKnowledgeParams,
-        UpdateKnowledgeParams,
-    };
+    use ops_brain::tools::search::{handle_search_bus, SearchBusParams};
 
     fn text(result: &rmcp::model::CallToolResult) -> String {
         result
@@ -3689,10 +2881,6 @@ mod restricted_visibility_tests {
         brain: ops_brain::tools::OpsBrain,
         bot: String,
         term: String,
-        client_id: Uuid,
-        client_slug: String,
-        global_k: Uuid,
-        client_k: Uuid,
         to_bot: Uuid,
         from_bot: Uuid,
         others: Uuid,
@@ -3701,41 +2889,10 @@ mod restricted_visibility_tests {
 
     async fn fixture() -> Fixture {
         let pool = pool().await;
-        let brain = ops_brain::tools::OpsBrain::new(pool.clone(), None);
+        let brain = ops_brain::tools::OpsBrain::new(pool.clone());
         let suffix = Uuid::now_v7().simple().to_string();
         let bot = format!("Test-Bot-{}", &suffix[..12]);
         let term = format!("zqxrestrict{suffix}");
-        let client = ops_brain::repo::client_repo::upsert_client(
-            &pool,
-            "Restricted Gate Co",
-            &format!("test-restricted-{suffix}"),
-            None,
-        )
-        .await
-        .unwrap();
-
-        let add = |title: String, client_id: Option<Uuid>, safe: bool| {
-            let pool = pool.clone();
-            async move {
-                ops_brain::repo::knowledge_repo::add_knowledge(
-                    &pool,
-                    &title,
-                    "body",
-                    Some("test"),
-                    &[],
-                    client_id,
-                    safe,
-                    Some("Claude-Laptop"),
-                )
-                .await
-                .unwrap()
-                .id
-            }
-        };
-        let global_k = add(format!("global {term}"), None, false).await;
-        // cross_client_safe=true still names a client: outside the boundary.
-        let client_k = add(format!("client {term}"), Some(client.id), true).await;
-
         let file = |from: String, to: Option<String>, title: String| {
             let pool = pool.clone();
             async move {
@@ -3780,10 +2937,6 @@ mod restricted_visibility_tests {
             brain,
             bot,
             term,
-            client_id: client.id,
-            client_slug: client.slug,
-            global_k,
-            client_k,
             to_bot,
             from_bot,
             others,
@@ -3798,27 +2951,11 @@ mod restricted_visibility_tests {
             .execute(&f.pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM knowledge WHERE id = ANY($1) OR author = $2")
-            .bind(vec![f.global_k, f.client_k])
-            .bind(&f.bot)
-            .execute(&f.pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM clients WHERE id = $1")
-            .bind(f.client_id)
-            .execute(&f.pool)
-            .await
-            .unwrap();
     }
 
-    fn search(term: &str, tables: &[&str], client_slug: Option<&str>) -> SearchKnowledgeParams {
-        SearchKnowledgeParams {
+    fn search(term: &str) -> SearchBusParams {
+        SearchBusParams {
             query: Some(term.to_string()),
-            mode: Some("fts".to_string()),
-            tables: Some(tables.iter().map(|t| t.to_string()).collect()),
-            category: None,
-            client_slug: client_slug.map(str::to_string),
-            acknowledge_cross_client: Some(true),
             limit: Some(50),
             compact: Some(true),
         }
@@ -3834,65 +2971,40 @@ mod restricted_visibility_tests {
     }
 
     #[tokio::test]
-    async fn search_bus_returns_only_global_knowledge_and_own_handoffs() {
+    async fn search_bus_returns_only_own_handoffs() {
         let f = fixture().await;
         let restricted = Visibility::Restricted(&f.bot);
 
-        let r = handle_search_knowledge(
-            &f.brain,
-            search(&f.term, &["knowledge", "handoffs"], None),
-            restricted,
-        )
-        .await;
+        let r = handle_search_bus(&f.brain, search(&f.term), restricted).await;
         assert_eq!(r.is_error, Some(false), "{}", text(&r));
         let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
-        assert_eq!(ids(&v, "knowledge"), vec![f.global_k]);
         let mut handoffs = ids(&v, "handoffs");
         handoffs.sort();
         let mut expected = vec![f.to_bot, f.from_bot];
         expected.sort();
         assert_eq!(handoffs, expected);
-        assert!(v.get("cross_client_withheld").is_none(), "no notice leaks");
-        assert!(v["_restricted"]
-            .as_str()
-            .unwrap()
-            .contains("excluded from client data"));
-        assert!(
-            !v["_note"].as_str().unwrap_or("").contains("unscoped"),
-            "the unscoped caveat would be false for a restricted caller"
-        );
+
+        // The any-word fallback runs inside the same boundary.
+        let loose = format!("{} zzznosuchword", f.term);
+        let r = handle_search_bus(&f.brain, search(&loose), restricted).await;
+        let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
+        let mut fallback = ids(&v, "handoffs");
+        fallback.sort();
+        assert_eq!(fallback, expected);
 
         // Browse takes the list path, not the FTS path.
-        let mut browse = search("*", &["knowledge", "handoffs"], None);
+        let mut browse = search("*");
         browse.limit = Some(200);
-        let r = handle_search_knowledge(&f.brain, browse, restricted).await;
+        let r = handle_search_bus(&f.brain, browse, restricted).await;
         let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
-        let browsed_k = ids(&v, "knowledge");
-        assert!(browsed_k.contains(&f.global_k) && !browsed_k.contains(&f.client_k));
         let browsed = ids(&v, "handoffs");
         assert!(browsed.contains(&f.to_bot) && browsed.contains(&f.from_bot));
         assert!(!browsed.contains(&f.others) && !browsed.contains(&f.broadcast));
 
         // Control: the same query unrestricted sees every row.
-        let r = handle_search_knowledge(
-            &f.brain,
-            search(&f.term, &["knowledge", "handoffs"], None),
-            Visibility::Full,
-        )
-        .await;
+        let r = handle_search_bus(&f.brain, search(&f.term), Visibility::Full).await;
         let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
-        assert_eq!(ids(&v, "knowledge").len(), 2);
         assert_eq!(ids(&v, "handoffs").len(), 4);
-
-        // Naming a client is refused outright.
-        let r = handle_search_knowledge(
-            &f.brain,
-            search(&f.term, &["knowledge"], Some(&f.client_slug)),
-            restricted,
-        )
-        .await;
-        assert_eq!(r.is_error, Some(true));
-        assert!(text(&r).contains("excluded from client data"));
 
         cleanup(&f).await;
     }
@@ -3925,9 +3037,9 @@ mod restricted_visibility_tests {
         // Shares the base as a raw prefix but not as `<base>-`: outside.
         let lookalike = file(format!("{}x-Mail", f.bot), "Claude-Laptop".into()).await;
 
-        let mut browse = search("*", &["handoffs"], None);
+        let mut browse = search("*");
         browse.limit = Some(200);
-        let r = handle_search_knowledge(&f.brain, browse, Visibility::Restricted(&family)).await;
+        let r = handle_search_bus(&f.brain, browse, Visibility::Restricted(&family)).await;
         let v: serde_json::Value = serde_json::from_str(&text(&r)).unwrap();
         let seen = ids(&v, "handoffs");
         for id in [f.to_bot, f.from_bot, member] {
@@ -4071,110 +3183,6 @@ mod restricted_visibility_tests {
         cleanup(&f).await;
     }
 
-    /// A 768-dim vector unique to this run. Rows stored with it sit at
-    /// distance 0 from the query, ahead of anything else in the table.
-    fn unique_vector() -> Vec<f32> {
-        let mut x = Uuid::now_v7().as_u128() | 1;
-        (0..768)
-            .map(|_| {
-                x ^= x << 13;
-                x ^= x >> 7;
-                x ^= x << 17;
-                ((x % 2000) as f32 / 1000.0) - 1.0
-            })
-            .collect()
-    }
-
-    #[tokio::test]
-    async fn vector_and_hybrid_paths_honor_the_boundary() {
-        use ops_brain::repo::embedding_repo as er;
-        let f = fixture().await;
-        let v = unique_vector();
-        for id in [f.global_k, f.client_k] {
-            er::store_knowledge_embedding(&f.pool, id, &v)
-                .await
-                .unwrap();
-        }
-        for id in [f.to_bot, f.others, f.broadcast] {
-            er::store_handoff_embedding(&f.pool, id, &v).await.unwrap();
-        }
-        let k_ids = |rows: Vec<ops_brain::models::knowledge::Knowledge>| -> Vec<Uuid> {
-            rows.into_iter().map(|k| k.id).collect()
-        };
-        let h_ids = |rows: Vec<ops_brain::models::handoff::Handoff>| -> Vec<Uuid> {
-            rows.into_iter().map(|h| h.id).collect()
-        };
-
-        let got = k_ids(
-            er::vector_search_knowledge(&f.pool, &v, true, 5)
-                .await
-                .unwrap(),
-        );
-        assert!(
-            got.contains(&f.global_k) && !got.contains(&f.client_k),
-            "{got:?}"
-        );
-        let got = k_ids(
-            er::vector_search_knowledge(&f.pool, &v, false, 5)
-                .await
-                .unwrap(),
-        );
-        assert!(
-            got.contains(&f.global_k) && got.contains(&f.client_k),
-            "{got:?}"
-        );
-
-        let got = k_ids(
-            er::hybrid_search_knowledge(&f.pool, &f.term, Some(&v), true, 10)
-                .await
-                .unwrap(),
-        );
-        assert!(
-            got.contains(&f.global_k) && !got.contains(&f.client_k),
-            "{got:?}"
-        );
-
-        let similar: Vec<Uuid> = er::find_similar_knowledge(&f.pool, &v, 0.15, true, 10)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|s| s.id)
-            .collect();
-        assert!(similar.contains(&f.global_k) && !similar.contains(&f.client_k));
-
-        let got = h_ids(
-            er::vector_search_handoffs(&f.pool, &v, Some(&f.bot), 5)
-                .await
-                .unwrap(),
-        );
-        assert_eq!(got, vec![f.to_bot]);
-        let got = h_ids(
-            er::hybrid_search_handoffs(&f.pool, &f.term, Some(&v), Some(&f.bot), 10)
-                .await
-                .unwrap(),
-        );
-        assert!(
-            got.contains(&f.to_bot) && got.contains(&f.from_bot),
-            "{got:?}"
-        );
-        assert!(
-            !got.contains(&f.others) && !got.contains(&f.broadcast),
-            "{got:?}"
-        );
-        // Control: unrestricted hybrid sees the foreign rows.
-        let got = h_ids(
-            er::hybrid_search_handoffs(&f.pool, &f.term, Some(&v), None, 10)
-                .await
-                .unwrap(),
-        );
-        assert!(
-            got.contains(&f.others) && got.contains(&f.broadcast),
-            "{got:?}"
-        );
-
-        cleanup(&f).await;
-    }
-
     #[tokio::test]
     async fn queues_are_own_only_and_drop_broadcasts() {
         let f = fixture().await;
@@ -4236,121 +3244,6 @@ mod restricted_visibility_tests {
                 "foreign handoff listed: {item}"
             );
         }
-
-        cleanup(&f).await;
-    }
-
-    #[tokio::test]
-    async fn knowledge_writes_stay_global() {
-        let f = fixture().await;
-        let restricted = Visibility::Restricted(&f.bot);
-
-        let r = handle_add_knowledge(
-            &f.brain,
-            AddKnowledgeParams {
-                title: format!("bot scoped {}", f.term),
-                content: "body".to_string(),
-                category: None,
-                tags: None,
-                client_slug: Some(f.client_slug.clone()),
-                cross_client_safe: None,
-                force: Some(true),
-                author: f.bot.clone(),
-            },
-            Some(&f.bot),
-            restricted,
-        )
-        .await;
-        assert_eq!(r.is_error, Some(true));
-        assert!(text(&r).contains("excluded from client data"));
-
-        let r = handle_update_knowledge(
-            &f.brain,
-            UpdateKnowledgeParams {
-                id: f.client_k.to_string(),
-                title: None,
-                content: Some("overwritten".to_string()),
-                category: None,
-                tags: None,
-                cross_client_safe: None,
-                verified: None,
-            },
-            restricted,
-        )
-        .await;
-        assert!(text(&r).contains("not found"), "{}", text(&r));
-
-        let r = handle_delete_knowledge(
-            &f.brain,
-            DeleteKnowledgeParams {
-                id: f.client_k.to_string(),
-            },
-            restricted,
-        )
-        .await;
-        assert!(text(&r).contains("not found"), "{}", text(&r));
-
-        let row = ops_brain::repo::knowledge_repo::get_knowledge(&f.pool, f.client_k)
-            .await
-            .unwrap()
-            .expect("client row survives");
-        assert_eq!(row.content, "body");
-
-        // A global row someone else wrote is readable but not editable.
-        let verify = |id: Uuid| UpdateKnowledgeParams {
-            id: id.to_string(),
-            title: None,
-            content: None,
-            category: None,
-            tags: None,
-            cross_client_safe: None,
-            verified: Some(true),
-        };
-        let r = handle_update_knowledge(&f.brain, verify(f.global_k), restricted).await;
-        assert!(
-            text(&r).contains("only knowledge it authored"),
-            "{}",
-            text(&r)
-        );
-        let r = handle_delete_knowledge(
-            &f.brain,
-            DeleteKnowledgeParams {
-                id: f.global_k.to_string(),
-            },
-            restricted,
-        )
-        .await;
-        assert!(
-            text(&r).contains("only knowledge it authored"),
-            "{}",
-            text(&r)
-        );
-
-        // Its own global row is fully writable.
-        let r = handle_add_knowledge(
-            &f.brain,
-            AddKnowledgeParams {
-                title: format!("bot global {}", f.term),
-                content: "body".to_string(),
-                category: None,
-                tags: None,
-                client_slug: None,
-                cross_client_safe: None,
-                force: Some(true),
-                author: f.bot.clone(),
-            },
-            Some(&f.bot),
-            restricted,
-        )
-        .await;
-        assert_eq!(r.is_error, Some(false), "{}", text(&r));
-        let own: Uuid = serde_json::from_str::<serde_json::Value>(&text(&r)).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .parse()
-            .unwrap();
-        let r = handle_update_knowledge(&f.brain, verify(own), restricted).await;
-        assert_eq!(r.is_error, Some(false), "{}", text(&r));
 
         cleanup(&f).await;
     }

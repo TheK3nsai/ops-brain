@@ -4,7 +4,6 @@ use serde::Deserialize;
 use crate::validation::deserialize_flexible_i64;
 
 use super::helpers::{error_result, json_result, not_found, truncate_str};
-use super::shared::embed_and_store;
 use rmcp::model::*;
 
 // ===== HANDOFF PARAMS =====
@@ -258,16 +257,6 @@ pub async fn handle_create_handoff(
         Ok(v) => v,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
-
-    let text = crate::embeddings::prepare_handoff_text(&handoff);
-    embed_and_store(
-        &brain.pool,
-        &brain.embedding_client,
-        "handoffs",
-        handoff.id,
-        &text,
-    )
-    .await;
 
     let mut warnings: Vec<String> = Vec::new();
     if parent_closed == Some(false) {

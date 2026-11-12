@@ -153,7 +153,7 @@ pub fn parse_machine_tokens(
 /// A per-agent credential for interactive sessions. Where a machine token is
 /// REST-only and never reaches `/mcp`, an agent token reaches only MCP — with
 /// its identity bound server-side. Write
-/// tools (`create_handoff`, `add_knowledge`) reject a mismatching claimed
+/// tools (`create_handoff`, `accept_handoff`) reject a mismatching claimed
 /// identity, so the bus gains a sender guarantee the single shared main bearer
 /// never had: a slug cannot appear on the bus without a token the operator
 /// minted for it, and one exposure rotates one host, not the fleet.
@@ -170,16 +170,14 @@ pub struct AgentToken {
     /// different slug are served but warn-logged as an anomaly. Normalized
     /// (trimmed) at parse time so it matches the trimmed claimed identity.
     pub from_agent: String,
-    /// Informational client scope, recorded in logs for audit. Not yet
-    /// enforced on MCP calls (tools carry an explicit `client_slug` param);
-    /// reserved so a future per-client MCP binding needs no config change.
+    /// Informational client scope, recorded in logs for audit. Not enforced
+    /// on MCP calls.
     #[serde(default)]
     pub client: Option<String>,
-    /// Keep this agent out of client data entirely. The token then reads only
-    /// global knowledge and only handoffs it sent or received, and it cannot
-    /// write client-scoped knowledge. Enforced in the queries themselves, so
-    /// nothing outside the boundary reaches the response, not even a withheld
-    /// notice. For agents whose vendor is not cleared to hold client data.
+    /// Keep this agent out of the rest of the fleet's traffic. The token then
+    /// reads and acts on only the handoffs it sent or received. Enforced in
+    /// the queries themselves, so nothing outside the boundary reaches the
+    /// response. For agents whose vendor is not cleared to hold client data.
     #[serde(default)]
     pub exclude_client_data: bool,
 }
@@ -381,11 +379,9 @@ impl CallerClass {
 /// The data boundary a tool call reads and writes inside.
 ///
 /// `Full` is every caller except an `exclude_client_data` agent token: all
-/// handoffs, all knowledge, with the `client_slug` disclosure gate applied as
-/// before. `Restricted` carries that token's bound slug and narrows the call
-/// to global knowledge (`client_id IS NULL`) and to handoffs the agent sent or
-/// received. Broadcasts are outside the boundary because anyone may have
-/// written them for anyone.
+/// handoffs. `Restricted` carries that token's bound slug and narrows the call
+/// to handoffs the agent sent or received. Broadcasts are outside the boundary
+/// because anyone may have written them for anyone.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Visibility<'a> {
     #[default]
@@ -403,31 +399,6 @@ impl<'a> Visibility<'a> {
         match self {
             Visibility::Full => None,
             Visibility::Restricted(agent) => Some(agent),
-        }
-    }
-
-    /// True when only global (unscoped) knowledge is visible.
-    pub fn global_only(&self) -> bool {
-        matches!(self, Visibility::Restricted(_))
-    }
-
-    pub fn can_see_knowledge(&self, client_id: Option<uuid::Uuid>) -> bool {
-        !self.global_only() || client_id.is_none()
-    }
-
-    /// Whether this caller may edit or delete a knowledge row. A restricted
-    /// caller can read every global row but may change only the ones it
-    /// wrote, so it can't rewrite the rules other agents rely on.
-    pub fn can_modify_knowledge(
-        &self,
-        client_id: Option<uuid::Uuid>,
-        author: Option<&str>,
-    ) -> bool {
-        match self {
-            Visibility::Full => true,
-            Visibility::Restricted(agent) => {
-                client_id.is_none() && author.is_some_and(|a| slug_matches(agent, a))
-            }
         }
     }
 
@@ -454,11 +425,6 @@ impl<'a> Visibility<'a> {
         }
     }
 }
-
-/// Error text for a client-scoped request from a restricted caller.
-pub const CLIENT_DATA_EXCLUDED: &str =
-    "this token is excluded from client data: it reads and writes global knowledge only \
-     (omit client_slug)";
 
 #[derive(Clone)]
 pub struct AuthState {
@@ -897,20 +863,15 @@ mod tests {
         let vis = Visibility::from_restricted(None);
         assert_eq!(vis, Visibility::Full);
         assert_eq!(vis.party(), None);
-        assert!(!vis.global_only());
-        assert!(vis.can_see_knowledge(Some(uuid::Uuid::now_v7())));
         assert!(vis.can_see_handoff("Claude-A", Some("Claude-B")));
         assert!(vis.can_see_handoff("Claude-A", None));
         assert!(vis.check_own_queue("Claude-B").is_ok());
     }
 
     #[test]
-    fn visibility_restricted_sees_global_knowledge_and_own_handoffs() {
+    fn visibility_restricted_sees_only_its_own_handoffs() {
         let vis = Visibility::from_restricted(Some("Test-Bot"));
         assert_eq!(vis.party(), Some("Test-Bot"));
-        assert!(vis.global_only());
-        assert!(vis.can_see_knowledge(None));
-        assert!(!vis.can_see_knowledge(Some(uuid::Uuid::now_v7())));
         assert!(vis.can_see_handoff("test-bot", Some("Claude-A")));
         assert!(vis.can_see_handoff("Claude-A", Some("TEST-BOT")));
         assert!(!vis.can_see_handoff("Claude-A", Some("Claude-B")));
@@ -918,11 +879,6 @@ mod tests {
         assert!(!vis.can_see_handoff("Claude-A", None));
         assert!(vis.check_own_queue("test-bot").is_ok());
         assert!(vis.check_own_queue("Claude-A").is_err());
-        assert!(vis.can_modify_knowledge(None, Some("TEST-BOT")));
-        assert!(!vis.can_modify_knowledge(None, Some("Claude-A")));
-        assert!(!vis.can_modify_knowledge(None, None));
-        assert!(!vis.can_modify_knowledge(Some(uuid::Uuid::now_v7()), Some("Test-Bot")));
-        assert!(Visibility::Full.can_modify_knowledge(Some(uuid::Uuid::now_v7()), None));
     }
 
     #[test]

@@ -28,7 +28,7 @@ Glama builds its own image from a form (base image, build steps, CMD, env schema
 
 1. Install PostgreSQL 17 and pgvector from Debian trixie main, plus `curl` and `jq`.
 2. Pull the `ghcr.io/thek3nsai/ops-brain:latest` linux/amd64 binary: resolve the manifest, verify the manifest and layer digests, and take `app/ops-brain` from the topmost layer that has it. A missing binary fails the build.
-3. Install [`ops-brain-glama.sh`](../contrib/glama/ops-brain-glama.sh) from the clone at `/app`. It starts a throwaway trust-auth Postgres on loopback, creates the `vector` extension, unsets every token variable, and execs ops-brain on stdio with embeddings off.
+3. Install [`ops-brain-glama.sh`](../contrib/glama/ops-brain-glama.sh) from the clone at `/app`. It starts a throwaway trust-auth Postgres on loopback, creates the `vector` extension, unsets every token variable, and execs ops-brain on stdio.
 
 The placeholders are dummies the script overrides. The check runs the latest *released* binary, not the synced commit, so between a merge and the next tag it tests the previous release.
 

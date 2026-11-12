@@ -3,11 +3,10 @@ use uuid::Uuid;
 
 use crate::models::handoff::Handoff;
 
-/// Explicit column list for `Handoff` reads — matches the model fields exactly
-/// and deliberately omits `embedding` (768-dim vector, ~3KB/row) and
-/// `search_vector`, which `FromRow` discards anyway. Use this instead of
-/// `SELECT *` (or `SELECT h.*` via `aliased_cols`) so vectors never cross the
-/// wire on read paths. Writes keep `RETURNING *`.
+/// Explicit column list for `Handoff` reads: the model's fields exactly. It
+/// leaves out `search_vector` and the legacy `embedding`, `merge_commit` and
+/// `merged_at` columns, so none of them cross the wire on a read. Writes keep
+/// `RETURNING *`; `FromRow` ignores the extra columns.
 pub const HANDOFF_COLS: &str =
     "id, from_agent, to_agent, status, accepted_by, priority, category, title, body, context, \
      in_reply_to, commit_hash, origin, dedupe_key, repeat_count, created_at, updated_at";
@@ -605,6 +604,32 @@ pub async fn delete_handoff(
     Ok(result.rows_affected() > 0)
 }
 
+/// The most recent handoffs of every status and category, newest first.
+/// `search_bus` browses with this; unlike `list_handoffs` it does not age out
+/// old notifications, because a search is how history is found.
+pub async fn list_recent_handoffs(
+    pool: &PgPool,
+    party: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Handoff>, sqlx::Error> {
+    let scope = super::party_clause(2, "");
+    sqlx::query_as::<_, Handoff>(&format!(
+        "SELECT {HANDOFF_COLS} FROM handoffs
+          WHERE {scope}
+          ORDER BY created_at DESC, id DESC
+          LIMIT $1"
+    ))
+    .bind(limit)
+    .bind(party)
+    .fetch_all(pool)
+    .await
+}
+
+/// Ranked full-text search over handoff titles and bodies. Every word must
+/// match first; when that finds nothing and the query has several plain
+/// words, any word may match. A query that uses web-search operators (a
+/// quoted phrase, `or`, `-word`) says what it means and is never loosened:
+/// the any-word form would return the very rows `-word` excluded.
 pub async fn search_handoffs(
     pool: &PgPool,
     query: &str,
@@ -612,15 +637,32 @@ pub async fn search_handoffs(
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let scope = super::party_clause(3, "");
-    sqlx::query_as::<_, Handoff>(&format!(
-        "SELECT {HANDOFF_COLS} FROM handoffs
-         WHERE search_vector @@ plainto_tsquery('english', $1) AND {scope}
-         ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
-         LIMIT $2"
-    ))
-    .bind(query)
-    .bind(limit)
-    .bind(party)
-    .fetch_all(pool)
-    .await
+    let run = |tsquery: &'static str, text: String| {
+        let sql = format!(
+            "SELECT {HANDOFF_COLS} FROM handoffs
+              WHERE search_vector @@ {tsquery}('english', $1) AND {scope}
+              ORDER BY ts_rank(search_vector, {tsquery}('english', $1)) DESC, created_at DESC
+              LIMIT $2"
+        );
+        async move {
+            sqlx::query_as::<_, Handoff>(&sql)
+                .bind(text)
+                .bind(limit)
+                .bind(party)
+                .fetch_all(pool)
+                .await
+        }
+    };
+    let all_words = run("websearch_to_tsquery", query.to_string()).await?;
+    let has_operators = query.contains('"')
+        || query
+            .split_whitespace()
+            .any(|w| w.starts_with('-') || w.eq_ignore_ascii_case("or"));
+    if !all_words.is_empty() || has_operators {
+        return Ok(all_words);
+    }
+    match super::build_or_tsquery_text(query) {
+        Some(any_word) => run("to_tsquery", any_word).await,
+        None => Ok(all_words),
+    }
 }
