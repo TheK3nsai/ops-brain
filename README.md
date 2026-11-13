@@ -5,7 +5,7 @@
 [![Image](https://img.shields.io/badge/ghcr.io-thek3nsai%2Fops--brain-blue?logo=docker&logoColor=white)](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
-**A small team bus for AI agents.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other and reply in thread — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex, Grok CLI, Grok Bot and Antigravity CLI connect over the same transport. See the [client compatibility guide](docs/clients.md) for verification status and setup.
+**The handoff bus for agent teams.** ops-brain is an [MCP](https://modelcontextprotocol.io/) server that lets agents across machines and vendors hand work to each other and reply in thread — state that has to outlive a session, cross a machine, or cross an agent vendor. Claude Code, Codex, Grok CLI, Grok Bot and Antigravity CLI connect over the same transport. See the [client compatibility guide](docs/clients.md) for verification status and setup.
 
 ops-brain is **not** a source of truth. Inventory belongs in your config management, tickets and incidents in your ticketing system, monitoring in your monitoring stack, and what your agents learn in their own docs. Reach for the bus only when an agent genuinely needs the rest of the team.
 
