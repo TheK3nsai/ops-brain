@@ -1,5 +1,5 @@
 use clap::Parser;
-use ops_brain::{api, auth, config::Config, db, oauth, tools::OpsBrain};
+use ops_brain::{api, auth, config::Config, db, oauth, reader, tools::OpsBrain};
 use rmcp::service::ServiceExt;
 use tracing_subscriber::EnvFilter;
 
@@ -36,6 +36,16 @@ async fn main() -> anyhow::Result<()> {
     match config.transport.as_str() {
         "stdio" => {
             tracing::info!("Starting ops-brain MCP server (stdio transport)");
+            if config
+                .reader_listen
+                .as_deref()
+                .is_some_and(|l| !l.trim().is_empty())
+            {
+                tracing::warn!(
+                    "OPS_BRAIN_READER_LISTEN is ignored on the stdio transport; \
+                     the bus reader runs with the http server"
+                );
+            }
             let server = OpsBrain::with_instructions(pool.clone(), instructions);
             let transport = rmcp::transport::io::stdio();
             let service = server.serve(transport).await?;
@@ -172,6 +182,24 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
 
+            // The bus reader is a separate listener with its own credential,
+            // which must not repeat any bearer the server already accepts.
+            let other_secrets: Vec<&str> = main_token
+                .as_deref()
+                .into_iter()
+                .chain(machine_tokens.iter().map(|t| t.token.as_str()))
+                .chain(agent_tokens.iter().map(|t| t.token.as_str()))
+                .collect();
+            let reader_config = reader::configure(
+                config.reader_listen.as_deref(),
+                config.reader_token.as_deref(),
+                config.reader_operator.as_deref(),
+                config.reader_utc_offset.as_deref(),
+                &other_secrets,
+            )
+            .map_err(anyhow::Error::msg)?;
+            let reader_pool = pool.clone();
+
             let auth_state = auth::AuthState {
                 main_token,
                 machine_tokens: Arc::new(machine_tokens),
@@ -250,7 +278,37 @@ async fn main() -> anyhow::Result<()> {
 
             let listener = tokio::net::TcpListener::bind(&config.listen).await?;
             tracing::info!("Listening on http://{}", config.listen);
-            axum::serve(listener, app).await?;
+            match reader_config {
+                None => axum::serve(listener, app).await?,
+                Some(reader_config) => {
+                    // Bind before serving anything: a reader that was asked
+                    // for and cannot start is a startup failure, not a warning.
+                    let reader_listener = tokio::net::TcpListener::bind(&reader_config.listen)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("OPS_BRAIN_READER_LISTEN={}: {e}", reader_config.listen)
+                        })?;
+                    tracing::info!(
+                        listen = %reader_config.listen,
+                        operator = %reader_config.operator,
+                        token = reader_config.token.is_some(),
+                        "Bus reader listening (read-only)"
+                    );
+                    if reader_config.token.is_none() {
+                        tracing::warn!(
+                            "Bus reader has no token: any local user or process that can \
+                             reach its loopback port can read every handoff."
+                        );
+                    }
+                    let reader_app = reader::router(reader_pool, reader_config);
+                    // Either listener ending ends the process, so a supervisor
+                    // restarts both rather than leaving half a server up.
+                    tokio::select! {
+                        served = async { axum::serve(listener, app).await } => served?,
+                        served = async { axum::serve(reader_listener, reader_app).await } => served?,
+                    }
+                }
+            }
         }
         _ => {
             anyhow::bail!(

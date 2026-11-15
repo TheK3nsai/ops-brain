@@ -38,11 +38,24 @@ services:
       # This deployment sets it in the .env beside this file, which compose
       # reads for interpolation (an exported shell variable would override it).
       - OPS_BRAIN_INSTRUCTIONS_EXTRA=${OPS_BRAIN_INSTRUCTIONS_EXTRA:-}
+      # Bus reader (docs/reader.md): a read-only web view on its own port. Off
+      # until OPS_BRAIN_READER_LISTEN is set; in a container that is
+      # 0.0.0.0:3210 and the token is then required.
+      - OPS_BRAIN_READER_LISTEN=${OPS_BRAIN_READER_LISTEN:-}
+      - OPS_BRAIN_READER_TOKEN=${OPS_BRAIN_READER_TOKEN:-}
+      - OPS_BRAIN_READER_OPERATOR=${OPS_BRAIN_READER_OPERATOR:-}
+      - OPS_BRAIN_READER_UTC_OFFSET=${OPS_BRAIN_READER_UTC_OFFSET:-}
       - OPS_BRAIN_MIGRATE=true
       # rmcp 1.4+ Host header allowlist (DNS-rebind mitigation, default loopback-only)
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}
       # rmcp=info surfaces session lifecycle (create/KeepAliveTimeout) in `docker logs`
       - RUST_LOG=${RUST_LOG:-ops_brain=info,rmcp=info}
+    ports:
+      # The bus reader, on the host's loopback only: reach it through an SSH
+      # tunnel, or point your reverse proxy at ops-brain:3210 instead. Nothing
+      # answers here while the reader is off. If the host port is taken, set
+      # OPS_BRAIN_READER_HOST_PORT.
+      - "127.0.0.1:${OPS_BRAIN_READER_HOST_PORT:-3210}:3210"
     networks:
       - web-net
       - shared-db

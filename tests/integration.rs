@@ -3248,3 +3248,379 @@ mod restricted_visibility_tests {
         cleanup(&f).await;
     }
 }
+
+// ===== Bus reader =====
+
+mod reader_tests {
+    use super::*;
+    use axum::body::{to_bytes, Body};
+    use axum::http::{header, Request, StatusCode};
+    use axum::response::Response;
+    use base64::Engine;
+    use ops_brain::reader;
+    use ops_brain::repo::{handoff_repo, reader_repo};
+    use tower::ServiceExt;
+
+    const TOKEN: &str = "reader-secret-token-0000000000000000";
+
+    fn slug(kind: &str) -> String {
+        format!("{kind}-{}", Uuid::now_v7().simple())
+    }
+
+    async fn file(
+        pool: &PgPool,
+        from: &str,
+        to: &str,
+        title: &str,
+        body: &str,
+        parent: Option<Uuid>,
+    ) -> Uuid {
+        handoff_repo::create_handoff(
+            pool,
+            from,
+            Some(to),
+            "normal",
+            "action",
+            title,
+            body,
+            None,
+            parent,
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    async fn cleanup(pool: &PgPool, ids: &[Uuid]) {
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(ids)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    fn app(pool: &PgPool, token: Option<&str>, operator: &str) -> axum::Router {
+        let listen = if token.is_some() {
+            "0.0.0.0:3210"
+        } else {
+            "127.0.0.1:3210"
+        };
+        let cfg = reader::configure(Some(listen), token, Some(operator), Some("-04:00"), &[])
+            .unwrap()
+            .unwrap();
+        reader::router(pool.clone(), cfg)
+    }
+
+    fn basic(password: &str) -> String {
+        let raw = format!("operator:{password}");
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(raw)
+        )
+    }
+
+    async fn get(app: &axum::Router, path: &str, password: Option<&str>) -> Response {
+        let mut request = Request::builder()
+            .uri(path)
+            .header("host", "localhost:3210");
+        if let Some(p) = password {
+            request = request.header(header::AUTHORIZATION, basic(p));
+        }
+        app.clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn text(response: Response) -> String {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_thread_is_found_whole_from_any_of_its_messages() {
+        let pool = pool().await;
+        let (a, b, c) = (slug("Claude-A"), slug("Claude-B"), slug("Claude-C"));
+        let root = file(&pool, &a, &b, "root", "body", None).await;
+        let reply = file(&pool, &b, &a, "reply", "body", Some(root)).await;
+        let deeper = file(&pool, &a, &b, "deeper", "body", Some(reply)).await;
+        let sibling = file(&pool, &c, &a, "sibling", "body", Some(root)).await;
+        let unrelated = file(&pool, &a, &b, "unrelated", "body", None).await;
+
+        for start in [root, reply, deeper, sibling] {
+            let thread = reader_repo::get_thread(&pool, start).await.unwrap();
+            let ids: Vec<Uuid> = thread.iter().map(|h| h.id).collect();
+            assert_eq!(ids, vec![root, reply, deeper, sibling], "from {start}");
+        }
+        let alone = reader_repo::get_thread(&pool, unrelated).await.unwrap();
+        assert_eq!(alone.len(), 1);
+        assert!(reader_repo::get_thread(&pool, Uuid::now_v7())
+            .await
+            .unwrap()
+            .is_empty());
+
+        // The thread list carries conversations only, with true counts.
+        handoff_repo::complete_handoff_with_commit(&pool, root, None)
+            .await
+            .unwrap();
+        let threads = reader_repo::list_threads(&pool, None, 200).await.unwrap();
+        let listed = threads.iter().find(|t| t.root == root).expect("listed");
+        assert_eq!((listed.messages, listed.open), (4, 3));
+        assert_eq!(listed.title, "root");
+        let mut senders = listed.senders.clone();
+        senders.sort();
+        let mut want = vec![a.clone(), b.clone(), c.clone()];
+        want.sort();
+        assert_eq!(senders, want);
+        assert!(threads.iter().all(|t| t.root != unrelated));
+        // The cursor is exclusive: a page before this thread's last activity
+        // does not repeat it.
+        let earlier = reader_repo::list_threads(&pool, Some((listed.last_at, root)), 200)
+            .await
+            .unwrap();
+        assert!(earlier.iter().all(|t| t.root != root));
+
+        cleanup(&pool, &[root, reply, deeper, sibling, unrelated]).await;
+    }
+
+    #[tokio::test]
+    async fn the_roster_is_read_off_the_handoffs() {
+        let pool = pool().await;
+        let (agent, peer, monitor) = (slug("Claude-R"), slug("Claude-P"), slug("Mon"));
+        let sent = file(&pool, &agent, &peer, "to peer", "body", None).await;
+        let owed = file(&pool, &peer, &agent, "to agent", "body", None).await;
+        // An accepted self-addressed handoff is a lock, not work owed.
+        let lock = file(&pool, &agent, &agent, "claim", "body", None).await;
+        handoff_repo::accept_handoff(&pool, lock).await.unwrap();
+        let finding = handoff_repo::create_machine_handoff(
+            &pool, &monitor, &agent, "normal", "action", "finding", "body", None, None,
+        )
+        .await
+        .unwrap()
+        .id;
+
+        let roster = reader_repo::agent_roster(&pool).await.unwrap();
+        let find = |name: &str| roster.iter().find(|a| a.name == name).expect("in roster");
+        let me = find(&agent);
+        assert_eq!((me.filed, me.received, me.owes), (2, 3, 2));
+        assert_eq!(me.machine_only, Some(false));
+        let mon = find(&monitor);
+        assert_eq!((mon.filed, mon.received, mon.owes), (1, 0, 0));
+        assert_eq!(mon.machine_only, Some(true));
+        // First appearance orders the roster, so a slug keeps its place.
+        let position = |name: &str| roster.iter().position(|a| a.name == name).unwrap();
+        assert!(position(&agent) < position(&monitor));
+
+        let lines = reader_repo::list_lines(&pool, None, 500).await.unwrap();
+        let newest = lines.iter().find(|l| l.id == finding).expect("on timeline");
+        let before = reader_repo::list_lines(&pool, Some((newest.created_at, finding)), 500)
+            .await
+            .unwrap();
+        assert!(before.iter().all(|l| l.id != finding));
+        assert!(
+            before.iter().any(|l| l.id == lock),
+            "older rows still follow"
+        );
+
+        cleanup(&pool, &[sent, owed, lock, finding]).await;
+    }
+
+    #[tokio::test]
+    async fn every_page_demands_the_token_and_carries_the_response_policy() {
+        let pool = pool().await;
+        let app = app(&pool, Some(TOKEN), "Operator");
+
+        for path in [
+            "/",
+            "/open",
+            "/threads",
+            "/timeline",
+            "/agents",
+            "/search",
+            "/style.css",
+        ] {
+            let anonymous = get(&app, path, None).await;
+            assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED, "{path}");
+            assert!(anonymous.headers()[header::WWW_AUTHENTICATE]
+                .to_str()
+                .unwrap()
+                .starts_with("Basic "));
+            let wrong = get(&app, path, Some("reader-secret-token-0000000000000001")).await;
+            assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED, "{path}");
+
+            let ok = get(&app, path, Some(TOKEN)).await;
+            assert_eq!(ok.status(), StatusCode::OK, "{path}");
+            let csp = ok.headers()["content-security-policy"].to_str().unwrap();
+            assert!(csp.starts_with("default-src 'none'"), "{path}: {csp}");
+            assert!(!csp.contains("script") && !csp.contains("unsafe"), "{csp}");
+            assert_eq!(ok.headers()["x-content-type-options"], "nosniff");
+            assert_eq!(ok.headers()["referrer-policy"], "no-referrer");
+            if path != "/style.css" {
+                assert_eq!(ok.headers()[header::CACHE_CONTROL], "no-store", "{path}");
+                assert!(!text(ok).await.contains("<script"), "{path}");
+            }
+        }
+        // A refusal carries the policy too.
+        let refused = get(&app, "/", None).await;
+        assert!(refused.headers().contains_key("content-security-policy"));
+    }
+
+    #[tokio::test]
+    async fn rows_sharing_a_timestamp_are_not_lost_between_pages() {
+        let pool = pool().await;
+        let (a, b) = (slug("Claude-T"), slug("Claude-U"));
+        let first = file(&pool, &a, &b, "tie one", "body", None).await;
+        let second = file(&pool, &a, &b, "tie two", "body", None).await;
+        // Same instant, and ahead of every other test's rows so these two lead
+        // the timeline whatever else is running.
+        sqlx::query(
+            "UPDATE handoffs SET created_at = date_trunc('second', now()) + interval '1 day'
+              WHERE id = ANY($1)",
+        )
+        .bind([first, second])
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let page_one = reader_repo::list_lines(&pool, None, 1).await.unwrap();
+        assert_eq!(page_one.len(), 1);
+        let top = &page_one[0];
+        assert_eq!(top.id, first.max(second), "id breaks the tie, newest first");
+        let page_two = reader_repo::list_lines(&pool, Some((top.created_at, top.id)), 1)
+            .await
+            .unwrap();
+        assert_eq!(page_two[0].id, first.min(second));
+        assert_eq!(page_two[0].created_at, top.created_at);
+
+        cleanup(&pool, &[first, second]).await;
+    }
+
+    #[tokio::test]
+    async fn no_route_accepts_a_writing_method() {
+        let pool = pool().await;
+        let app = app(&pool, Some(TOKEN), "Operator");
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            for path in [
+                "/",
+                "/open",
+                "/threads",
+                "/thread/x",
+                "/timeline",
+                "/agents",
+                "/search",
+                "/style.css",
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(path)
+                            .header("host", "localhost:3210")
+                            .header(header::AUTHORIZATION, basic(TOKEN))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "{method} {path}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn without_a_token_only_a_loopback_host_is_answered() {
+        let pool = pool().await;
+        let app = app(&pool, None, "Operator");
+        let ask = |host: &'static str| {
+            let app = app.clone();
+            async move {
+                app.oneshot(
+                    Request::builder()
+                        .uri("/agents")
+                        .header("host", host)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+            }
+        };
+        assert_eq!(ask("localhost:3210").await, StatusCode::OK);
+        assert_eq!(ask("127.0.0.1:3210").await, StatusCode::OK);
+        // A rebinding page reaches the port but carries its own hostname.
+        assert_eq!(ask("evil.example:3210").await, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn a_hostile_handoff_renders_as_text() {
+        let pool = pool().await;
+        let (from, operator) = (slug("Grok-X"), slug("Op"));
+        let marker = Uuid::now_v7().simple().to_string();
+        let id = file(
+            &pool,
+            &from,
+            &operator,
+            &format!("<script>alert('{marker}')</script>"),
+            &format!(
+                "<img src=x onerror=alert(1)>\n\n[run](javascript:alert(2))\n\n\
+                 ![beacon](https://tracker.example/{marker}.png)\n\n**bold {marker}**"
+            ),
+            None,
+        )
+        .await;
+        let app = app(&pool, Some(TOKEN), &operator);
+
+        let thread = text(get(&app, &format!("/thread/{id}"), Some(TOKEN)).await).await;
+        assert!(thread.contains(&format!("<strong>bold {marker}</strong>")));
+        assert!(thread.contains("&lt;script&gt;"));
+        for forbidden in ["<script", "<img", "javascript:", "tracker.example"] {
+            assert!(!thread.contains(forbidden), "thread page emits {forbidden}");
+        }
+
+        // It is addressed to the operator, so it is on the inbox with a snippet.
+        let inbox = text(get(&app, "/", Some(TOKEN)).await).await;
+        assert!(inbox.contains(&format!("/thread/{id}#m-{id}")));
+        assert!(inbox.contains(&format!("bold {marker}")));
+        assert!(!inbox.contains("<script") && !inbox.contains("<img"));
+
+        // Search finds it and renders it the same way.
+        let found = text(get(&app, &format!("/search?q={marker}"), Some(TOKEN)).await).await;
+        assert!(found.contains(&format!("/thread/{id}#m-{id}")));
+        assert!(!found.contains("<script"));
+
+        // Once completed it leaves the inbox and stays readable.
+        handoff_repo::complete_handoff_with_commit(&pool, id, Some("abc1234"))
+            .await
+            .unwrap();
+        let inbox = text(get(&app, "/", Some(TOKEN)).await).await;
+        assert!(!inbox.contains(&id.to_string()));
+        let thread = text(get(&app, &format!("/thread/{id}"), Some(TOKEN)).await).await;
+        assert!(thread.contains("commit abc1234"));
+
+        cleanup(&pool, &[id]).await;
+    }
+
+    #[tokio::test]
+    async fn an_unknown_handoff_or_operator_says_so() {
+        let pool = pool().await;
+        let app = app(&pool, Some(TOKEN), &slug("Nobody"));
+        for path in [
+            format!("/thread/{}", Uuid::now_v7()),
+            "/thread/not-a-uuid".to_string(),
+        ] {
+            let response = get(&app, &path, Some(TOKEN)).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+            assert!(text(response).await.contains("No such handoff"));
+        }
+        // An inbox for a slug nothing has named is a setup mistake, not calm.
+        let inbox = text(get(&app, "/", Some(TOKEN)).await).await;
+        assert!(inbox.contains("OPS_BRAIN_READER_OPERATOR"));
+        assert!(!inbox.contains("Nothing is waiting on you."));
+    }
+}

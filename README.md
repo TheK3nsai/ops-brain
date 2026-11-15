@@ -18,12 +18,12 @@ flowchart LR
         CB["Codex CLI<br/>Codex-Buildbox"]
     end
     M["cron / CI / scripts<br/>(machine callers)"]
-    O["Operator<br/>daily / weekly briefing"]
+    O["Operator<br/>briefing · bus reader"]
 
     CA -- "MCP /mcp<br/>per-agent token" --> OB
     CB -- "MCP /mcp<br/>per-agent token" --> OB
     M -- "REST /api/handoff<br/>/api/pending" --> OB
-    OB -- "REST /api/briefing" --> O
+    OB -- "REST /api/briefing<br/>read-only web view" --> O
 
     OB["<b>ops-brain</b><br/>handoffs · check-in · search"] --> PG[("PostgreSQL 18")]
 ```
@@ -65,7 +65,7 @@ Each agent host gets its own token value as `OPS_BRAIN_AGENT_TOKEN` (see below).
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`) at [`ghcr.io/thek3nsai/ops-brain`](https://github.com/TheK3nsai/ops-brain/pkgs/container/ops-brain). Pin `:vX.Y.Z` rather than `:latest` for anything you depend on.
 
-The standalone example pins `:v8.0.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
+The standalone example pins `:v8.1.0` and binds `127.0.0.1:3000`. Set `OPS_BRAIN_IMAGE` to another published release or a local build. `latest` moves on every release; pin the tag you intend to run.
 
 Other deployment shapes:
 
@@ -130,6 +130,10 @@ The tool list is small on purpose: every tool and field costs tokens in every ag
 
 **Briefings** stay off the MCP surface. `POST /api/briefing` returns a daily or weekly digest that opens with what is waiting on the operator (oldest first), then high and critical machine findings, then work stuck in another agent's queue past its age threshold, then the open set as counts. The `operator` field names the slug that first section reads (default `Operator`); a slug no handoff has ever used is called out rather than shown as an empty queue.
 
+## See the bus
+
+The **bus reader** is an optional read-only web view for the person running the deployment: what is waiting on you, open work by owner, and every thread rendered as a conversation, with search. It runs on its own port, serves no JavaScript, cannot write, and costs agents nothing. Set `OPS_BRAIN_READER_LISTEN` and `OPS_BRAIN_READER_TOKEN` to switch it on; see [`docs/reader.md`](docs/reader.md).
+
 ## HTTP endpoints
 
 ```
@@ -142,6 +146,8 @@ GET  /ready         database readiness         no auth
 ```
 
 Agent tokens reach `/mcp` only; machine tokens reach only their REST endpoints ([`docs/machine-callers.md`](docs/machine-callers.md)). `/health` and `/ready` need no bearer so healthchecks and reverse proxies can tell a running process from a database-ready service. The production compose file does not publish port 3000 on the host; reach it through your reverse proxy or from inside the container.
+
+The bus reader is not on this listener. When enabled it serves GET-only pages on its own port (3210 in the compose files, published on the host's loopback) behind its own token.
 
 ## Trust model
 
@@ -166,11 +172,15 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `OPS_BRAIN_MACHINE_TOKENS` | (none) | JSON array of scoped tokens for `POST /api/handoff` and `GET /api/pending`. See [`docs/machine-callers.md`](docs/machine-callers.md). |
 | `OPS_BRAIN_ALLOWED_HOSTS` | loopback only | Comma-separated allowed `Host` values (DNS-rebinding protection). Set your public hostname when behind a reverse proxy. |
 | `OPS_BRAIN_DEV_NO_AUTH` | `false` | Serve HTTP with no auth. Dev only; never expose beyond localhost. |
+| `OPS_BRAIN_READER_LISTEN` | (none) | Address for the read-only [bus reader](docs/reader.md), such as `0.0.0.0:3210`. Unset leaves it off. `http` transport only. |
+| `OPS_BRAIN_READER_TOKEN` | (none) | Browser password for the reader (HTTP Basic, any username). Required unless the reader listens on loopback; 32+ characters, distinct from every other token. |
+| `OPS_BRAIN_READER_OPERATOR` | `Operator` | Slug whose open queue is the reader's inbox. |
+| `OPS_BRAIN_READER_UTC_OFFSET` | UTC | Fixed offset the reader shows times in, such as `-04:00`. |
 | `OPS_BRAIN_MIGRATE` | `true` | Run migrations on startup |
 
 The server reads only the names above. Other `OPS_BRAIN_*` names in this repo are not server settings:
 
-- **Compose only** (interpolated by `docker compose`, never read by the binary): `OPS_BRAIN_IMAGE`, `OPS_BRAIN_BIND`, `OPS_BRAIN_PORT` (example and dev compose), `OPS_BRAIN_DB_PASSWORD` (prod compose).
+- **Compose only** (interpolated by `docker compose`, never read by the binary): `OPS_BRAIN_IMAGE`, `OPS_BRAIN_BIND`, `OPS_BRAIN_PORT` (example and dev compose), `OPS_BRAIN_READER_HOST_PORT` (all three), `OPS_BRAIN_DB_PASSWORD` (prod compose).
 - **Client side** (read by the plugin and `scripts/`, not the server): `OPS_BRAIN_URL`, `OPS_BRAIN_AGENT_TOKEN`, `OPS_BRAIN_AGENT`, `OPS_BRAIN_PENDING_TOKEN_FILE`.
 
 ## Stack
@@ -182,6 +192,7 @@ The server reads only the names above. Other `OPS_BRAIN_*` names in this repo ar
 | Database | PostgreSQL 18 via sqlx (runtime queries) |
 | Search | PostgreSQL full-text (`tsvector`) over handoff titles and bodies |
 | Transport | stdio, or streamable HTTP on axum |
+| Bus reader | Server-rendered HTML ([maud](https://maud.lambda.xyz/), [pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark)), no JavaScript |
 
 ## Project docs
 
@@ -195,6 +206,7 @@ The server reads only the names above. Other `OPS_BRAIN_*` names in this repo ar
 | [`docs/machine-callers.md`](docs/machine-callers.md) | Contract for cron jobs, CI, and scripts filing handoffs over REST |
 | [`docs/bus-trust.md`](docs/bus-trust.md) | Why agents verify before complying with a handoff |
 | [`docs/operator-notify.md`](docs/operator-notify.md) | Mailing the operator when an agent is blocked on a human |
+| [`docs/reader.md`](docs/reader.md) | The read-only web view of the bus: setup, access and what it will not do |
 | [`docs/clients.md`](docs/clients.md) | Client connection recipes and verification status |
 | [`docs/self-hosting.md`](docs/self-hosting.md) | Private setup files, HTTPS, backups and upgrades |
 | [`docs/listings.md`](docs/listings.md) | Where ops-brain is listed and how each listing updates |

@@ -3,7 +3,7 @@
   "name": "io.github.TheK3nsai/ops-brain",
   "title": "ops-brain",
   "description": "Self-hosted team bus for AI agents: cross-machine handoffs, threaded replies, and check-in.",
-  "version": "8.0.0",
+  "version": "8.1.0",
   "websiteUrl": "https://github.com/TheK3nsai/ops-brain",
   "repository": {
     "url": "https://github.com/TheK3nsai/ops-brain",
@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/thek3nsai/ops-brain:v8.0.0",
+      "identifier": "ghcr.io/thek3nsai/ops-brain:v8.1.0",
       "runtimeArguments": [
         {
           "type": "named",

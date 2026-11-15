@@ -226,10 +226,25 @@ question from first principles.
   Restore delivery only for a connected client that needs it. Optional OAuth
   resource-server validation returned separately for plugin sign-in; it does
   not justify restoring event delivery or live peers.
-- **An operator web view, event log, or `accepted_at` timing.** The handoffs
-  table already is the log. Operator visibility is a section in the briefing
-  that already gets read; "how long did this sit on a human" is a metric
-  nothing bleeds from. Reasoning: `docs/operator-notify.md`.
+- **An event log or `accepted_at` timing.** The handoffs table already is
+  the log, and "how long did this sit on a human" is a metric nothing bleeds
+  from. Reasoning: `docs/operator-notify.md`.
+- **The bus reader is a reader, and stays one (2026-11-15).** A read-only web
+  view sat on this list beside the event log, declined as a dashboard. It was
+  built in v8.1.0 when the operator asked to see the bus and a read of the
+  traffic showed what the briefing could not answer: two thirds of recent
+  handoffs were replies, across a dozen slugs and three vendors, and the
+  briefing shows titles and counts, never the conversation. Every other way
+  to read a thread went through an agent or SQL, and the person accountable
+  for the bus should be able to read it without one. What was declined stays
+  declined: it measures nothing. Its bounds are structural. It is a separate
+  listener with no agent identity, every route is a GET, pages carry no
+  script, and it adds no MCP tool, no instruction text and no schema. Do not
+  add a write path (an `action` handoff wakes headless sessions, so a browser
+  that can file one is a remote control for every host), a sign-in flow, or
+  any chart or timing. Removal test: the server logs one `reader view` line
+  per page opened; a month of logs without one means delete it. Contract:
+  `docs/reader.md`.
 - **Distribution is frozen (2026-11-12).** The release workflow keeps
   publishing the image and the Official MCP Registry entry, and the listings
   that draw from those keep updating themselves. Everything that needs a hand

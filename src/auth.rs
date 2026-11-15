@@ -74,7 +74,7 @@ pub const MACHINE_SCOPES: &[&str] = &["create", "read"];
 
 /// Minimum machine-token length. These are minted secrets, not passwords —
 /// anything short enough to brute-force is a config error.
-const MIN_TOKEN_LEN: usize = 32;
+pub(crate) const MIN_TOKEN_LEN: usize = 32;
 
 /// Parse and validate the `OPS_BRAIN_MACHINE_TOKENS` JSON config.
 ///

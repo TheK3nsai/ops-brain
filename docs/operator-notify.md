@@ -173,6 +173,7 @@ isolation. Only counting rows and reasoning about the failure path catch them.
 |---|---|
 | This notifier | "Something new needs you." Cursor-based; fires once per new or bumped item. |
 | Daily briefing | "Here is everything still open." Already cron-mailed, already fleet-wide. |
+| [Bus reader](reader.md) | "Let me read the thread." A web page you open when you choose to; it pushes nothing. |
 
 A long-blocked item goes quiet on the notifier after its first alert — that is
 intentional. Re-nagging every 20 minutes trains you to ignore it, and the
@@ -201,7 +202,9 @@ above.
 
 ## What this deliberately is not
 
-No dashboard, no web view, no event log, no transition timestamps. The
+No dashboard, no event log, no transition timestamps. (The [bus
+reader](reader.md) came later as its own thing: it shows these same sections
+live and the threads behind them, and measures nothing.) The
 handoffs table already *is* the log — `origin`, `status`, `repeat_count`,
 threading, and timestamps are all there. What was missing was a *push* for the
 one state that needs a human, and that is what this is.

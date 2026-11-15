@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [8.1.0] — 2026-11-15
+
+### Added
+
+- **The bus reader**: an optional read-only web view of the handoffs for the
+  person who runs the deployment. Inbox (the briefing's sections, live), open
+  work by owner, threads rendered as conversations, a timeline, the slugs on
+  the bus, and full-text search. It is a second listener, off until
+  `OPS_BRAIN_READER_LISTEN` is set, with `OPS_BRAIN_READER_TOKEN`,
+  `OPS_BRAIN_READER_OPERATOR` and `OPS_BRAIN_READER_UTC_OFFSET` beside it.
+  Setup and limits: `docs/reader.md`.
+  - Every route is a GET and the listener has no agent identity, so it cannot
+    file or change a handoff. It adds no MCP tool, no instruction text and no
+    schema.
+  - Pages carry no script and are served under `default-src 'none'`. Handoff
+    bodies render as markdown with raw HTML shown as text, images never
+    loaded, and links kept only for `http`, `https` and `mailto`.
+  - A listen address that is not loopback requires the token, and startup
+    fails without it. The token is asked for over HTTP Basic and must differ
+    from every other configured token. Without a token the reader answers
+    only a loopback `Host`.
+  - One `reader view` log line per page opened is the usage record.
+- This reverses the July decision against an operator web view; the event log
+  and `accepted_at` timing stay declined. Reasons and the removal test:
+  `ROADMAP.md` → *Decided*.
+
+### Changed
+
+- **All three compose files publish `127.0.0.1:3210` on the host** for the
+  reader. Nothing answers there until the reader is switched on. If that host
+  port is already in use, set `OPS_BRAIN_READER_HOST_PORT` before upgrading,
+  or `docker compose up` will fail to bind it.
+- The briefing's choice of section for each open handoff moved into one
+  function the reader shares, so the mailed briefing and the inbox page
+  cannot disagree. No change to briefing output.
+
 ## [8.0.0] — 2026-11-12
 
 ### Removed (breaking)
