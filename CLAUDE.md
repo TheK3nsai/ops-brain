@@ -2,7 +2,7 @@
 
 Rust MCP server for cross-agent coordination. Rust 2021, rmcp 3.9, PostgreSQL 18 via sqlx, stdio/HTTP transport.
 
-**Scope: a small team bus.** The MCP surface is handoffs, check-in, and a full-text search over handoffs; machine ingestion, wake polling, and stateless briefings use narrow REST endpoints. Inventory, incidents, monitoring, ticketing, and a knowledge store are out of scope by design: hard stops and rationale in `ROADMAP.md`, shipped history in `CHANGELOG.md`.
+**Scope: a small team bus.** The MCP surface is handoffs, check-in, and a full-text search over handoffs; machine ingestion, wake polling, and stateless briefings use narrow REST endpoints; an optional read-only web view for the operator (`src/reader`, `docs/reader.md`) runs on its own listener. Inventory, incidents, monitoring, ticketing, and a knowledge store are out of scope by design: hard stops and rationale in `ROADMAP.md`, shipped history in `CHANGELOG.md`.
 
 ## Surface (8 tools)
 
@@ -20,7 +20,7 @@ Identity: interactive sessions use **per-agent tokens** (`OPS_BRAIN_AGENT_TOKENS
 
 ## Restricted tokens
 
-One deployment is one trust domain: every unrestricted agent can read every handoff. A token with `exclude_client_data` is narrowed in SQL through `Visibility` (`src/auth.rs`) to handoffs it sent or received. **Any new read path must thread `Visibility` through to its query**, because a post-fetch filter would short pages and leak counts. Contract: `docs/agent-tokens.md`.
+One deployment is one trust domain: every unrestricted agent can read every handoff. A token with `exclude_client_data` is narrowed in SQL through `Visibility` (`src/auth.rs`) to handoffs it sent or received. **Any new read path must thread `Visibility` through to its query**, because a post-fetch filter would short pages and leak counts. Contract: `docs/agent-tokens.md`. The one exception is `src/repo/reader_repo.rs`: the bus reader is the operator's unrestricted view, on a listener no agent token reaches, so its queries take no `Visibility` and must never be called from `/mcp` or `/api`.
 
 ## Coordination
 
@@ -49,4 +49,5 @@ Shared features stay generic: client-family-specific work belongs in client-side
 - **Don't use compile-time sqlx macros** — we use runtime queries for flexibility
 - **Don't add ops-brain features that duplicate local truth or create startup/session ceremony**
 - **Don't reintroduce a knowledge store, embeddings, or client scoping.** They were removed in v8.0.0 after a triage in which most entries turned out to be one host's local lessons (`ROADMAP.md` → *Dead forever*). The `knowledge`, `clients` and `audit_log` tables and the `embedding` columns remain in the schema because applied migrations cannot be edited; nothing reads them except `delete_handoff`, which writes its tombstone to `audit_log`.
+- **Don't give the bus reader a write path, a script, a sign-in flow or a metric.** It is GET-only with no agent identity, and its pages are safe to render hostile handoff bodies because they run nothing (`ROADMAP.md` → *Decided*).
 - **Don't reintroduce inventory, incidents, monitoring, or ticketing tables** — inventory is owned by config management, monitoring by Uptime Kuma, and tickets/incidents by each client's own systems

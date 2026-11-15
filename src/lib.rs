@@ -7,6 +7,7 @@ pub mod db;
 pub mod models;
 pub mod oauth;
 mod pagination;
+pub mod reader;
 pub mod repo;
 pub mod tools;
 pub mod validation;

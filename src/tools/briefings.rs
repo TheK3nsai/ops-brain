@@ -247,7 +247,7 @@ fn to_item(row: &OpenActionBrief, now: &DateTime<Utc>) -> BriefItem {
 }
 
 /// Addressed recipient, falling back to the acceptor of a claimed broadcast.
-fn recipient(row: &OpenActionBrief) -> &str {
+pub(crate) fn recipient(row: &OpenActionBrief) -> &str {
     row.to_agent
         .as_deref()
         .or_else(|| {
@@ -269,6 +269,37 @@ fn is_stuck(status: &str, age: i64) -> bool {
         "pending" => age > STUCK_PENDING_DAYS,
         "accepted" => age > STUCK_ACCEPTED_DAYS,
         _ => false,
+    }
+}
+
+/// Where an open row appears in the operator view. The briefing and the bus
+/// reader both ask this, so the mail and the page cannot disagree about a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Section {
+    /// Addressed to the operator, whatever else it is: a machine finding or a
+    /// self-addressed row that names the operator is still theirs to clear.
+    WaitingOnYou,
+    /// A failing check somebody else owns.
+    FailingCheck,
+    /// Another agent's queue, filed by an agent rather than a monitor, and old
+    /// enough that "in progress" no longer explains it.
+    Stuck,
+    /// Everything else: reported as counts, never titled.
+    Counted,
+}
+
+pub(crate) fn section_of(row: &OpenActionBrief, now: &DateTime<Utc>) -> Section {
+    if row.is_operator {
+        Section::WaitingOnYou
+    } else if is_failing_check(row) {
+        Section::FailingCheck
+    } else if !row.is_self_addressed
+        && row.origin != "machine"
+        && is_stuck(&row.status, age_days(now, &row.created_at))
+    {
+        Section::Stuck
+    } else {
+        Section::Counted
     }
 }
 
@@ -295,10 +326,8 @@ fn triage(
     now: &DateTime<Utc>,
 ) -> OperatorSections {
     // ── 1. Waiting on you ──
-    // Filtered on `is_operator` alone: a machine finding or a self-addressed
-    // row that names the operator is still work only the human can clear, so
-    // it is titled here even though those classes are counts-only elsewhere.
-    let mine: Vec<&OpenActionBrief> = rows.iter().filter(|r| r.is_operator).collect();
+    let in_section = |want: Section| rows.iter().filter(move |r| section_of(r, now) == want);
+    let mine: Vec<&OpenActionBrief> = in_section(Section::WaitingOnYou).collect();
     let waiting_on_you = OperatorQueue {
         operator: operator.to_string(),
         total: mine.len(),
@@ -314,10 +343,7 @@ fn triage(
     // ── 2. Failing checks ──
     // Rows addressed to the operator are already titled above; don't say them
     // twice.
-    let failing: Vec<&OpenActionBrief> = rows
-        .iter()
-        .filter(|r| is_failing_check(r) && !r.is_operator)
-        .collect();
+    let failing: Vec<&OpenActionBrief> = in_section(Section::FailingCheck).collect();
     let failing_checks = FailingChecks {
         total: failing.len(),
         truncated: failing.len() > FAILING_SECTION_CAP,
@@ -329,20 +355,11 @@ fn triage(
     };
 
     // ── 3. Stuck ──
-    // Somebody else's queue, genuinely addressed to another agent, filed by a
-    // human-facing agent rather than a monitor, and old enough that "in
-    // progress" no longer explains it.
     let mut groups: Vec<StuckGroup> = Vec::new();
     let mut stuck_total = 0usize;
     let mut stuck_shown = 0usize;
-    for row in rows {
-        if row.is_operator || row.is_self_addressed || row.origin == "machine" {
-            continue;
-        }
+    for row in in_section(Section::Stuck) {
         let item = to_item(row, now);
-        if !is_stuck(&row.status, item.age_days) {
-            continue;
-        }
         // Count every stuck row; render only up to the cap. Counting first is
         // what keeps `total` a total rather than a page length.
         stuck_total += 1;

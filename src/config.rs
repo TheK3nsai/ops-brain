@@ -64,6 +64,25 @@ pub struct Config {
     #[arg(long, env = "OPS_BRAIN_ALLOWED_HOSTS")]
     pub allowed_hosts: Option<String>,
 
+    /// Address for the bus reader, a read-only web view of the handoffs (http
+    /// transport only). Unset or blank leaves it off. See docs/reader.md.
+    #[arg(long, env = "OPS_BRAIN_READER_LISTEN")]
+    pub reader_listen: Option<String>,
+
+    /// Password the reader asks for over HTTP Basic authentication (any
+    /// username). Required unless the reader listens on a loopback address.
+    #[arg(long, env = "OPS_BRAIN_READER_TOKEN")]
+    pub reader_token: Option<String>,
+
+    /// Slug whose open queue is the reader's inbox. Defaults to `Operator`,
+    /// as the briefing does.
+    #[arg(long, env = "OPS_BRAIN_READER_OPERATOR")]
+    pub reader_operator: Option<String>,
+
+    /// UTC offset the reader shows times in, such as `-04:00`. Defaults to UTC.
+    #[arg(long, env = "OPS_BRAIN_READER_UTC_OFFSET", allow_hyphen_values = true)]
+    pub reader_utc_offset: Option<String>,
+
     /// Run database migrations on startup
     #[arg(long, env = "OPS_BRAIN_MIGRATE", default_value = "true")]
     pub migrate: bool,

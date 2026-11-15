@@ -42,6 +42,7 @@ pub(crate) fn party_clause(param: u32, prefix: &str) -> String {
 }
 
 pub mod handoff_repo;
+pub mod reader_repo;
 
 #[cfg(test)]
 mod tests {

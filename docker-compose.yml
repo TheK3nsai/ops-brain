@@ -48,6 +48,8 @@ services:
         condition: service_healthy
     ports:
       - "${OPS_BRAIN_PORT:-3000}:3000"
+      # The bus reader; nothing answers here until it is switched on below.
+      - "127.0.0.1:${OPS_BRAIN_READER_HOST_PORT:-3210}:3210"
     environment:
       - DATABASE_URL=postgresql://ops_brain:${POSTGRES_PASSWORD:-ops_brain}@postgres:5432/ops_brain
       - OPS_BRAIN_TRANSPORT=${OPS_BRAIN_TRANSPORT:-http}
@@ -60,6 +62,12 @@ services:
       - OPS_BRAIN_OAUTH_RESOURCE_URL=${OPS_BRAIN_OAUTH_RESOURCE_URL:-}
       - OPS_BRAIN_INSTRUCTIONS_EXTRA=${OPS_BRAIN_INSTRUCTIONS_EXTRA:-}
       - OPS_BRAIN_ALLOWED_HOSTS=${OPS_BRAIN_ALLOWED_HOSTS:-}
+      # Bus reader (docs/reader.md): set OPS_BRAIN_READER_LISTEN=0.0.0.0:3210 and
+      # a token of 32+ characters to switch on the read-only web view.
+      - OPS_BRAIN_READER_LISTEN=${OPS_BRAIN_READER_LISTEN:-}
+      - OPS_BRAIN_READER_TOKEN=${OPS_BRAIN_READER_TOKEN:-}
+      - OPS_BRAIN_READER_OPERATOR=${OPS_BRAIN_READER_OPERATOR:-}
+      - OPS_BRAIN_READER_UTC_OFFSET=${OPS_BRAIN_READER_UTC_OFFSET:-}
       - OPS_BRAIN_MIGRATE=true
       - RUST_LOG=${RUST_LOG:-ops_brain=info}
     healthcheck:

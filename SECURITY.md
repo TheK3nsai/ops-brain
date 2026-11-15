@@ -44,5 +44,6 @@ Key security features:
 - **Audit logging**: every handoff deletion leaves a tombstone in `audit_log`
 - **Bearer token auth**: HTTP transport requires authentication; scoped machine tokens and identity-bound agent tokens reduce accidental misuse
 - **No outbound content**: the server sends handoff text to no other service; its only outbound request is the optional OAuth JWKS fetch
+- **Read-only bus reader**: the optional web view is a separate listener with its own token and no agent identity; it serves GET-only pages with no script under `default-src 'none'`, and renders handoff bodies with raw HTML as text and images never loaded
 - **No secrets in code**: All credentials via environment variables
 - **Input validation**: agent-slug shape, UUID parsing, and bounded text/context validation on tool and REST inputs
