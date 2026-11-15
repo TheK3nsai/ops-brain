@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Docs
+
+- `docs/reader.md` says what the SSH tunnel needs from the server: local
+  forwarding permitted for your user, which a hardened `sshd` often is not.
+
 ## [8.1.0] — 2026-11-15
 
 ### Added

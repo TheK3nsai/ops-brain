@@ -70,6 +70,12 @@ ssh -NL 3210:127.0.0.1:3210 your-host
 # then open http://localhost:3210
 ```
 
+The SSH server has to permit that forward for your user. A hardened `sshd`
+often has forwarding off, and the tunnel then opens but every request fails
+with `open failed: administratively prohibited`. The narrow fix is a `Match
+User` block with `AllowTcpForwarding local` and `PermitOpen 127.0.0.1:3210`,
+which allows this one destination and nothing else.
+
 **Behind your reverse proxy**, when you want it on a phone. Give it its own
 hostname; the pages link from the root, so a sub-path will not work. Caddy:
 
