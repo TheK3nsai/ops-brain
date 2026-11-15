@@ -9,18 +9,21 @@ those. Nothing else is followed up, refreshed or bumped by hand. A pending
 review lands or lapses on its own, and no new listing is submitted. On
 2026-11-12 Eduardo excepted one round of v8.0.0 fixes: the Grok Build,
 Docker and HOL Guard entries below, and this page.
+v8.1.0 (2026-11-15) added the bus reader and no MCP tools; Official/GitHub
+registries auto-published 8.1.0. Docker #5871 and Grok Build #1520 are now
+pinned to v8.1.0 `8ac6f82`.
 
 | Where | State | How it updates |
 |---|---|---|
 | [Official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.TheK3nsai/ops-brain` | live | The release workflow publishes `server.json` through GitHub OIDC after the image push, on `v*` tags only. |
 | [Glama](https://glama.ai/mcp/servers/TheK3nsai/ops-brain) | claimed; license A; auto-release on | Glama re-syncs on push; after a `v*` tag, Sync Server (below). Its check config is the admin form, snapshot in [`contrib/glama/`](../contrib/glama/). |
-| [HOL Guard](https://github.com/hashgraph-online/hol-guard/blob/main/contributions/mcp-servers/mcp.ops-brain.json) catalog as `mcp.ops-brain` | listed (stdio entry, opt-in); `hashgraph-online/hol-guard#5255`; v8.0.0 tool list in [`#7615`](https://github.com/hashgraph-online/hol-guard/pull/7615), pending review. [Extension page](https://hol.org/guard/extensions/mcp.ops-brain) claimed via GitHub, setup guide published, launch story in moderation | No version pin; bump the entry only if tool names change. |
+| [HOL Guard](https://github.com/hashgraph-online/hol-guard/blob/main/contributions/mcp-servers/mcp.ops-brain.json) catalog as `mcp.ops-brain` | listed (stdio entry, opt-in); `hashgraph-online/hol-guard#5255`; v8.0.0 tool list landed in [`#7615`](https://github.com/hashgraph-online/hol-guard/pull/7615) (merged 2026-11-12). v8.1.0 added no MCP tools, so no bump. [Extension page](https://hol.org/guard/extensions/mcp.ops-brain) claimed via GitHub, setup guide published, launch story in moderation | No version pin; bump the entry only if tool names change. |
 | [mcprush](https://mcprush.com/thek3nsai/ops-brain-mcp) as Ops Brain MCP | listed by mcprush on its own 2026-10-19; claim submitted 2026-10-19 via GitHub, pending their review | They index the `thek3nsai/ops-brain` container image. Not bumped under the freeze. |
-| [Docker MCP Catalog](https://hub.docker.com/mcp) as `mcp/ops-brain` | submitted 2026-10-19; [`docker/mcp-registry#5871`](https://github.com/docker/mcp-registry/pull/5871), pin v8.0.0 `cfae195` (8 tools), CI awaiting maintainer approval (first-time contributor) | Docker builds the image from a pinned commit in `servers/ops-brain/server.yaml`; updates come from Docker's nightly pin-bump PRs against `main`. |
+| [Docker MCP Catalog](https://hub.docker.com/mcp) as `mcp/ops-brain` | submitted 2026-10-19; [`docker/mcp-registry#5871`](https://github.com/docker/mcp-registry/pull/5871), pin v8.1.0 `8ac6f82` (8 tools), CI awaiting maintainer approval (first-time contributor) | Docker builds the image from a pinned commit in `servers/ops-brain/server.yaml`; updates come from Docker's nightly pin-bump PRs against `main`. |
 | [mcp.so](https://mcp.so/) | requested | Submission pending in `chatmcp/mcpso#1`. |
 | [GitHub MCP Registry](https://github.com/mcp) as `io.github.TheK3nsai/ops-brain` | accepted 2026-10-20 | Draws from the Official MCP Registry entry ([`v0/servers?search=ops-brain`](https://registry.modelcontextprotocol.io/v0/servers?search=ops-brain)); no separate publish step. |
 | Grok, Grok Bot and Cursor marketplaces (`ops-brain-bus` plugin) | submitted 2026-10-17 via the x.ai form | [`plugins/ops-brain-bus/`](../plugins/ops-brain-bus/), listed by the root `.cursor-plugin/marketplace.json`. Updates are re-reviewed. |
-| Grok Build catalog (`ops-brain-bus`) | requested; pin `cfae195` (v8.0.0, plugin 0.3.1); pending code-owner review, branch refreshed against upstream `81e39db` on 2026-11-12 | [`xai-org/plugin-marketplace#1520`](https://github.com/xai-org/plugin-marketplace/pull/1520), pinned to a commit SHA. Otherwise not refreshed under the freeze. |
+| Grok Build catalog (`ops-brain-bus`) | requested; pin `8ac6f82` (v8.1.0, plugin 0.3.1); pending code-owner review, branch refreshed against upstream `42842cc` on 2026-11-15 | [`xai-org/plugin-marketplace#1520`](https://github.com/xai-org/plugin-marketplace/pull/1520), pinned to a commit SHA. Otherwise not refreshed under the freeze. |
 
 ## Glama check
 
