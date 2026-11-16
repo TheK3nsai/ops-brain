@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 
 - `docs/reader.md` says what the SSH tunnel needs from the server: local
   forwarding permitted for your user, which a hardened `sshd` often is not.
+- The bus reader is a standing feature: the one-month removal test is retired
+  (`ROADMAP.md` → *Decided*). `docs/reader.md` says how to put it on its own
+  hostname safely: an identity gate in front and the token kept behind it,
+  the gate created before the route, and the reader's response headers left
+  to the reader.
 
 ## [8.1.0] — 2026-11-15
 
