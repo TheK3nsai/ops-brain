@@ -86,8 +86,24 @@ reader.example.com {
 ```
 
 The token is then the only thing between the internet and every handoff, and
-the reader does no rate limiting. Put it behind your VPN or an access proxy
-if you have one.
+the reader does no rate limiting. Put the hostname behind an identity gate if
+you have one: a VPN, or an access proxy at your CDN or in front of your
+reverse proxy (Cloudflare Access, an OAuth proxy). Keep the token as well.
+The gate decides who may reach the reader at all, so nothing unauthenticated
+touches it; the token is the lock the reader checks itself, and it still
+holds if the gate is ever removed or scoped to the wrong hostname.
+
+Two things to get right:
+
+- **Gate first, route second.** Create the gate for the hostname before the
+  proxy route exists, and check that an anonymous request is turned away by
+  the gate rather than by the reader's `401`. In the other order the reader
+  is on the internet behind the token alone until you finish.
+- **Leave the reader's headers alone.** It sends its own response policy
+  (`Content-Security-Policy`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+  `Cache-Control: no-store`). A shared security-headers snippet that sets the
+  same names either duplicates them or replaces them with looser values. The
+  one header that is the proxy's to add is `Strict-Transport-Security`.
 
 ## What it will not do
 
@@ -117,6 +133,5 @@ The server logs one line per page opened:
 INFO ops_brain::reader: reader view path=/threads
 ```
 
-That is the whole usage record, and the test for keeping the feature: a month
-of logs with no such line means nobody reads it, and it should be removed
-(`ROADMAP.md` → *Decided*).
+That is the whole usage record. If you are deciding whether to leave the
+reader on, a month of logs with no such line means nobody reads it.

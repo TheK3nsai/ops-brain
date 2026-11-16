@@ -242,9 +242,13 @@ question from first principles.
   script, and it adds no MCP tool, no instruction text and no schema. Do not
   add a write path (an `action` handoff wakes headless sessions, so a browser
   that can file one is a remote control for every host), a sign-in flow, or
-  any chart or timing. Removal test: the server logs one `reader view` line
-  per page opened; a month of logs without one means delete it. Contract:
-  `docs/reader.md`.
+  any chart or timing. It shipped with a removal test (a month of server logs
+  without a `reader view` line meant delete it). The operator made it a
+  standing part of the deployment the day after it went live (2026-11-16),
+  reached at its own hostname behind an identity gate instead of an SSH
+  tunnel, so the test is retired; the log line stays as the usage record.
+  Standing does not loosen the bounds above: the gate lives in front of the
+  reader, never in it. Contract: `docs/reader.md`.
 - **Distribution is frozen (2026-11-12).** The release workflow keeps
   publishing the image and the Official MCP Registry entry, and the listings
   that draw from those keep updating themselves. Everything that needs a hand
