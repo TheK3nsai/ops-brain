@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Completing a handoff now names the asks its owner filed under it that are
+  still open. An agent blocked on a human files the ask as a reply under the
+  work; when it later closed the work, nothing pointed it back at the ask,
+  which then sat in the operator's queue until someone swept it. The
+  `complete_handoff` result, and a `create_handoff` reply with
+  `complete_parent`, now carry a `_warning` listing those asks (id,
+  recipient, title; five at most, and it says when there are more). It reads
+  only action replies filed by the agent the handoff was addressed to or
+  accepted by, never the reply doing the closing and never an ask that agent
+  filed to itself. A restricted token sees only asks inside its boundary.
+  Nothing is closed for the caller, and no tool, parameter or instruction
+  text is added.
+
 ### Docs
 
 - `docs/reader.md` says what the SSH tunnel needs from the server: local

@@ -39,6 +39,12 @@ Two rules make it work:
 was blocked completes it once unblocked. If you file one, you own completing
 it.
 
+The easy way to forget is to finish the work and close only that. So the
+close itself reminds you: completing a handoff returns a `_warning` naming
+any ask its owner filed under it that is still open. It closes nothing for
+you, because an ask filed under finished work can still be live (an answer
+that carries a follow-up is one).
+
 ## Delivery: a dumb cron, not a feature
 
 `scripts/operator-notify.sh` polls `GET /api/pending?agent=<operator-slug>` with a

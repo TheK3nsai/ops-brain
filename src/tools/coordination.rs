@@ -248,24 +248,29 @@ pub async fn handle_create_handoff(
             commit_hash,
         )
         .await
-        .map(|(reply, closed)| (reply, Some(closed.is_some()))),
+        .map(|(reply, closed)| (reply, Some(closed))),
         None => crate::repo::handoff_repo::create_handoff_from(&brain.pool, &new)
             .await
             .map(|reply| (reply, None)),
     };
-    let (handoff, parent_closed) = match created {
+    let (handoff, closed_parent) = match created {
         Ok(v) => v,
         Err(e) => return error_result(&format!("Database error: {e}")),
     };
+    let parent_closed = closed_parent.as_ref().map(Option::is_some);
 
     let mut warnings: Vec<String> = Vec::new();
-    if parent_closed == Some(false) {
-        warnings.push(
+    match closed_parent {
+        Some(Some(parent)) => {
+            warnings.extend(open_asks_warning(brain, &parent, Some(handoff.id), vis).await);
+        }
+        Some(None) => warnings.push(
             "reply filed, but the parent was not completed and no commit_hash was recorded: it \
              is already closed, or it is not addressed to or accepted by you (use \
              complete_handoff)"
                 .to_string(),
-        );
+        ),
+        None => {}
     }
     // The roster would describe the deployment to a caller that is kept
     // outside it, so a restricted caller gets no recipient check.
@@ -289,6 +294,47 @@ pub async fn handle_create_handoff(
         }
     }
     json_result(&value)
+}
+
+/// Warning for asks the owner of a just-completed handoff filed under it and
+/// left open: a "blocked on a human" reply, or a sub-ask to another agent.
+/// Closing the work does not close them, and nothing else points the owner
+/// back at them, so the completion is the one moment to say so. The close has
+/// already committed; a failed lookup costs the warning, not the call.
+async fn open_asks_warning(
+    brain: &super::OpsBrain,
+    parent: &crate::models::handoff::Handoff,
+    exclude: Option<uuid::Uuid>,
+    vis: crate::auth::Visibility<'_>,
+) -> Option<String> {
+    use crate::repo::handoff_repo::{list_open_asks_under, OPEN_ASKS_LISTED};
+
+    let asks = match list_open_asks_under(&brain.pool, parent, exclude, vis.party()).await {
+        Ok(asks) => asks,
+        Err(e) => {
+            tracing::warn!(handoff = %parent.id, error = %e, "open-asks lookup failed");
+            return None;
+        }
+    };
+    if asks.is_empty() {
+        return None;
+    }
+    let listed: Vec<String> = asks
+        .iter()
+        .take(OPEN_ASKS_LISTED)
+        .map(|a| format!("{} to {} ({:?})", a.id, a.to_agent, a.title))
+        .collect();
+    let more = if asks.len() > OPEN_ASKS_LISTED {
+        ", and more (list_handoffs)"
+    } else {
+        ""
+    };
+    Some(format!(
+        "{} is completed, but asks its owner filed under it are still open: {}{more}. Complete \
+         each one this work no longer waits on",
+        parent.id,
+        listed.join(", ")
+    ))
 }
 
 /// Error for a family credential that claims without naming its member.
@@ -420,7 +466,16 @@ pub async fn handle_complete_handoff(
     )
     .await
     {
-        Ok(Some(handoff)) => json_result(&handoff),
+        Ok(Some(handoff)) => {
+            let warning = open_asks_warning(brain, &handoff, None, vis).await;
+            match (warning, serde_json::to_value(&handoff)) {
+                (Some(warning), Ok(serde_json::Value::Object(mut obj))) => {
+                    obj.insert("_warning".to_string(), warning.into());
+                    json_result(&serde_json::Value::Object(obj))
+                }
+                _ => json_result(&handoff),
+            }
+        }
         Ok(None) => match crate::repo::handoff_repo::get_handoff(&brain.pool, id).await {
             Ok(Some(h)) if h.status == "completed" => error_result("Handoff is already completed"),
             Ok(Some(h)) if h.status == "merged" => error_result("Handoff is already merged"),

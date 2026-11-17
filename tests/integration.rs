@@ -1067,6 +1067,166 @@ mod coordination_handler_tests {
             .unwrap();
     }
 
+    async fn complete(brain: &ops_brain::tools::OpsBrain, id: &str) -> serde_json::Value {
+        use ops_brain::tools::coordination::{handle_complete_handoff, CompleteHandoffParams};
+        body(
+            &handle_complete_handoff(
+                brain,
+                CompleteHandoffParams {
+                    handoff_id: id.to_string(),
+                    commit_hash: None,
+                },
+                ops_brain::auth::Visibility::Full,
+            )
+            .await,
+        )
+    }
+
+    /// The leak this guards: an agent blocked on a human files the ask under
+    /// the work, later finishes the work, and the ask stays in the human's
+    /// queue with nobody pointed back at it.
+    #[tokio::test]
+    async fn completing_work_names_the_asks_its_owner_left_open_under_it() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+        let (alice, bob) = (format!("Alice-{suffix}"), format!("Bob-{suffix}"));
+        let operator = format!("Operator-{suffix}");
+
+        let parent = body(&create(&brain, params(&alice, Some(&bob), "action")).await);
+        let parent_id = parent["id"].as_str().unwrap().to_string();
+        let under = |from: &str, to: &str, category: &str| {
+            let mut p = params(from, Some(to), category);
+            p.in_reply_to = Some(parent_id.clone());
+            p
+        };
+
+        // Bob, who owes the work, is blocked on the operator.
+        let ask = body(&create(&brain, under(&bob, &operator, "action")).await);
+        let ask_id = ask["id"].as_str().unwrap().to_string();
+        // None of these are Bob's to close: a status note, the sender's
+        // follow-up (already in Bob's queue), and a note Bob filed to himself.
+        let mut not_bobs_to_close = Vec::new();
+        for p in [
+            under(&bob, &alice, "notify"),
+            under(&alice, &bob, "action"),
+            under(&bob, &bob, "action"),
+        ] {
+            let filed = body(&create(&brain, p).await);
+            not_bobs_to_close.push(filed["id"].as_str().unwrap().to_string());
+        }
+
+        let done = complete(&brain, &parent_id).await;
+        let warning = done["_warning"]
+            .as_str()
+            .unwrap_or_else(|| panic!("expected a _warning naming the open ask: {done}"));
+        assert!(warning.contains(&ask_id), "{warning}");
+        assert!(warning.contains(&operator), "{warning}");
+        for id in &not_bobs_to_close {
+            assert!(
+                !warning.contains(id),
+                "{id} is not Bob's to close: {warning}"
+            );
+        }
+
+        // Closing the ask itself is quiet: nothing was filed under it.
+        let closed = complete(&brain, &ask_id).await;
+        assert!(closed.get("_warning").is_none(), "{closed}");
+
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = ANY($1)")
+            .bind(vec![alice, bob])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// Ownership follows the recorded acceptor as well as the recipient, and
+    /// a long list is capped out loud.
+    #[tokio::test]
+    async fn completion_warning_follows_the_acceptor_and_says_when_it_is_capped() {
+        use ops_brain::repo::handoff_repo::{accept_handoff_as, OPEN_ASKS_LISTED};
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+        let (alice, family) = (format!("Alice-{suffix}"), format!("Fam-{suffix}"));
+        let member = format!("{family}-Builder");
+        let operator = format!("Operator-{suffix}");
+
+        let parent = body(&create(&brain, params(&alice, Some(&family), "action")).await);
+        let parent_id = parent["id"].as_str().unwrap().to_string();
+        accept_handoff_as(&pool, Uuid::parse_str(&parent_id).unwrap(), Some(&member))
+            .await
+            .unwrap()
+            .expect("pending parent accepts");
+
+        let mut asks = Vec::new();
+        for _ in 0..=OPEN_ASKS_LISTED {
+            let mut p = params(&member, Some(&operator), "action");
+            p.in_reply_to = Some(parent_id.clone());
+            let filed = body(&create(&brain, p).await);
+            asks.push(filed["id"].as_str().unwrap().to_string());
+        }
+
+        let done = complete(&brain, &parent_id).await;
+        let warning = done["_warning"].as_str().expect("names the member's asks");
+        let (listed, cut) = asks.split_at(OPEN_ASKS_LISTED);
+        for id in listed {
+            assert!(warning.contains(id), "{id} missing: {warning}");
+        }
+        assert!(!warning.contains(&cut[0]), "{warning}");
+        assert!(warning.contains("and more"), "{warning}");
+
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = ANY($1)")
+            .bind(vec![alice, member])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// The same check on the one-call close, which must not report the reply
+    /// that is doing the closing.
+    #[tokio::test]
+    async fn closing_reply_names_older_open_asks_but_not_itself() {
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let suffix = Uuid::now_v7().simple().to_string();
+        let (alice, bob) = (format!("Alice-{suffix}"), format!("Bob-{suffix}"));
+        let operator = format!("Operator-{suffix}");
+
+        // An answer that carries a new ask closes its parent and stays open.
+        let first = body(&create(&brain, params(&alice, Some(&bob), "action")).await);
+        let mut answer = params(&bob, Some(&alice), "action");
+        answer.in_reply_to = Some(first["id"].as_str().unwrap().to_string());
+        answer.complete_parent = Some(true);
+        let answer = body(&create(&brain, answer).await);
+        assert_eq!(answer["_parent_completed"], true);
+        assert!(answer.get("_warning").is_none(), "{answer}");
+
+        // With an older ask to the operator still open, the close says so.
+        let second = body(&create(&brain, params(&alice, Some(&bob), "action")).await);
+        let second_id = second["id"].as_str().unwrap().to_string();
+        let mut ask = params(&bob, Some(&operator), "action");
+        ask.in_reply_to = Some(second_id.clone());
+        let ask = body(&create(&brain, ask).await);
+        let mut closing = params(&bob, Some(&alice), "action");
+        closing.in_reply_to = Some(second_id);
+        closing.complete_parent = Some(true);
+        let closing = body(&create(&brain, closing).await);
+        assert_eq!(closing["_parent_completed"], true);
+        let warning = closing["_warning"].as_str().expect("names the open ask");
+        assert!(warning.contains(ask["id"].as_str().unwrap()), "{warning}");
+        assert!(
+            !warning.contains(closing["id"].as_str().unwrap()),
+            "{warning}"
+        );
+
+        sqlx::query("DELETE FROM handoffs WHERE from_agent = ANY($1)")
+            .bind(vec![alice, bob])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn complete_parent_and_commit_hash_need_their_companions() {
         let brain = build_brain(pool().await);
@@ -3127,6 +3287,57 @@ mod restricted_visibility_tests {
         .await;
         assert!(text(&r).contains("not found"), "{}", text(&r));
 
+        cleanup(&f).await;
+    }
+
+    /// A restricted caller closing its own handoff must not learn that the
+    /// recipient filed an ask under it to a third agent.
+    #[tokio::test]
+    async fn completion_warning_stays_inside_the_boundary() {
+        use ops_brain::repo::handoff_repo;
+        use ops_brain::tools::coordination::{handle_complete_handoff, CompleteHandoffParams};
+        let f = fixture().await;
+
+        // Claude-Laptop owes `from_bot` and is blocked on Claude-Buildbox.
+        let ask = handoff_repo::create_handoff(
+            &f.pool,
+            "Claude-Laptop",
+            Some("Claude-Buildbox"),
+            "normal",
+            "action",
+            &format!("side ask {}", f.term),
+            "body",
+            None,
+            Some(f.from_bot),
+        )
+        .await
+        .unwrap()
+        .id;
+        let parent = handoff_repo::get_handoff(&f.pool, f.from_bot)
+            .await
+            .unwrap()
+            .unwrap();
+        let seen = |party| handoff_repo::list_open_asks_under(&f.pool, &parent, None, party);
+        assert_eq!(seen(None).await.unwrap().len(), 1);
+        assert!(seen(Some(f.bot.as_str())).await.unwrap().is_empty());
+
+        let r = handle_complete_handoff(
+            &f.brain,
+            CompleteHandoffParams {
+                handoff_id: f.from_bot.to_string(),
+                commit_hash: None,
+            },
+            Visibility::Restricted(&f.bot),
+        )
+        .await;
+        assert_eq!(r.is_error, Some(false), "{}", text(&r));
+        assert!(!text(&r).contains("_warning"), "{}", text(&r));
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(ask)
+            .execute(&f.pool)
+            .await
+            .unwrap();
         cleanup(&f).await;
     }
 

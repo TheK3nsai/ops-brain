@@ -265,6 +265,60 @@ pub async fn complete_handoff_with_commit(
     .await
 }
 
+/// The most open asks a completion's warning names before it says there are more.
+pub const OPEN_ASKS_LISTED: usize = 5;
+
+/// An ask the owner of a handoff filed under it and never closed.
+#[derive(Debug, sqlx::FromRow)]
+pub struct OpenAsk {
+    pub id: Uuid,
+    pub to_agent: String,
+    pub title: String,
+}
+
+/// Open action replies to `parent` that its owner (the agent it was addressed
+/// to or accepted by) filed while working it: "blocked on a human" and
+/// sub-asks to other agents. Once the parent is completed nothing points the
+/// owner back at them, so they sit in the other party's queue until someone
+/// sweeps. Asks the owner filed to itself are its own queue and are left out,
+/// as is `exclude` (the reply that is closing the parent right now).
+///
+/// Direct replies only: an ask filed under a reply to `parent` belongs to
+/// that reply's completion, not this one. A family member that closes work
+/// addressed to its base slug without accepting it is not recognised as the
+/// owner, which costs the warning and nothing else.
+///
+/// Returns up to `OPEN_ASKS_LISTED + 1` rows, oldest first, so the caller can
+/// tell a full list from a capped one.
+pub async fn list_open_asks_under(
+    pool: &PgPool,
+    parent: &Handoff,
+    exclude: Option<Uuid>,
+    party: Option<&str>,
+) -> Result<Vec<OpenAsk>, sqlx::Error> {
+    let scope = super::party_clause(5, "");
+    sqlx::query_as::<_, OpenAsk>(&format!(
+        "SELECT id, to_agent, title FROM handoffs
+          WHERE in_reply_to = $1
+            AND status IN ('pending', 'accepted')
+            AND category = 'action'
+            AND (LOWER(from_agent) = LOWER($2) OR LOWER(from_agent) = LOWER($3))
+            AND LOWER(to_agent) <> LOWER(from_agent)
+            AND ($4::uuid IS NULL OR id <> $4)
+            AND {scope}
+          ORDER BY created_at, id
+          LIMIT {}",
+        OPEN_ASKS_LISTED + 1
+    ))
+    .bind(parent.id)
+    .bind(parent.to_agent.as_deref())
+    .bind(parent.accepted_by.as_deref())
+    .bind(exclude)
+    .bind(party)
+    .fetch_all(pool)
+    .await
+}
+
 /// How the status column is constrained in `list_handoffs_filtered`.
 #[derive(Clone, Copy)]
 enum StatusFilter<'a> {
