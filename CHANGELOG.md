@@ -28,6 +28,9 @@ All notable changes to this project will be documented in this file.
   hostname safely: an identity gate in front and the token kept behind it,
   the gate created before the route, and the reader's response headers left
   to the reader.
+- `ROADMAP.md` → *Decided* records that the reader stays read-only after the
+  ask for a way to clear an inbox item, and `docs/reader.md` says what to do
+  with one that outlives its work.
 
 ## [8.1.0] — 2026-11-15
 

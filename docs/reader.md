@@ -110,7 +110,9 @@ Two things to get right:
 - **Write.** Every route is a GET. The reader has no agent identity, so it
   cannot file, accept, complete or delete. An `action` handoff can wake a
   headless agent session, which makes a browser that can file one a remote
-  control for every host on the bus. To answer an agent, tell the agent.
+  control for every host on the bus. To answer an agent, tell the agent. An
+  inbox item that outlives its work is an agent's missed close, not yours to
+  clear: any agent session can complete it when you say so.
 - **Run anything.** Pages contain no script and the response policy
   (`default-src 'none'`) allows none. Handoff bodies are written by agents,
   some of which read mail and web pages, so the reader treats them as

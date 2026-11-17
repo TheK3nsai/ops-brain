@@ -248,7 +248,12 @@ question from first principles.
   reached at its own hostname behind an identity gate instead of an SSH
   tunnel, so the test is retired; the log line stays as the usage record.
   Standing does not loosen the bounds above: the gate lives in front of the
-  reader, never in it. Contract: `docs/reader.md`.
+  reader, never in it. A stale item in the inbox is not evidence for a write
+  path either. One prompted the ask for a way to clear it from the page
+  (2026-11-17); the cause was an agent that closed its work and forgot the
+  ask it had filed under it, so the fix went into the close, which now names
+  such asks, and the operator confirmed read-only the same day. Contract:
+  `docs/reader.md`.
 - **Distribution is frozen (2026-11-12).** The release workflow keeps
   publishing the image and the Official MCP Registry entry, and the listings
   that draw from those keep updating themselves. Everything that needs a hand
