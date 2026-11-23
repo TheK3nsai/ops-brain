@@ -75,14 +75,19 @@ class Provider:
         run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
              "-keyout", str(ca_key), "-out", str(self.certificate), "-days", "1",
              "-subj", "/CN=OAuth fixture CA", "-addext", "basicConstraints=critical,CA:TRUE",
-             "-addext", "keyUsage=critical,keyCertSign,cRLSign"])
+             "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+             "-addext", "subjectKeyIdentifier=hash",
+             "-addext", "authorityKeyIdentifier=keyid:always,issuer"])
         run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", str(tls_key),
              "-out", str(root / "tls.csr"), "-subj", "/CN=localhost"])
         extensions = root / "tls-extensions.conf"
+        # Include SKI/AKI so Python 3.13+'s default VERIFY_X509_STRICT passes.
         extensions.write_text("basicConstraints=critical,CA:FALSE\n"
                               "subjectAltName=DNS:localhost,IP:127.0.0.1\n"
                               "keyUsage=critical,digitalSignature,keyEncipherment\n"
-                              "extendedKeyUsage=serverAuth\n")
+                              "extendedKeyUsage=serverAuth\n"
+                              "subjectKeyIdentifier=hash\n"
+                              "authorityKeyIdentifier=keyid,issuer\n")
         run(["openssl", "x509", "-req", "-in", str(root / "tls.csr"), "-CA", str(self.certificate),
              "-CAkey", str(ca_key), "-CAcreateserial", "-out", str(tls_cert), "-days", "1",
              "-extfile", str(extensions)])
@@ -703,6 +708,28 @@ def database(root, start_postgres):
         run(["pg_ctl", "-D", str(data), "-m", "fast", "-w", "stop"])
 
 
+def wait_for_ready(process, opener, url, attempts=100, delay=0.1):
+    for _ in range(attempts):
+        if process.poll() is not None:
+            raise RuntimeError("fixture ops-brain stopped before readiness; output withheld")
+        try:
+            with opener.open(url, timeout=1) as response:
+                if response.status == 200:
+                    return
+        except (OSError, URLError) as error:
+            if isinstance(error, HTTPError):
+                error.close()
+            reason = error.reason if isinstance(error, URLError) else error
+            if isinstance(reason, ssl.SSLError):
+                detail = (getattr(reason, "verify_message", None)
+                          or getattr(reason, "reason", None)
+                          or type(reason).__name__)
+                detail = str(detail).replace("_", " ")
+                raise RuntimeError(f"fixture TLS verification failed: {detail}") from None
+        time.sleep(delay)
+    raise RuntimeError("fixture ops-brain readiness timed out")
+
+
 def main():
     global STAGE
     parser = argparse.ArgumentParser(description=__doc__)
@@ -739,17 +766,7 @@ def main():
                     STAGE = "ops-brain startup/readiness"
                     process = subprocess.Popen([str(args.binary.resolve())], cwd=root, env=environment, stdout=log, stderr=log)
                     try:
-                        for _ in range(100):
-                            if process.poll() is not None:
-                                raise RuntimeError("fixture ops-brain stopped before readiness; output withheld")
-                            try:
-                                with provider.opener.open(provider.issuer + "/ready", timeout=1) as response:
-                                    if response.status == 200:
-                                        break
-                            except (OSError, URLError):
-                                time.sleep(0.1)
-                        else:
-                            raise RuntimeError("fixture ops-brain readiness timed out")
+                        wait_for_ready(process, provider.opener, provider.issuer + "/ready")
                         with provider.opener.open(provider.issuer + "/.well-known/oauth-protected-resource/mcp", timeout=10) as response:
                             assert json.load(response)["resource"] == provider.resource
                         STAGE = "PKCE sign-in"
