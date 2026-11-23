@@ -6,6 +6,4 @@ Open work only, a few lines each. Shipped history lives in `CHANGELOG.md`; doctr
 
 ## Open
 
-### Bus core
-
-- **`operator-notify.sh` mails an item once and then goes quiet.** The briefing's "waiting on you" section is the standing view, so decide whether the script needs a re-reminder at all once that has been lived with.
+Nothing open. (`operator-notify.sh` stays once-only by design — the daily briefing and bus reader carry the standing "waiting on you" view; see `docs/operator-notify.md`.)
