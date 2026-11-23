@@ -168,7 +168,8 @@ sqlite3 kuma.db 'select count(*) from monitor where active=1;'
 **2. The relay shares fate with a monitored service.** Self-hosting the relay
 behind the same reverse proxy the monitors watch means a proxy or certificate
 failure takes out the alert about itself — this page's own defect, one layer
-out. See `TODO.md` on why hosted was chosen over self-hosted.
+out. Choose an off-box hosted relay so the alert path does not fail with the
+stack it monitors.
 
 Neither is caught by a test button, because a test exercises the provider in
 isolation. Only counting rows and reasoning about the failure path catch them.
