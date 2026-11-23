@@ -7,12 +7,15 @@ import json
 import os
 from pathlib import Path
 import shutil
+import ssl
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPSHandler, build_opener
 import zipfile
 
 
@@ -38,6 +41,76 @@ class TerminalTests(unittest.TestCase):
         self.assertIsNone(oauth_fixture.terminal_authorization_url(url, issuer))
         with self.assertRaises(RuntimeError):
             oauth_fixture.terminal_authorization_url(output, "https://localhost:54321")
+
+
+class OAuthFixtureTests(unittest.TestCase):
+    def test_provider_certificates_pass_strict_x509_verification(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            provider = oauth_fixture.Provider(Path(temporary))
+            try:
+                context = ssl.create_default_context(cafile=str(provider.certificate))
+                context.verify_flags |= ssl.VERIFY_X509_STRICT
+                opener = build_opener(HTTPSHandler(context=context))
+                with opener.open(provider.issuer + "/.well-known/oauth-authorization-server", timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.load(response)["issuer"], provider.issuer)
+            finally:
+                provider.close()
+
+    def test_wait_for_ready_fails_fast_on_tls_error_process_exit_and_retries_503(self):
+        class RunningProcess:
+            def poll(self):
+                return None
+
+        class ExitedProcess:
+            def poll(self):
+                return 1
+
+        class TlsFailOpener:
+            def __init__(self, error):
+                self.error = error
+                self.calls = 0
+
+            def open(self, url, timeout):
+                self.calls += 1
+                raise self.error
+
+        cert_error = ssl.SSLCertVerificationError(1, "Missing Authority Key Identifier")
+        cert_error.verify_message = "Missing Authority Key Identifier"
+        tls_opener = TlsFailOpener(URLError(cert_error))
+        with self.assertRaises(RuntimeError) as caught:
+            oauth_fixture.wait_for_ready(RunningProcess(), tls_opener, "https://localhost:1/ready", attempts=5, delay=0)
+        self.assertEqual(tls_opener.calls, 1)
+        self.assertIn("TLS verification failed", str(caught.exception))
+        self.assertIn("Missing Authority Key Identifier", str(caught.exception))
+
+        direct_ssl = ssl.SSLError(1, "wrong version number")
+        direct_ssl.reason = "WRONG_VERSION_NUMBER"
+        direct_opener = TlsFailOpener(direct_ssl)
+        with self.assertRaises(RuntimeError) as caught:
+            oauth_fixture.wait_for_ready(RunningProcess(), direct_opener, "https://localhost:1/ready", attempts=5, delay=0)
+        self.assertEqual(direct_opener.calls, 1)
+        self.assertIn("WRONG VERSION NUMBER", str(caught.exception))
+
+        with self.assertRaises(RuntimeError) as caught:
+            oauth_fixture.wait_for_ready(ExitedProcess(), tls_opener, "https://localhost:1/ready", attempts=5, delay=0)
+        self.assertIn("stopped before readiness", str(caught.exception))
+
+        class TransientOpener:
+            def __init__(self):
+                self.calls = 0
+
+            def open(self, url, timeout):
+                self.calls += 1
+                if self.calls < 3:
+                    raise HTTPError(url, 503, "Service Unavailable", {}, None)
+                response = Response(b"OK", {})
+                response.status = 200
+                return response
+
+        transient = TransientOpener()
+        oauth_fixture.wait_for_ready(RunningProcess(), transient, "https://localhost:1/ready", attempts=5, delay=0)
+        self.assertEqual(transient.calls, 3)
 
 
 class SetupTests(unittest.TestCase):
