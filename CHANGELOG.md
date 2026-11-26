@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [8.2.0] — 2026-11-26
+
 ### Fixed
 
 - MCP `create_handoff` and `list_handoffs` now lowercase validated `priority`,
