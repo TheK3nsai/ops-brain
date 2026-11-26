@@ -91,7 +91,7 @@ pub struct ListHandoffsParams {
     /// Max results (default 20, clamped to 1..=200)
     #[serde(default, deserialize_with = "deserialize_flexible_i64")]
     pub limit: Option<i64>,
-    /// Truncate body to 200 chars (default: true). Set false for full bodies.
+    /// Truncate body to 200 bytes (default: true). Set false for full bodies.
     pub compact: Option<bool>,
 }
 
@@ -130,8 +130,8 @@ pub async fn handle_create_handoff(
     bound: Option<&str>,
     vis: crate::auth::Visibility<'_>,
 ) -> CallToolResult {
-    let priority = p.priority.as_deref().unwrap_or("normal");
-    let category = p.category.as_deref().unwrap_or("action");
+    let priority = p.priority.as_deref().unwrap_or("normal").to_lowercase();
+    let category = p.category.as_deref().unwrap_or("action").to_lowercase();
 
     if let Err(msg) = crate::validation::validate_bounded_text(
         &p.title,
@@ -152,14 +152,14 @@ pub async fn handle_create_handoff(
     }
 
     if let Err(msg) = crate::validation::validate_required(
-        priority,
+        &priority,
         "priority",
         crate::validation::HANDOFF_PRIORITIES,
     ) {
         return error_result(&msg);
     }
     if let Err(msg) = crate::validation::validate_required(
-        category,
+        &category,
         "category",
         crate::validation::HANDOFF_CATEGORIES,
     ) {
@@ -212,11 +212,10 @@ pub async fn handle_create_handoff(
     if complete_parent && in_reply_to.is_none() {
         return error_result("complete_parent needs in_reply_to: there is no parent to complete");
     }
-    let commit_hash = p
-        .commit_hash
-        .as_deref()
-        .map(str::trim)
-        .filter(|c| !c.is_empty());
+    let commit_hash = match crate::validation::validate_commit_hash(p.commit_hash.as_deref()) {
+        Ok(c) => c,
+        Err(msg) => return error_result(&msg),
+    };
     if commit_hash.is_some() && !complete_parent {
         return error_result(
             "commit_hash is recorded on the parent: set complete_parent, or pass it to \
@@ -233,8 +232,8 @@ pub async fn handle_create_handoff(
     let new = crate::repo::handoff_repo::NewHandoff {
         from_agent: &from_agent,
         to_agent: to_agent.as_deref(),
-        priority,
-        category,
+        priority: &priority,
+        category: &category,
         title: &p.title,
         body: &p.body,
         context: p.context.as_ref(),
@@ -457,14 +456,15 @@ pub async fn handle_complete_handoff(
         return r;
     }
 
+    let commit_hash = match crate::validation::validate_commit_hash(p.commit_hash.as_deref()) {
+        Ok(c) => c,
+        Err(msg) => return error_result(&msg),
+    };
+
     // Atomic complete: only open (pending/accepted) rows transition, so a
     // concurrent complete can't silently overwrite commit_hash.
-    match crate::repo::handoff_repo::complete_handoff_with_commit(
-        &brain.pool,
-        id,
-        p.commit_hash.as_deref(),
-    )
-    .await
+    match crate::repo::handoff_repo::complete_handoff_with_commit(&brain.pool, id, commit_hash)
+        .await
     {
         Ok(Some(handoff)) => {
             let warning = open_asks_warning(brain, &handoff, None, vis).await;
@@ -499,15 +499,18 @@ pub async fn handle_list_handoffs(
     let compact = p.compact.unwrap_or(true);
     let include_notify = p.include_notify.unwrap_or(false);
 
+    let status = p.status.as_deref().map(str::to_lowercase);
+    let category = p.category.as_deref().map(str::to_lowercase);
+
     if let Err(msg) = crate::validation::validate_option(
-        p.status.as_deref(),
+        status.as_deref(),
         "status",
         crate::validation::HANDOFF_STATUSES,
     ) {
         return error_result(&msg);
     }
     if let Err(msg) = crate::validation::validate_option(
-        p.category.as_deref(),
+        category.as_deref(),
         "category",
         crate::validation::HANDOFF_CATEGORIES,
     ) {
@@ -533,10 +536,10 @@ pub async fn handle_list_handoffs(
 
     match crate::repo::handoff_repo::list_handoffs(
         &brain.pool,
-        p.status.as_deref(),
+        status.as_deref(),
         to_agent_filter.as_deref(),
         from_agent_filter.as_deref(),
-        p.category.as_deref(),
+        category.as_deref(),
         include_notify,
         vis.party(),
         page.fetch_limit(),

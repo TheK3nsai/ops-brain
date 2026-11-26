@@ -445,12 +445,6 @@ mod v5_surface_tests {
     }
 }
 
-// ===== Audit Log Repo =====
-
-// ===== Delete Tools =====
-
-// ===== Fuzzy Slug Suggestion Tests =====
-
 // ===== check_in handler =====
 //
 // check_in is a stateless pending-work query (open action handoffs to your
@@ -770,6 +764,70 @@ mod check_in_tests {
             .await
             .unwrap();
     }
+
+    #[tokio::test]
+    async fn check_in_compacts_long_action_bodies_and_omits_context() {
+        let pool = pool().await;
+        let agent = format!("Claude-Compact-{}", Uuid::now_v7().simple());
+        let long_body = "x".repeat(500);
+        let short_body = "short note";
+
+        let long_id = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            "Claude-Laptop",
+            Some(&agent),
+            "normal",
+            "action",
+            "long action",
+            &long_body,
+            Some(&serde_json::json!({"evidence_ref": "/var/log/test.json"})),
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        let short_id = ops_brain::repo::handoff_repo::create_handoff(
+            &pool,
+            "Claude-Laptop",
+            Some(&agent),
+            "normal",
+            "action",
+            "short action",
+            short_body,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+
+        let json = check_in_json(pool.clone(), &agent).await;
+        let items = json["open_handoffs_to_you"]["items"].as_array().unwrap();
+        let long_item = items
+            .iter()
+            .find(|i| i["id"].as_str() == Some(&long_id.to_string()))
+            .expect("long handoff listed");
+        assert!(
+            long_item["body"].as_str().unwrap().ends_with("...")
+                && long_item["body"].as_str().unwrap().len() <= 203
+        );
+        assert!(
+            long_item.get("context").is_none(),
+            "compact check_in items omit context: {long_item}"
+        );
+
+        let short_item = items
+            .iter()
+            .find(|i| i["id"].as_str() == Some(&short_id.to_string()))
+            .expect("short handoff listed");
+        assert_eq!(short_item["body"], short_body);
+
+        sqlx::query("DELETE FROM handoffs WHERE id = ANY($1)")
+            .bind(vec![long_id, short_id])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }
 
 // Handler-layer tests for the v3.1.0 safety guards on threading + commit
@@ -793,6 +851,124 @@ mod coordination_handler_tests {
             .expect("content is text")
             .text
             .clone()
+    }
+
+    #[tokio::test]
+    async fn create_list_and_complete_normalize_case_and_validate_commit_hash() {
+        use ops_brain::tools::coordination::{
+            handle_complete_handoff, handle_list_handoffs, CompleteHandoffParams,
+            ListHandoffsParams,
+        };
+        let pool = pool().await;
+        let brain = build_brain(pool.clone());
+        let target = format!("Case-Target-{}", Uuid::now_v7().simple());
+
+        // Mixed-case "Action" must still enforce the broadcast-action ban.
+        let broadcast_action = handle_create_handoff(
+            &brain,
+            CreateHandoffParams {
+                from_agent: "Claude-Laptop".into(),
+                to_agent: None,
+                priority: Some("HIGH".into()),
+                category: Some("Action".into()),
+                title: "broadcast".into(),
+                body: "body".into(),
+                context: None,
+                in_reply_to: None,
+                complete_parent: None,
+                commit_hash: None,
+            },
+            None,
+            ops_brain::auth::Visibility::Full,
+        )
+        .await;
+        assert_eq!(broadcast_action.is_error, Some(true));
+        assert!(extract_text(&broadcast_action).contains("to_agent is required"));
+
+        // Mixed-case category/priority normalize to canonical lowercase on write.
+        let created = handle_create_handoff(
+            &brain,
+            CreateHandoffParams {
+                from_agent: "Claude-Laptop".into(),
+                to_agent: Some(target.clone()),
+                priority: Some("HIGH".into()),
+                category: Some("Action".into()),
+                title: "normalized case".into(),
+                body: "body".into(),
+                context: None,
+                in_reply_to: None,
+                complete_parent: None,
+                commit_hash: None,
+            },
+            None,
+            ops_brain::auth::Visibility::Full,
+        )
+        .await;
+        assert_eq!(created.is_error, Some(false), "{}", extract_text(&created));
+        let created_json = created.structured_content.expect("structured handoff");
+        assert_eq!(created_json["priority"], "high");
+        assert_eq!(created_json["category"], "action");
+        let id: Uuid = created_json["id"].as_str().unwrap().parse().unwrap();
+
+        // Uppercase status/category filters in list_handoffs still match stored lowercase rows.
+        let listed = handle_list_handoffs(
+            &brain,
+            ListHandoffsParams {
+                status: Some("PENDING".into()),
+                to_agent: Some(target.clone()),
+                from_agent: None,
+                category: Some("ACTION".into()),
+                include_notify: None,
+                limit: Some(10),
+                compact: Some(true),
+            },
+            ops_brain::auth::Visibility::Full,
+        )
+        .await;
+        assert_eq!(listed.is_error, Some(false), "{}", extract_text(&listed));
+        let listed_json = listed.structured_content.expect("structured list");
+        assert!(listed_json["handoffs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["id"].as_str() == Some(&id.to_string())));
+
+        // Oversized or whitespace commit_hash is rejected before mutating the row.
+        let bad_commit = handle_complete_handoff(
+            &brain,
+            CompleteHandoffParams {
+                handoff_id: id.to_string(),
+                commit_hash: Some("not a sha\nmultiline".into()),
+            },
+            ops_brain::auth::Visibility::Full,
+        )
+        .await;
+        assert_eq!(bad_commit.is_error, Some(true));
+
+        // Blank commit_hash stores NULL instead of "".
+        let completed = handle_complete_handoff(
+            &brain,
+            CompleteHandoffParams {
+                handoff_id: id.to_string(),
+                commit_hash: Some("   ".into()),
+            },
+            ops_brain::auth::Visibility::Full,
+        )
+        .await;
+        assert_eq!(
+            completed.is_error,
+            Some(false),
+            "{}",
+            extract_text(&completed)
+        );
+        let completed_json = completed.structured_content.expect("structured complete");
+        assert!(completed_json["commit_hash"].is_null());
+
+        sqlx::query("DELETE FROM handoffs WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1683,6 +1859,22 @@ mod auth_middleware_tests {
     }
 
     #[tokio::test]
+    async fn duplicate_authorization_headers_are_rejected() {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/pending")
+            .header("authorization", format!("Bearer {MAIN}"))
+            .header("authorization", format!("Bearer {MACH}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app(full_state(vec![machine_token(vec!["read"])]))
+            .oneshot(req)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     async fn machine_token_on_non_machine_path_is_forbidden() {
         // POST /api/briefing is not in the machine scope table.
         let resp = app(full_state(vec![machine_token(vec!["create", "read"])]))
@@ -1980,6 +2172,12 @@ mod pagination_surface_tests {
             excluded["handoffs"].as_array().unwrap().is_empty(),
             "{excluded}"
         );
+        // Punctuated queries that used to pass `--` into `to_tsquery` must not
+        // error, and separator-joined terms split cleanly for any-word fallback.
+        let punctuated = search(&format!("(--) {term} zzznosuchword{suffix}"), 50, None).await;
+        assert_eq!(punctuated["handoffs"].as_array().unwrap().len(), 3);
+        let separated = search(&format!("{term}_missing/path"), 50, None).await;
+        assert_eq!(separated["handoffs"].as_array().unwrap().len(), 3);
 
         sqlx::query("DELETE FROM handoffs WHERE from_agent = $1")
             .bind(&sender)
@@ -2011,11 +2209,11 @@ mod pagination_surface_tests {
         let response = ops_brain::api::list_pending(
             State(Arc::new(ApiState { pool: pool.clone() })),
             Extension(CallerClass::Full),
-            Query(PendingQuery {
+            Ok(Query(PendingQuery {
                 agent: agent.clone(),
                 since: None,
                 limit: Some(2),
-            }),
+            })),
         )
         .await
         .expect("pending response")
@@ -2030,6 +2228,40 @@ mod pagination_surface_tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn pending_rest_query_errors_render_as_json() {
+        use axum::body::{to_bytes, Body};
+        use axum::http::{header, Request, StatusCode};
+        use axum::routing::get;
+        use axum::Router;
+        use tower::ServiceExt;
+
+        let api_state = Arc::new(ApiState { pool: pool().await });
+        let app = Router::new()
+            .route("/api/pending", get(ops_brain::api::list_pending))
+            .with_state(api_state)
+            .layer(axum::Extension(CallerClass::Full));
+
+        for uri in ["/api/pending", "/api/pending?agent=Claude-A&limit=notanint"] {
+            let resp = app
+                .clone()
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{uri}");
+            assert!(
+                resp.headers()[header::CONTENT_TYPE]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("application/json"),
+                "query rejection must render JSON: {uri}"
+            );
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(resp.into_body(), 65536).await.unwrap()).unwrap();
+            assert!(body["error"].as_str().is_some_and(|s| !s.is_empty()));
+        }
     }
 }
 

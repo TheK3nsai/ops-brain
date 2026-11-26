@@ -1,7 +1,5 @@
-# Build stage
-FROM rust:1.94-slim AS builder
-
-RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+# Build stage — match the runtime Debian codename so glibc symbols stay aligned.
+FROM rust:1.94-slim-trixie AS builder
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
@@ -16,7 +14,7 @@ COPY migrations ./migrations
 RUN touch src/main.rs && cargo build --release
 
 # Runtime stage
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Official MCP Registry ownership check (must match `name` in server.json).
 LABEL io.modelcontextprotocol.server.name="io.github.TheK3nsai/ops-brain"

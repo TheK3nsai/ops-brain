@@ -33,6 +33,9 @@ const MAX_JWKS_BYTES: usize = 256 * 1024;
 const MAX_JWKS_KEYS: usize = 64;
 const CACHE_TTL: Duration = Duration::from_secs(300);
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
+/// Modest clock-skew tolerance between an external IdP and this host so a
+/// freshly minted access token does not 401 when clocks drift by a few seconds.
+const CLOCK_SKEW_SECS: u64 = 30;
 /// The same unmapped principal is logged at most once per window; connectors
 /// retry rejected requests every few seconds.
 const UNMAPPED_LOG_WINDOW: Duration = Duration::from_secs(60);
@@ -111,14 +114,16 @@ struct JwksCache {
 }
 
 /// Share one instance across the HTTP listener so concurrent unknown-key
-/// requests coalesce into a bounded refresh rather than a JWKS fetch storm.
+/// requests coalesce into a bounded refresh rather than a JWKS fetch storm,
+/// without blocking valid cached-key verifications during a slow refresh.
 pub struct OAuthState {
     config: OAuthConfig,
     resource_url: String,
     metadata_path: String,
     metadata_url: String,
     http: reqwest::Client,
-    cache: Mutex<JwksCache>,
+    cache: std::sync::RwLock<JwksCache>,
+    refresh_lock: Mutex<()>,
     recent_unmapped: std::sync::Mutex<HashMap<Principal, Instant>>,
 }
 
@@ -275,7 +280,8 @@ impl OAuthState {
             metadata_path,
             metadata_url: metadata.to_string(),
             http,
-            cache: Mutex::new(JwksCache::default()),
+            cache: std::sync::RwLock::new(JwksCache::default()),
+            refresh_lock: Mutex::new(()),
             recent_unmapped: std::sync::Mutex::new(HashMap::new()),
         })
     }
@@ -381,13 +387,14 @@ impl OAuthState {
             .as_deref()
             .unwrap_or(&self.resource_url)]);
         validation.set_required_spec_claims(&["iss", "sub", "aud", "exp"]);
-        validation.leeway = 0;
+        validation.leeway = CLOCK_SKEW_SECS;
         validation.validate_nbf = true;
         let claims = decode::<Claims>(token, &key, &validation)
             .map_err(|_| OAuthError::InvalidToken)?
             .claims;
-        if claims.exp <= jsonwebtoken::get_current_timestamp()
-            || claims.iat > jsonwebtoken::get_current_timestamp()
+        let now = jsonwebtoken::get_current_timestamp();
+        if claims.exp.saturating_add(CLOCK_SKEW_SECS) <= now
+            || claims.iat > now.saturating_add(CLOCK_SKEW_SECS)
             || claims.exp <= claims.iat
             || claims.jti.trim().is_empty()
             || claims.sub.trim().is_empty()
@@ -453,6 +460,29 @@ impl OAuthState {
             .await
     }
 
+    fn lookup_cached_key(
+        &self,
+        kid: &str,
+        algorithm: Algorithm,
+        now: Instant,
+    ) -> Option<DecodingKey> {
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let fresh = cache
+            .fetched_at
+            .is_some_and(|at| now.duration_since(at) < CACHE_TTL);
+        if !fresh {
+            return None;
+        }
+        cache
+            .keys
+            .iter()
+            .find(|k| k.kid == kid && k.algorithm == algorithm)
+            .map(|k| k.key.clone())
+    }
+
     async fn key_with_fetch<F, Fut>(
         &self,
         kid: &str,
@@ -463,30 +493,38 @@ impl OAuthState {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<Vec<VerificationKey>, OAuthError>>,
     {
-        let mut cache = self.cache.lock().await;
+        // Fast path: cached fresh keys verify without blocking on any in-flight
+        // refresh triggered by an unknown kid.
+        if let Some(key) = self.lookup_cached_key(kid, algorithm, Instant::now()) {
+            return Ok(key);
+        }
+
+        // Coalesce concurrent refreshes behind a dedicated lock while keeping
+        // the cache readable for already-cached keys during network I/O.
+        let _refresh = self.refresh_lock.lock().await;
         let now = Instant::now();
-        let fresh = cache
-            .fetched_at
-            .is_some_and(|at| now.duration_since(at) < CACHE_TTL);
-        if fresh {
-            if let Some(key) = cache
-                .keys
-                .iter()
-                .find(|k| k.kid == kid && k.algorithm == algorithm)
-            {
-                return Ok(key.key.clone());
-            }
+        if let Some(key) = self.lookup_cached_key(kid, algorithm, now) {
+            return Ok(key);
         }
-        // Bound negative lookups as well as failed fetches. The lock is held
-        // over the request so concurrent rotations trigger one refresh.
-        if cache
-            .last_attempt
-            .is_some_and(|at| now.duration_since(at) < REFRESH_COOLDOWN)
         {
-            return Err(OAuthError::InvalidToken);
+            let mut cache = self
+                .cache
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if cache
+                .last_attempt
+                .is_some_and(|at| now.duration_since(at) < REFRESH_COOLDOWN)
+            {
+                return Err(OAuthError::InvalidToken);
+            }
+            cache.last_attempt = Some(now);
         }
-        cache.last_attempt = Some(now);
+
         let keys = fetch().await?;
+        let mut cache = self
+            .cache
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         cache.keys = keys;
         cache.fetched_at = Some(Instant::now());
         cache
@@ -498,32 +536,50 @@ impl OAuthState {
     }
 
     async fn fetch_keys(&self) -> Result<Vec<VerificationKey>, OAuthError> {
-        let mut response = self
-            .http
-            .get(&self.config.jwks_uri)
-            .send()
-            .await
-            .map_err(|_| OAuthError::InvalidToken)?
-            .error_for_status()
-            .map_err(|_| OAuthError::InvalidToken)?;
+        let mut response = match self.http.get(&self.config.jwks_uri).send().await {
+            Ok(resp) => resp,
+            Err(error) => {
+                tracing::warn!(error = ?error, "OAuth JWKS fetch failed");
+                return Err(OAuthError::InvalidToken);
+            }
+        };
+        if response.error_for_status_ref().is_err() {
+            tracing::warn!(
+                status = %response.status(),
+                "OAuth JWKS endpoint returned HTTP error"
+            );
+            return Err(OAuthError::InvalidToken);
+        }
         if response
             .content_length()
             .is_some_and(|size| size > MAX_JWKS_BYTES as u64)
         {
+            tracing::warn!(
+                max_bytes = MAX_JWKS_BYTES,
+                "OAuth JWKS response exceeded size limit"
+            );
             return Err(OAuthError::InvalidToken);
         }
         let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| OAuthError::InvalidToken)?
-        {
+        while let Some(chunk) = match response.chunk().await {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                tracing::warn!(error = ?error, "OAuth JWKS body read failed");
+                return Err(OAuthError::InvalidToken);
+            }
+        } {
             if body.len() + chunk.len() > MAX_JWKS_BYTES {
+                tracing::warn!(
+                    max_bytes = MAX_JWKS_BYTES,
+                    "OAuth JWKS streamed response exceeded size limit"
+                );
                 return Err(OAuthError::InvalidToken);
             }
             body.extend_from_slice(&chunk);
         }
-        parse_keys(&body)
+        parse_keys(&body).inspect_err(|_| {
+            tracing::warn!("OAuth JWKS document failed validation");
+        })
     }
 }
 
@@ -656,49 +712,35 @@ pub async fn oauth_bearer_auth(
     }
     // Defense in depth: even an embedding application constructing this
     // state incorrectly must not let OAuth + dev-no-auth grant Full access.
-    if state
-        .auth
-        .main_token
-        .as_deref()
-        .is_none_or(|t| t.is_empty())
-    {
+    let Some(expected_main) = state.auth.main_token.as_deref().filter(|t| !t.is_empty()) else {
         return ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "OAuth requires static operator authentication to be configured",
         )
         .into_response();
-    }
-    let presented = request.headers().get_all(header::AUTHORIZATION);
-    let mut headers = presented.iter();
-    let token = headers
-        .next()
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "));
-    if headers.next().is_some() {
-        return oauth.rejection(OAuthError::InvalidToken);
-    }
-    if let Some(token) = token {
-        let is_static = state
-            .auth
-            .main_token
-            .as_deref()
-            .is_some_and(|t| auth::validate_token(token, t))
-            || state
-                .auth
-                .agent_tokens
-                .iter()
-                .any(|t| auth::validate_token(token, &t.token))
-            || state
-                .auth
-                .machine_tokens
-                .iter()
-                .any(|t| auth::validate_token(token, &t.token));
-        if is_static {
-            return auth::bearer_auth(State(state.auth), request, next)
-                .await
-                .into_response();
+    };
+    let is_mcp = path == "/mcp" || path.starts_with("/mcp/");
+    let token = match auth::extract_bearer(request.headers()) {
+        Ok(token) => token,
+        Err(msg) => {
+            return if is_mcp {
+                oauth.rejection(OAuthError::InvalidToken)
+            } else {
+                ApiError::new(StatusCode::UNAUTHORIZED, msg).into_response()
+            };
         }
-        if path == "/mcp" || path.starts_with("/mcp/") {
+    };
+    if let Some(token) = token {
+        if let Some(caller) = auth::classify_static_token(&state.auth, expected_main, token) {
+            return match auth::authorize_static_caller(caller, &request) {
+                Ok(caller) => {
+                    request.extensions_mut().insert(caller);
+                    next.run(request).await
+                }
+                Err(err) => err.into_response(),
+            };
+        }
+        if is_mcp {
             return match oauth.validate(token).await {
                 Ok(agent) => {
                     request
@@ -709,14 +751,17 @@ pub async fn oauth_bearer_auth(
                 Err(error) => oauth.rejection(error),
             };
         }
+        return ApiError::new(StatusCode::UNAUTHORIZED, "unrecognized bearer token")
+            .into_response();
     }
     // OAuth tokens never enter REST authentication, even if otherwise valid.
     // Add discovery only on MCP responses, not the machine/operator surfaces.
-    let is_mcp = path == "/mcp" || path.starts_with("/mcp/");
-    let mut response = auth::bearer_auth(State(state.auth), request, next)
-        .await
-        .into_response();
-    if is_mcp && response.status() == StatusCode::UNAUTHORIZED {
+    let mut response = ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        "missing or malformed Authorization header — expected 'Authorization: Bearer <token>'",
+    )
+    .into_response();
+    if is_mcp {
         response
             .headers_mut()
             .insert(header::WWW_AUTHENTICATE, oauth.challenge(None));
@@ -777,7 +822,7 @@ mod tests {
     fn state() -> OAuthState {
         let state = OAuthState::from_json(&config().to_string(), RESOURCE).unwrap();
         let now = Instant::now();
-        *state.cache.try_lock().unwrap() = JwksCache {
+        *state.cache.write().unwrap() = JwksCache {
             keys: parse_keys(FIXTURE.jwks.as_bytes()).unwrap(),
             fetched_at: Some(now),
             last_attempt: Some(now),
@@ -854,7 +899,7 @@ mod tests {
         value["bindings"].as_array_mut().unwrap().push(second);
         let state = OAuthState::from_json(&value.to_string(), RESOURCE).unwrap();
         let now = Instant::now();
-        *state.cache.lock().await = JwksCache {
+        *state.cache.write().unwrap() = JwksCache {
             keys: parse_keys(FIXTURE.jwks.as_bytes()).unwrap(),
             fetched_at: Some(now),
             last_attempt: Some(now),
@@ -917,13 +962,14 @@ mod tests {
     #[tokio::test]
     async fn validates_signature_issuer_audience_expiry_and_not_before() {
         let state = state();
+        let now = jsonwebtoken::get_current_timestamp();
         for (field, value) in [
             ("iss", json!("https://other.example.com")),
             ("aud", json!("other-api")),
-            ("exp", json!(jsonwebtoken::get_current_timestamp() - 1)),
-            ("nbf", json!(jsonwebtoken::get_current_timestamp() + 3600)),
+            ("exp", json!(now - CLOCK_SKEW_SECS - 1)),
+            ("nbf", json!(now + 3600)),
             ("nbf", json!("invalid-timestamp")),
-            ("iat", json!(jsonwebtoken::get_current_timestamp() + 3600)),
+            ("iat", json!(now + 3600)),
             ("jti", json!("")),
             ("client_id", json!("")),
             ("sub", json!("")),
@@ -1130,14 +1176,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tolerates_modest_clock_skew_and_rejects_beyond_window() {
+        let state = state();
+        let now = jsonwebtoken::get_current_timestamp();
+
+        // Fresh token from an IdP running slightly ahead of local time.
+        let mut ahead = claims();
+        ahead["iat"] = json!(now + 15);
+        ahead["nbf"] = json!(now + 15);
+        ahead["exp"] = json!(now + 315);
+        assert!(state.validate(&signed(&ahead)).await.is_ok());
+
+        // Past the skew window is rejected.
+        let mut too_ahead = claims();
+        too_ahead["iat"] = json!(now + CLOCK_SKEW_SECS + 2);
+        too_ahead["exp"] = json!(now + CLOCK_SKEW_SECS + 302);
+        assert_invalid(&state, &too_ahead).await;
+
+        let mut too_expired = claims();
+        too_expired["iat"] = json!(now - 300);
+        too_expired["exp"] = json!(now - CLOCK_SKEW_SECS - 2);
+        assert_invalid(&state, &too_expired).await;
+    }
+
+    #[tokio::test]
+    async fn cached_keys_verify_without_waiting_on_slow_unknown_kid_refresh() {
+        let state = Arc::new(state());
+        state.cache.write().unwrap().last_attempt = Some(Instant::now() - REFRESH_COOLDOWN);
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+
+        let s1 = state.clone();
+        let started1 = started.clone();
+        let release1 = release.clone();
+        let slow_refresh = tokio::spawn(async move {
+            s1.key_with_fetch("unknown-kid", Algorithm::ES256, || async move {
+                started1.notify_one();
+                release1.notified().await;
+                Err(OAuthError::InvalidToken)
+            })
+            .await
+        });
+
+        started.notified().await;
+        let cached = tokio::time::timeout(
+            Duration::from_millis(200),
+            state.key("test-key", Algorithm::ES256),
+        )
+        .await
+        .expect("cached key lookup must not block on an in-flight unknown-kid refresh");
+        assert!(cached.is_ok());
+
+        release.notify_one();
+        assert!(slow_refresh.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
     async fn stale_keys_fail_closed_and_unknown_kids_respect_global_refresh_cooldown() {
         let state = state();
-        let last_attempt = state.cache.lock().await.last_attempt;
+        let last_attempt = state.cache.read().unwrap().last_attempt;
         for _ in 0..5 {
             assert!(state.key("missing", Algorithm::ES256).await.is_err());
         }
-        assert_eq!(state.cache.lock().await.last_attempt, last_attempt);
-        state.cache.lock().await.fetched_at =
+        assert_eq!(state.cache.read().unwrap().last_attempt, last_attempt);
+        state.cache.write().unwrap().fetched_at =
             Some(Instant::now() - CACHE_TTL - Duration::from_secs(1));
         assert_invalid(&state, &claims()).await;
     }
@@ -1146,7 +1248,7 @@ mod tests {
     async fn rotated_keys_refresh_once_for_concurrent_requests_without_external_io() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let state = state();
-        state.cache.lock().await.last_attempt = Some(Instant::now() - REFRESH_COOLDOWN);
+        state.cache.write().unwrap().last_attempt = Some(Instant::now() - REFRESH_COOLDOWN);
         let calls = AtomicUsize::new(0);
         let refresh = || async {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -1167,7 +1269,7 @@ mod tests {
     async fn failed_refresh_never_uses_expired_cache_or_retries_inside_cooldown() {
         let state = state();
         {
-            let mut cache = state.cache.lock().await;
+            let mut cache = state.cache.write().unwrap();
             cache.fetched_at = Some(Instant::now() - CACHE_TTL);
             cache.last_attempt = Some(Instant::now() - REFRESH_COOLDOWN);
         }
@@ -1359,6 +1461,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(response.headers().contains_key(header::WWW_AUTHENTICATE));
+
+        // Duplicate Authorization on REST never emits OAuth discovery headers.
+        let rest_dup = Request::post("/api/briefing")
+            .header(header::AUTHORIZATION, format!("Bearer {MAIN_TOKEN}"))
+            .header(header::AUTHORIZATION, format!("Bearer {AGENT_TOKEN}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = app(Some(state()), Some(MAIN_TOKEN))
+            .oneshot(rest_dup)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!response.headers().contains_key(header::WWW_AUTHENTICATE));
     }
 
     #[tokio::test]

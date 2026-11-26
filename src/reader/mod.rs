@@ -345,7 +345,11 @@ async fn inbox_page(state: &ReaderState) -> Page {
     // The open set carries no bodies; fetch the waiting ones for snippets.
     let mine: Vec<&OpenActionBrief> = section(Section::WaitingOnYou).collect();
     let ids: Vec<Uuid> = mine.iter().map(|r| r.id).collect();
-    let bodies = reader_repo::bodies(&state.pool, &ids).await?;
+    let bodies = if ids.is_empty() {
+        Vec::new()
+    } else {
+        reader_repo::bodies(&state.pool, &ids).await?
+    };
     let waiting: Vec<Waiting> = mine
         .into_iter()
         .map(|r| Waiting {

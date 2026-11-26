@@ -105,7 +105,7 @@ host out-of-band through the operator's channel, exactly like a machine token.
 Startup logs a binding summary (never the secrets):
 
 ```
-agent tokens configured count=1 bindings=["Claude-Laptop (client=acme)"]
+agent tokens configured count=1 bindings=["Claude-Laptop (client=acme, exclude_client_data=false)"]
 ```
 
 ## Keeping an agent out of client data

@@ -164,7 +164,7 @@ Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
 | `DATABASE_URL` | (required) | PostgreSQL connection string |
 | `OPS_BRAIN_TRANSPORT` | `stdio` | `stdio` or `http` |
 | `OPS_BRAIN_LISTEN` | `0.0.0.0:3000` | HTTP bind address |
-| `OPS_BRAIN_AUTH_TOKEN` | (none) | Main bearer. Required for `http`: a missing or blank token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true`. |
+| `OPS_BRAIN_AUTH_TOKEN` | (none) | Main bearer (32+ chars). Required for `http`: a missing, blank, or short token aborts startup unless `OPS_BRAIN_DEV_NO_AUTH=true`. |
 | `OPS_BRAIN_AGENT_TOKENS` | (none) | JSON array of identity-bound tokens for `/mcp`. Enforces identity, not tenant isolation. See [`docs/agent-tokens.md`](docs/agent-tokens.md). |
 | `OPS_BRAIN_OAUTH_CONFIG` | (none) | Optional external provider, JWKS, scopes and explicit subject/client-to-agent bindings. See [`docs/oauth.md`](docs/oauth.md). |
 | `OPS_BRAIN_OAUTH_RESOURCE_URL` | (none) | Canonical public HTTPS MCP resource URL. Required together with the OAuth config; empty leaves OAuth disabled. |

@@ -28,7 +28,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ops_brain}
       POSTGRES_DB: ops_brain
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
@@ -47,7 +47,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${OPS_BRAIN_PORT:-3000}:3000"
+      - "${OPS_BRAIN_BIND:-127.0.0.1}:${OPS_BRAIN_PORT:-3000}:3000"
       # The bus reader; nothing answers here until it is switched on below.
       - "127.0.0.1:${OPS_BRAIN_READER_HOST_PORT:-3210}:3210"
     environment:

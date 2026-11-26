@@ -73,13 +73,10 @@ async fn main() -> anyhow::Result<()> {
             // "secret" must never become a valid bearer credential — so
             // blank and missing are both treated as "no token", and no
             // token aborts unless the operator explicitly opted into an
-            // open dev server.
-            let main_token: Option<String> = config
-                .auth_token
-                .as_deref()
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
-                .map(str::to_string);
+            // open dev server. Any non-blank token must meet MIN_TOKEN_LEN.
+            let main_token: Option<String> =
+                auth::validate_main_token(config.auth_token.as_deref())
+                    .map_err(anyhow::Error::msg)?;
             if main_token.is_none() {
                 if config.dev_no_auth {
                     tracing::warn!(
@@ -229,7 +226,7 @@ async fn main() -> anyhow::Result<()> {
 
             let session_instructions = instructions;
             // Who can read the bus, from the operator's static bindings: agent
-            // tokens, OAuth bindings, and the queues machine tokens poll.
+            // tokens, OAuth bindings, and the queues read-scoped machine tokens poll.
             let known_agents: Vec<String> = auth_state
                 .agent_tokens
                 .iter()
@@ -238,10 +235,12 @@ async fn main() -> anyhow::Result<()> {
                     auth_state
                         .machine_tokens
                         .iter()
+                        .filter(|t| t.has_scope("read"))
                         .flat_map(|t| t.agents.iter().cloned()),
                 )
                 .chain(oauth.iter().flat_map(|o| o.bound_agents()))
                 .collect();
+            let mcp_cancel = http_config.cancellation_token.clone();
             let mcp_service = StreamableHttpService::new(
                 move || {
                     Ok(
@@ -276,10 +275,25 @@ async fn main() -> anyhow::Result<()> {
                     oauth::oauth_bearer_auth,
                 ));
 
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let signal_tx = shutdown_tx.clone();
+            let signal_cancel = mcp_cancel.clone();
+            tokio::spawn(async move {
+                shutdown_signal().await;
+                // Cancel active MCP SSE streams so axum's graceful shutdown
+                // drains promptly instead of waiting for idle clients until SIGKILL.
+                signal_cancel.cancel();
+                let _ = signal_tx.send(true);
+            });
+
             let listener = tokio::net::TcpListener::bind(&config.listen).await?;
             tracing::info!("Listening on http://{}", config.listen);
             match reader_config {
-                None => axum::serve(listener, app).await?,
+                None => {
+                    axum::serve(listener, app)
+                        .with_graceful_shutdown(wait_for_shutdown(shutdown_rx))
+                        .await?;
+                }
                 Some(reader_config) => {
                     // Bind before serving anything: a reader that was asked
                     // for and cannot start is a startup failure, not a warning.
@@ -300,15 +314,37 @@ async fn main() -> anyhow::Result<()> {
                              reach its loopback port can read every handoff."
                         );
                     }
-                    let reader_app = reader::router(reader_pool, reader_config);
-                    // Either listener ending ends the process, so a supervisor
-                    // restarts both rather than leaving half a server up.
-                    tokio::select! {
-                        served = async { axum::serve(listener, app).await } => served?,
-                        served = async { axum::serve(reader_listener, reader_app).await } => served?,
-                    }
+                    let reader_app = reader::router(reader_pool.clone(), reader_config);
+                    // Either listener ending triggers shutdown of the other so
+                    // a supervisor restarts both rather than leaving half a server up.
+                    let main_tx = shutdown_tx.clone();
+                    let main_cancel = mcp_cancel.clone();
+                    let main_rx = shutdown_rx.clone();
+                    let main_server = async move {
+                        let res = axum::serve(listener, app)
+                            .with_graceful_shutdown(wait_for_shutdown(main_rx))
+                            .await;
+                        main_cancel.cancel();
+                        let _ = main_tx.send(true);
+                        res
+                    };
+                    let reader_tx = shutdown_tx;
+                    let reader_cancel = mcp_cancel;
+                    let reader_rx = shutdown_rx;
+                    let reader_server = async move {
+                        let res = axum::serve(reader_listener, reader_app)
+                            .with_graceful_shutdown(wait_for_shutdown(reader_rx))
+                            .await;
+                        reader_cancel.cancel();
+                        let _ = reader_tx.send(true);
+                        res
+                    };
+                    let (main_res, reader_res) = tokio::join!(main_server, reader_server);
+                    main_res?;
+                    reader_res?;
                 }
             }
+            reader_pool.close().await;
         }
         _ => {
             anyhow::bail!(
@@ -319,4 +355,41 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn wait_for_shutdown(mut rx: tokio::sync::watch::Receiver<bool>) {
+    let _ = rx.wait_for(|v| *v).await;
+}
+
+/// Listen for SIGTERM (Docker / systemd stop) and SIGINT (Ctrl-C). Without an
+/// explicit handler, Linux PID 1 inside a container ignores SIGTERM and hangs
+/// until Docker sends SIGKILL.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %e, "failed to listen for SIGINT");
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => tracing::info!("received SIGINT, shutting down"),
+        _ = terminate => tracing::info!("received SIGTERM, shutting down"),
+    }
 }

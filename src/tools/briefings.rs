@@ -30,10 +30,10 @@ const STUCK_SECTION_CAP: usize = 50;
 /// Size of the legacy `pending_titles` / `accepted_titles` window.
 const LEGACY_TITLE_LIMIT: usize = 20;
 
-/// Label for handoffs filed with no recipient.
 /// Most failing checks the briefing will title before summarising the rest.
 const FAILING_SECTION_CAP: usize = 50;
 
+/// Label for handoffs filed with no recipient.
 const UNADDRESSED: &str = "(unaddressed)";
 
 /// Structured briefing data returned alongside the markdown content.
@@ -171,13 +171,10 @@ pub async fn generate_briefing_inner(
 ) -> Result<serde_json::Value, String> {
     let is_weekly = briefing_type == "weekly";
 
-    // Real totals — not `len()` of a bounded page.
-    let counts = crate::repo::handoff_repo::count_open_handoffs(pool)
-        .await
-        .map_err(|e| format!("Failed to count handoffs: {e}"))?;
-
     // The whole open action set, projected. Briefings show actionable work
     // only — notify-class FYIs are not "pending" in any meaningful sense.
+    // Derive totals from this single snapshot so header counts and
+    // per-recipient sums cannot disagree.
     let open = crate::repo::handoff_repo::list_open_action_briefs(pool, operator)
         .await
         .map_err(|e| format!("Failed to list handoffs: {e}"))?;
@@ -200,9 +197,9 @@ pub async fn generate_briefing_inner(
     let sections = triage(&open, operator, operator_seen, &now);
 
     let handoff_data = HandoffSummaryData {
-        open_count: counts.open as usize,
-        pending_count: counts.pending as usize,
-        accepted_count: counts.accepted as usize,
+        open_count: open.len(),
+        pending_count: open.iter().filter(|r| r.status == "pending").count(),
+        accepted_count: open.iter().filter(|r| r.status == "accepted").count(),
         pending_titles: legacy_titles(&open, "pending"),
         accepted_titles: legacy_titles(&open, "accepted"),
     };
@@ -393,7 +390,7 @@ fn triage(
         groups,
     };
 
-    // ── 3. Everything else, as counts ──
+    // ── 4. Everything else, as counts ──
     let mut by_recipient: Vec<RecipientCount> = Vec::new();
     let mut self_addressed = BucketCount {
         count: 0,
@@ -596,7 +593,7 @@ fn build_markdown(
         }
     }
 
-    // ── 3. Everything else, counts only ──
+    // ── 4. Everything else, counts only ──
     let c = &sections.counts;
     // Not "everything else": `by_recipient` partitions the *whole* open set,
     // including rows already titled above, and the two buckets overlap it. The
