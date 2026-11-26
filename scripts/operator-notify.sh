@@ -160,7 +160,7 @@ fi
 
 poll_started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cursor=$(cat "$CURSOR_FILE" 2>/dev/null || true)
-url="$OPS_URL/api/pending?agent=$AGENT"
+url="${OPS_URL%/}/api/pending?agent=$AGENT"
 [[ -n $cursor ]] && url="$url&since=$cursor"
 
 # Bearer by --config on a process-substitution fd, never as `-H` in argv, where
@@ -185,18 +185,37 @@ if ! count=$(jq -er 'if (.count | type) == "number" and .count >= 0 and (.count 
 fi
 
 if ((count == 0)); then
-    # Advance the cursor even on an empty poll: nothing new happened, and
-    # holding the old cursor would re-report items on the next non-empty run.
-    [[ $mode == poll ]] && echo "$poll_started" >"$CURSOR_FILE"
+    # Seed an initial cursor on an empty first run. Once a cursor is already
+    # anchored to a server timestamp, keep it rather than jumping ahead on the
+    # cron host's local clock (which could skip items filed under clock skew).
+    [[ $mode == poll && -z $cursor ]] && echo "$poll_started" >"$CURSOR_FILE"
     heartbeat up "nothing pending"
     exit 0
 fi
+
+# Advance to the newest server-side updated_at in this batch rather than the
+# cron host's local whole-second clock: avoids both clock-skew skips and
+# same-second microsecond duplicates. Normalize fractional seconds to 9 digits
+# before comparing so "...00Z" (ASCII 'Z' > '.') never beats "...00.500Z".
+# Fall back to poll_started if absent.
+next_cursor=$(jq -r '
+    [.items[].updated_at | select(type == "string" and length > 0)]
+    | if length == 0 then empty
+      else max_by(sub("Z$"; "") | split(".") | [.[0], ((.[1] // "") + "000000000")[0:9]])
+      end
+' <<<"$response")
+next_cursor="${next_cursor:-$poll_started}"
+has_more=$(jq -r 'if .has_more == true then "true" else "false" end' <<<"$response")
 
 # Body-free by design (the poll response carries no bodies). The digest gives
 # enough to triage and a handoff id to point an agent at; full context is one
 # `list_handoffs` away in a session.
 digest=$(
-    printf 'The team bus is blocked on you — %s new item(s).\n\n' "$count"
+    if [[ $has_more == true ]]; then
+        printf 'The team bus is blocked on you — at least %s new item(s) (more not shown).\n\n' "$count"
+    else
+        printf 'The team bus is blocked on you — %s new item(s).\n\n' "$count"
+    fi
     jq -r '.items[] |
         "• [\(.priority)] \(.title)\n" +
         "    from \(.from_agent) · \(.status) · filed \(.created_at)" +
@@ -208,7 +227,7 @@ digest=$(
 
 if [[ $mode == dry ]]; then
     printf '%s\n' "$digest"
-    echo "--- dry run: not sent, cursor not advanced (would be $poll_started) ---" >&2
+    echo "--- dry run: not sent, cursor not advanced (would be $next_cursor) ---" >&2
     exit 0
 fi
 
@@ -225,7 +244,7 @@ else
     printf '%s\n' "$digest"
 fi
 
-echo "$poll_started" >"$CURSOR_FILE"
+echo "$next_cursor" >"$CURSOR_FILE"
 titles=$(jq -r '[.items[].title] | join("; ")' <<<"$response")
 log "notified: $count item(s) — $titles"
 heartbeat up "notified $count item(s)"

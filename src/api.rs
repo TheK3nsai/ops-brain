@@ -4,7 +4,10 @@
 //! MCP protocol negotiation. Protected by the same bearer auth middleware.
 
 use axum::{
-    extract::{rejection::JsonRejection, Query, State},
+    extract::{
+        rejection::{JsonRejection, QueryRejection},
+        Query, State,
+    },
     http::StatusCode,
     response::{IntoResponse, Response},
     Extension, Json,
@@ -62,8 +65,8 @@ pub struct CreateHandoffRequest {
     /// Required for main-bearer callers. Machine callers get theirs from the
     /// token binding — supplying a *different* value is a 400.
     pub from_agent: Option<String>,
-    /// Required for machine callers (and must be within the token's agent
-    /// allowlist). Optional for main-bearer callers (open handoff).
+    /// Required on the REST ingestion path (machine callers are also checked
+    /// against the token's agent allowlist).
     pub to_agent: Option<String>,
     pub priority: Option<String>,
     pub category: Option<String>,
@@ -218,7 +221,7 @@ pub async fn create_handoff(
     let from_agent = match &caller {
         CallerClass::Machine(token) => {
             if let Some(claimed) = req.from_agent.as_deref() {
-                if !claimed.eq_ignore_ascii_case(&token.from_agent) {
+                if !claimed.trim().eq_ignore_ascii_case(&token.from_agent) {
                     return Err(bad_request(format!(
                         "from_agent '{claimed}' does not match this token's binding — omit the \
                          field; the token IS the identity"
@@ -396,8 +399,18 @@ pub struct PendingResponse {
 pub async fn list_pending(
     State(state): State<Arc<ApiState>>,
     Extension(caller): Extension<CallerClass>,
-    Query(q): Query<PendingQuery>,
+    query: Result<Query<PendingQuery>, QueryRejection>,
 ) -> Result<Json<PendingResponse>, ApiError> {
+    if let CallerClass::Agent(_) = &caller {
+        return Err(ApiError::forbidden(
+            "per-agent tokens use the MCP surface, not the REST ingestion path",
+        ));
+    }
+
+    // Surface malformed or incomplete query strings in the same JSON error
+    // envelope as every other REST rejection (never Axum's bare text/plain).
+    let Query(q) = query.map_err(|e| ApiError::bad_request(e.body_text()))?;
+
     let agent = validate_agent_name(&q.agent).map_err(|e| bad_request(e).field("agent"))?;
 
     if let CallerClass::Machine(token) = &caller {

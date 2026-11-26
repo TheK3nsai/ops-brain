@@ -114,7 +114,7 @@ retrieval; senders must also avoid addressing sensitive content to that seat.
 
 For routing several Bots through a shared credential, an operator can bind a
 `<base>-*` slug family. Each Bot supplies its concrete member slug as
-`from_agent`/`author` on writes and as `agent_name` on `accept_handoff`
+`from_agent` on writes and as `agent_name` on `accept_handoff`
 (required for family credentials). Family members share credential
 authority and restricted visibility; the names provide routing within that
 shared boundary. See [agent token families](agent-tokens.md).

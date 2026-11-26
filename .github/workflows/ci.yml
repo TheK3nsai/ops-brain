@@ -11,8 +11,6 @@ env:
   RUST_BACKTRACE: 1
   # Test database (service container)
   DATABASE_URL: postgresql://ops_brain:ops_brain@localhost:5432/ops_brain_test
-  # Disable optional services in tests
-  OPS_BRAIN_EMBEDDINGS_ENABLED: "false"
 
 jobs:
   check:
@@ -127,8 +125,6 @@ jobs:
       - name: Run cargo audit
         # RUSTSEC-2023-0071: rsa crate timing side-channel (Marvin Attack).
         # No fix available upstream. Transitive dep via sqlx-mysql (unused — we use PostgreSQL only).
-        # RUSTSEC-2026-0097: rand unsoundness with custom logger + rand::rng().
-        # Transitive via rmcp (rand 0.10) and reqwest/quinn (rand 0.9). Not reachable from ops-brain code paths.
         # RUSTSEC-2026-0459: libsqlite3-sys SQLite CVE. Lockfile-only via sqlx (SQLite driver never compiled);
         # no sqlx release accepts the fixed version yet. Reasoning in audit.toml.
-        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0097 --ignore RUSTSEC-2026-0459
+        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0459

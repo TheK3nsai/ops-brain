@@ -4,8 +4,57 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP `create_handoff` and `list_handoffs` now lowercase validated `priority`,
+  `category` and `status` values before enforcement and SQL queries (fixing
+  mixed-case `category: "Action"` bypassing the broadcast-action ban or writing
+  rows invisible to operational queues, and uppercase filters in `list_handoffs`
+  returning zero rows).
+- `search_bus` and the bus reader's any-word FTS fallback now split on
+  non-alphanumeric separators, drop bare hyphens, and run via
+  `websearch_to_tsquery` instead of `to_tsquery`, preventing SQL syntax errors
+  on punctuated queries like `(--) foo` and fixing searches for
+  underscore/slash/dot-joined terms.
+- `OPS_BRAIN_MACHINE_TOKENS` now trims and stores normalized `from_agent` and
+  `agents` slugs (matching `OPS_BRAIN_AGENT_TOKENS`) and rejects unknown JSON
+  fields at startup.
+- `complete_handoff` now trims `commit_hash` and treats blank strings as `None`
+  (matching `create_handoff`), and both tools bound `commit_hash` to 128 bytes
+  with no whitespace or control characters.
+- `GET /api/pending` now returns the JSON `ApiError` envelope on missing or
+  malformed query parameters instead of Axum's `text/plain` rejection.
+- `scripts/operator-notify.sh` strips a trailing slash on `OPS_BRAIN_URL`
+  (preventing `//api/pending` 403s), advances its cursor to the server's max
+  `updated_at` timestamp rather than the cron host's whole-second clock, and
+  notes `has_more` in the digest when capped.
+
 ### Changed
 
+- `check_in` now compacts `open_handoffs_to_you.items` (200-byte body preview,
+  omitting `context`) so checking a queue matches the tool description and does
+  not dump full bodies into agent context before `get_handoff`.
+- HTTP server handles `SIGTERM` / `SIGINT` with graceful shutdown and cancels
+  active MCP SSE streams via `rmcp`'s cancellation token, avoiding Docker's
+  10-second `SIGKILL` wait on deploys and rotations.
+- `OPS_BRAIN_AUTH_TOKEN` enforces the 32-character minimum already required for
+  agent, machine and reader tokens; `bearer_auth` rejects duplicate
+  `Authorization` headers consistently with OAuth mode; `create_handoff`'s
+  recipient warning checks only `read`-scoped machine token allowlists.
+- External OAuth validation allows 30 seconds of clock skew, logs JWKS fetch
+  and validation failures, and reads cached keys through an `RwLock` so slow
+  unknown-`kid` refreshes do not stall valid cached-key requests.
+- `POST /api/briefing` derives header open/pending/accepted totals from the
+  same snapshot as its sections, eliminating a redundant query and torn-read
+  count drift.
+- Bus reader fetches bounded body prefixes (`LEFT(body, 1024)`) for inbox
+  snippets, skips the snippet query on an empty inbox, and includes the year on
+  prior-year timestamps and timeline day headers.
+- `Dockerfile` aligns builder and runtime on Debian trixie (`rust:1.94-slim-trixie`
+  / `debian:trixie-slim`) and drops unused `pkg-config` / `libssl-dev`;
+  `docker-compose.yml` binds dev Postgres and HTTP to `127.0.0.1` by default;
+  `tokio` (1.54.1) and `rand` (0.8.8 / 0.10.4) updates clear `RUSTSEC-2026-0386`
+  and `RUSTSEC-2026-0097`.
 - Completing a handoff now names the asks its owner filed under it that are
   still open. An agent blocked on a human files the ask as a reply under the
   work; when it later closed the work, nothing pointed it back at the ask,

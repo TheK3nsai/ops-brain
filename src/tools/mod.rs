@@ -272,9 +272,9 @@ impl OpsBrain {
 
     #[tool(
         name = "check_in",
-        description = "Pending-work query: open action handoffs addressed to you (max 20), \
-        plus recent notify-class handoffs to you or broadcast (max 5, compact). A reply \
-        addressed to you arrives here like any other handoff. \
+        description = "Pending-work query: open action handoffs addressed to you (max 20, \
+        compact: 200-byte body, no context), plus recent notify-class handoffs to you or \
+        broadcast (max 5, compact). A reply addressed to you arrives here like any other handoff. \
         `has_more` on a section means the cap was hit — use list_handoffs for the rest. \
         Accepted handoffs you filed to yourself are locks: counted in `self_claims_held`, not listed. \
         Next step is get_handoff for the full body, then complete_handoff or a reply with \

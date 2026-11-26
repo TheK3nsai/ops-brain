@@ -15,13 +15,44 @@ use rmcp::model::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::helpers::{error_result, json_result};
+use super::helpers::{error_result, json_result, truncate_str};
+use crate::models::handoff::Handoff;
 use crate::pagination::PageRequest;
 use crate::repo::handoff_repo;
 use crate::validation::validate_agent_name;
 
 const ACTION_LIMIT: i64 = 20;
 const NOTIFICATION_LIMIT: i64 = 5;
+const COMPACT_BODY_BYTES: usize = 200;
+
+/// Compact action handoff for `check_in`: truncates long bodies to 200 bytes
+/// and omits `context` so checking a busy queue does not dump megabytes into
+/// agent context. Short handoffs fit inline; long ones point at `get_handoff`.
+fn compact_action(h: &Handoff) -> serde_json::Value {
+    let body = if h.body.len() > COMPACT_BODY_BYTES {
+        format!("{}...", truncate_str(&h.body, COMPACT_BODY_BYTES))
+    } else {
+        h.body.clone()
+    };
+    serde_json::json!({
+        "id": h.id,
+        "from_agent": h.from_agent,
+        "to_agent": h.to_agent,
+        "status": h.status,
+        "accepted_by": h.accepted_by,
+        "priority": h.priority,
+        "category": h.category,
+        "title": h.title,
+        "body": body,
+        "in_reply_to": h.in_reply_to,
+        "commit_hash": h.commit_hash,
+        "origin": h.origin,
+        "dedupe_key": h.dedupe_key,
+        "repeat_count": h.repeat_count,
+        "created_at": h.created_at,
+        "updated_at": h.updated_at,
+    })
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CheckInParams {
@@ -125,6 +156,8 @@ pub async fn handle_check_in(
         })
         .collect();
 
+    let action_items: Vec<serde_json::Value> = action_handoffs.iter().map(compact_action).collect();
+
     // `count` is the page count, not the total: `has_more` says whether older
     // rows were left behind for list_handoffs.
     json_result(&serde_json::json!({
@@ -134,7 +167,7 @@ pub async fn handle_check_in(
             "accepted_count": action_handoffs.iter().filter(|h| h.status == "accepted").count(),
             "has_more": action_has_more,
             "self_claims_held": self_claims,
-            "items": action_handoffs,
+            "items": action_items,
         },
         "recent_notifications": {
             "count": notify_summary.len(),

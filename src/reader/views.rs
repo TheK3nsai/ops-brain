@@ -2,7 +2,7 @@
 //! `PreEscaped` is the markdown renderer's output, which `markdown.rs` builds
 //! from escaped text only.
 
-use chrono::{DateTime, FixedOffset, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, SecondsFormat, Utc};
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use uuid::Uuid;
 
@@ -52,7 +52,12 @@ impl Ctx<'_> {
     }
 
     fn stamp(&self, t: DateTime<Utc>) -> String {
-        self.local(t).format("%b %-d, %H:%M").to_string()
+        let local = self.local(t);
+        if local.year() == self.local(self.now).year() {
+            local.format("%b %-d, %H:%M").to_string()
+        } else {
+            local.format("%b %-d, %Y, %H:%M").to_string()
+        }
     }
 
     fn zone(&self) -> String {
@@ -341,7 +346,7 @@ pub fn inbox(
                             span.card-age { "open " (cx.age(w.line.created_at)) }
                         }
                         span.card-title { (w.line.title) }
-                        @if let Some(s) = &w.snippet { span.card-snip { (s) } }
+                        @if let Some(s) = &w.snippet { @if !s.is_empty() { span.card-snip { (s) } } }
                         span.card-meta {
                             (chips(&w.line))
                             span.muted { "filed " (cx.stamp(w.line.created_at)) }
@@ -498,13 +503,25 @@ fn message(cx: &Ctx, m: &Handoff, previous: Option<&Handoff>, all: &[Handoff]) -
 }
 
 pub fn timeline(cx: &Ctx, lines: &[HandoffLine], older: Option<String>) -> Markup {
-    let day = |l: &HandoffLine| cx.local(l.created_at).format("%A, %b %-d").to_string();
+    let current_year = cx.local(cx.now).year();
+    let day_key = |l: &HandoffLine| {
+        let local = cx.local(l.created_at);
+        (local.year(), local.ordinal())
+    };
+    let day_label = |l: &HandoffLine| {
+        let local = cx.local(l.created_at);
+        if local.year() == current_year {
+            local.format("%A, %b %-d").to_string()
+        } else {
+            local.format("%A, %b %-d, %Y").to_string()
+        }
+    };
     let body = html! {
         h1 { "Timeline" }
         p.lede { "Everything the bus carried, newest first." }
         @if lines.is_empty() { p.empty { "Nothing here." } }
-        @for group in lines.chunk_by(|a, b| day(a) == day(b)) {
-            h2.day { (day(&group[0])) (count(group.len())) }
+        @for group in lines.chunk_by(|a, b| day_key(a) == day_key(b)) {
+            h2.day { (day_label(&group[0])) (count(group.len())) }
             div.list {
                 @for l in group { (row(cx, &Line::from(l), true, None, true)) }
             }
@@ -608,6 +625,45 @@ mod tests {
         ] {
             assert_eq!(age(now, at(t)), want, "{t}");
         }
+    }
+
+    #[test]
+    fn stamp_and_timeline_show_year_for_prior_years() {
+        let cx = Ctx {
+            roster: &[],
+            operator: "Operator",
+            now: at("2026-11-26T12:00:00Z"),
+            offset: FixedOffset::east_opt(0).unwrap(),
+            waiting: 0,
+            open: 0,
+        };
+        assert_eq!(cx.stamp(at("2026-11-20T09:15:00Z")), "Nov 20, 09:15");
+        assert_eq!(cx.stamp(at("2025-11-20T09:15:00Z")), "Nov 20, 2025, 09:15");
+
+        let mk = |ts: &str, title: &str| HandoffLine {
+            id: Uuid::now_v7(),
+            from_agent: "Claude-A".into(),
+            to_agent: Some("Claude-B".into()),
+            status: "completed".into(),
+            accepted_by: None,
+            priority: "normal".into(),
+            category: "action".into(),
+            title: title.into(),
+            origin: "agent".into(),
+            repeat_count: 0,
+            created_at: at(ts),
+        };
+        let html = timeline(
+            &cx,
+            &[
+                mk("2026-11-20T10:00:00Z", "this year"),
+                mk("2025-11-20T10:00:00Z", "last year"),
+            ],
+            None,
+        )
+        .into_string();
+        assert!(html.contains("Friday, Nov 20<span"));
+        assert!(html.contains("Thursday, Nov 20, 2025<span"));
     }
 
     #[test]

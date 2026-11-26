@@ -1,4 +1,9 @@
-use axum::{extract::State, http::StatusCode, middleware::Next, response::Response};
+use axum::{
+    extract::State,
+    http::{header, HeaderMap, StatusCode},
+    middleware::Next,
+    response::Response,
+};
 
 use crate::api::ApiError;
 use std::sync::Arc;
@@ -22,7 +27,9 @@ pub fn validate_token(token: &str, expected: &str) -> bool {
 /// A scoped credential for non-interactive callers (monitors, cron sweeps,
 /// wake shims). Machine tokens can reach exactly two endpoints — the REST
 /// ingestion path and the pending poll — never `/mcp` or the rest of `/api`.
+// Unknown keys abort startup: a misspelled field must never silently default.
 #[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineToken {
     /// The bearer secret. Distinct from the main auth token by construction
     /// (validated at parse time).
@@ -72,9 +79,25 @@ impl MachineToken {
 
 pub const MACHINE_SCOPES: &[&str] = &["create", "read"];
 
-/// Minimum machine-token length. These are minted secrets, not passwords —
+/// Minimum minted-token length. These are generated secrets, not passwords —
 /// anything short enough to brute-force is a config error.
 pub(crate) const MIN_TOKEN_LEN: usize = 32;
+
+/// Validate `OPS_BRAIN_AUTH_TOKEN`. Blank and missing both return `Ok(None)`
+/// so the caller decides between aborting and `--dev-no-auth`. Any non-blank
+/// value must meet `MIN_TOKEN_LEN`, matching agent, machine and reader tokens.
+pub fn validate_main_token(raw: Option<&str>) -> Result<Option<String>, String> {
+    let Some(trimmed) = raw.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    if trimmed.len() < MIN_TOKEN_LEN {
+        return Err(format!(
+            "OPS_BRAIN_AUTH_TOKEN is too short ({} chars, min {MIN_TOKEN_LEN})",
+            trimmed.len()
+        ));
+    }
+    Ok(Some(trimmed.to_string()))
+}
 
 /// Parse and validate the `OPS_BRAIN_MACHINE_TOKENS` JSON config.
 ///
@@ -89,10 +112,10 @@ pub fn parse_machine_tokens(
         return Ok(Vec::new());
     };
 
-    let tokens: Vec<MachineToken> = serde_json::from_str(raw)
+    let mut tokens: Vec<MachineToken> = serde_json::from_str(raw)
         .map_err(|e| format!("OPS_BRAIN_MACHINE_TOKENS is not a valid JSON array: {e}"))?;
 
-    for (i, t) in tokens.iter().enumerate() {
+    for (i, t) in tokens.iter_mut().enumerate() {
         if t.token.len() < MIN_TOKEN_LEN {
             return Err(format!(
                 "machine token [{i}] is too short ({} chars, min {MIN_TOKEN_LEN})",
@@ -107,8 +130,11 @@ pub fn parse_machine_tokens(
                 ));
             }
         }
-        crate::validation::validate_agent_name(&t.from_agent)
-            .map_err(|e| format!("machine token [{i}] from_agent: {e}"))?;
+        // Store normalized (trimmed) slugs so padded config entries cannot
+        // silently fail allowlist checks or stamp whitespace into handoffs.
+        t.from_agent = crate::validation::validate_agent_name(&t.from_agent)
+            .map_err(|e| format!("machine token [{i}] from_agent: {e}"))?
+            .to_string();
         if t.agents.is_empty() {
             return Err(format!(
                 "machine token [{i}] ('{}') has an empty agents allowlist — list the agents it \
@@ -116,9 +142,10 @@ pub fn parse_machine_tokens(
                 t.from_agent
             ));
         }
-        for a in &t.agents {
-            crate::validation::validate_agent_name(a)
-                .map_err(|e| format!("machine token [{i}] agents: {e}"))?;
+        for a in &mut t.agents {
+            *a = crate::validation::validate_agent_name(a)
+                .map_err(|e| format!("machine token [{i}] agents: {e}"))?
+                .to_string();
         }
         if t.scopes.is_empty() {
             return Err(format!(
@@ -443,6 +470,97 @@ fn required_machine_scope(method: &axum::http::Method, path: &str) -> Option<&'s
     }
 }
 
+/// Extract a single `Authorization: Bearer <token>` value. Rejects duplicate
+/// Authorization headers so conflicting credentials cannot blur auth decisions.
+pub(crate) fn extract_bearer(headers: &HeaderMap) -> Result<Option<&str>, &'static str> {
+    let mut all = headers.get_all(header::AUTHORIZATION).iter();
+    let Some(first) = all.next() else {
+        return Ok(None);
+    };
+    if all.next().is_some() {
+        return Err("multiple Authorization headers are not allowed");
+    }
+    Ok(first.to_str().ok().and_then(|h| h.strip_prefix("Bearer ")))
+}
+
+/// Match `presented` against the configured static token classes. Constant-time
+/// per comparison; secrets are unique across classes (enforced at parse time),
+/// so match order is immaterial.
+pub(crate) fn classify_static_token(
+    state: &AuthState,
+    expected_main: &str,
+    presented: &str,
+) -> Option<CallerClass> {
+    if validate_token(presented, expected_main) {
+        return Some(CallerClass::Full);
+    }
+    if let Some(token) = state
+        .machine_tokens
+        .iter()
+        .find(|t| validate_token(presented, &t.token))
+    {
+        return Some(CallerClass::Machine(Arc::new(token.clone())));
+    }
+    if let Some(token) = state
+        .agent_tokens
+        .iter()
+        .find(|t| validate_token(presented, &t.token))
+    {
+        return Some(CallerClass::Agent(Arc::new(token.clone())));
+    }
+    None
+}
+
+/// Enforce endpoint/scope rules for an already-classified static credential.
+pub(crate) fn authorize_static_caller(
+    caller: CallerClass,
+    request: &axum::extract::Request,
+) -> Result<CallerClass, ApiError> {
+    match &caller {
+        CallerClass::Full => Ok(caller),
+        CallerClass::Machine(token) => {
+            let method = request.method();
+            let path = request.uri().path();
+            let Some(needed) = required_machine_scope(method, path) else {
+                tracing::warn!(
+                    from_agent = %token.from_agent,
+                    %path,
+                    "machine token attempted a non-machine endpoint"
+                );
+                return Err(ApiError::forbidden(
+                    "machine tokens may only call the REST ingestion endpoints",
+                ));
+            };
+            if !token.has_scope(needed) {
+                tracing::warn!(
+                    from_agent = %token.from_agent,
+                    %path,
+                    scope = needed,
+                    "machine token lacks required scope"
+                );
+                return Err(ApiError::forbidden(format!(
+                    "this machine token lacks the '{needed}' scope required by this endpoint"
+                )));
+            }
+            Ok(caller)
+        }
+        CallerClass::Agent(token) => {
+            let path = request.uri().path();
+            if path == "/mcp" || path.starts_with("/mcp/") {
+                return Ok(caller);
+            }
+            tracing::warn!(
+                from_agent = %token.from_agent,
+                %path,
+                "agent token attempted a non-interactive endpoint"
+            );
+            Err(ApiError::forbidden(
+                "per-agent tokens may only call the MCP endpoint",
+            ))
+        }
+    }
+}
+
 /// Axum middleware: validates Bearer token on all requests except public
 /// liveness/readiness probes.
 ///
@@ -474,91 +592,27 @@ pub async fn bearer_auth(
         return Ok(next.run(request).await);
     };
 
-    let auth_header = request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok());
+    let presented = match extract_bearer(request.headers()) {
+        Ok(Some(token)) => token,
+        Ok(None) => {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "missing or malformed Authorization header — expected 'Authorization: Bearer <token>'",
+            ));
+        }
+        Err(msg) => return Err(ApiError::new(StatusCode::UNAUTHORIZED, msg)),
+    };
 
-    let Some(presented) = auth_header.and_then(|h| h.strip_prefix("Bearer ")) else {
+    let Some(caller) = classify_static_token(&state, expected, presented) else {
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
-            "missing or malformed Authorization header — expected 'Authorization: Bearer <token>'",
+            "unrecognized bearer token",
         ));
     };
 
-    if validate_token(presented, expected) {
-        request.extensions_mut().insert(CallerClass::Full);
-        return Ok(next.run(request).await);
-    }
-
-    // Scan machine tokens. Constant-time per comparison; the scan itself
-    // leaks only the (public) count of configured tokens. Secrets are unique
-    // across classes (enforced at parse time), so match order is immaterial.
-    if let Some(token) = state
-        .machine_tokens
-        .iter()
-        .find(|t| validate_token(presented, &t.token))
-    {
-        let method = request.method().clone();
-        let path = request.uri().path().to_string();
-        let Some(needed) = required_machine_scope(&method, &path) else {
-            tracing::warn!(
-                from_agent = %token.from_agent,
-                %path,
-                "machine token attempted a non-machine endpoint"
-            );
-            return Err(ApiError::forbidden(
-                "machine tokens may only call the REST ingestion endpoints",
-            ));
-        };
-        if !token.has_scope(needed) {
-            tracing::warn!(
-                from_agent = %token.from_agent,
-                %path,
-                scope = needed,
-                "machine token lacks required scope"
-            );
-            return Err(ApiError::forbidden(format!(
-                "this machine token lacks the '{needed}' scope required by this endpoint"
-            )));
-        }
-
-        request
-            .extensions_mut()
-            .insert(CallerClass::Machine(Arc::new(token.clone())));
-        return Ok(next.run(request).await);
-    }
-
-    // Scan per-agent tokens. These reach the interactive MCP surface — the identity
-    // binding is enforced inside the tool handlers, not at this layer, so the
-    // gate here is purely "is this an interactive request". Everything else is 403,
-    // symmetric to the machine tokens' REST-only restriction.
-    if let Some(token) = state
-        .agent_tokens
-        .iter()
-        .find(|t| validate_token(presented, &t.token))
-    {
-        let path = request.uri().path().to_string();
-        if path == "/mcp" || path.starts_with("/mcp/") {
-            request
-                .extensions_mut()
-                .insert(CallerClass::Agent(Arc::new(token.clone())));
-            return Ok(next.run(request).await);
-        }
-        tracing::warn!(
-            from_agent = %token.from_agent,
-            %path,
-            "agent token attempted a non-interactive endpoint"
-        );
-        return Err(ApiError::forbidden(
-            "per-agent tokens may only call the MCP endpoint",
-        ));
-    }
-
-    Err(ApiError::new(
-        StatusCode::UNAUTHORIZED,
-        "unrecognized bearer token",
-    ))
+    let caller = authorize_static_caller(caller, &request)?;
+    request.extensions_mut().insert(caller);
+    Ok(next.run(request).await)
 }
 
 #[cfg(test)]
@@ -677,6 +731,38 @@ mod tests {
         let raw = format!("[{},{}]", entry(T), entry(T));
         let err = parse_machine_tokens(Some(&raw), None).unwrap_err();
         assert!(err.contains("same secret"));
+    }
+
+    #[test]
+    fn validate_main_token_enforces_minimum_length() {
+        assert_eq!(validate_main_token(None).unwrap(), None);
+        assert_eq!(validate_main_token(Some("")).unwrap(), None);
+        assert_eq!(validate_main_token(Some("   ")).unwrap(), None);
+        assert!(validate_main_token(Some("short"))
+            .unwrap_err()
+            .contains("too short"));
+        assert_eq!(
+            validate_main_token(Some(&format!("  {T}  "))).unwrap(),
+            Some(T.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_machine_normalizes_padded_slugs_and_rejects_unknown_keys() {
+        let raw = format!(
+            r#"[{{"token":"{T}","from_agent":"  Example-Host1  ","agents":["  Claude-Example  "],"scopes":["create","read"]}}]"#
+        );
+        let tokens = parse_machine_tokens(Some(&raw), None).unwrap();
+        assert_eq!(tokens[0].from_agent, "Example-Host1");
+        assert_eq!(tokens[0].agents, vec!["Claude-Example"]);
+        assert!(tokens[0].allows_agent("claude-example"));
+
+        let typo = format!(
+            r#"[{{"token":"{T}","from_agent":"Example-Host1","agents":["Claude-Example"],"scopes":["read"],"exclude_client_data":true}}]"#
+        );
+        assert!(parse_machine_tokens(Some(&typo), None)
+            .unwrap_err()
+            .contains("exclude_client_data"));
     }
 
     #[test]

@@ -310,6 +310,29 @@ test_reset_clears_cursor() {
     pass "--reset clears the cursor"
 }
 
+test_trailing_slash_server_cursor_and_has_more() {
+    new_fixture
+    # Mix whole-second, millisecond, and microsecond updated_at values in the
+    # same second: lexicographic max would pick "...00Z" because 'Z' > '.'.
+    printf '%s\n' '{"count":3,"has_more":true,"items":[
+        {"id":"01a0aaaa-0000-7000-8000-000000000010","priority":"high","title":"First","from_agent":"Claude-A","status":"pending","created_at":"2026-11-26T10:05:00Z","updated_at":"2026-11-26T10:05:00Z","repeat_count":0},
+        {"id":"01a0aaaa-0000-7000-8000-000000000011","priority":"normal","title":"Second","from_agent":"Claude-B","status":"pending","created_at":"2026-11-26T10:05:00.500Z","updated_at":"2026-11-26T10:05:00.500Z","repeat_count":0},
+        {"id":"01a0aaaa-0000-7000-8000-000000000012","priority":"normal","title":"Third","from_agent":"Claude-C","status":"pending","created_at":"2026-11-26T10:05:00.500123Z","updated_at":"2026-11-26T10:05:00.500123Z","repeat_count":0}]}' >"$fx/response"
+    FX_URL='https://ops.example.invalid/' run_notify
+    [[ $status -eq 0 ]] || fail "trailing-slash URL should exit 0 (got $status: $err)"
+    assert_not_contains "$(cat "$fx/polls")" "//api/pending" "trailing slash stripped"
+    assert_contains "$(cat "$fx/polls")" "https://ops.example.invalid/api/pending?agent=Operator" "normalized pending URL"
+    assert_contains "$(<"$fx/mail")" "at least 3 new item(s) (more not shown)" "has_more surfaced in digest"
+    [[ $(cursor) == "2026-11-26T10:05:00.500123Z" ]] || fail "cursor should track server max updated_at (got [$(cursor)])"
+
+    # A subsequent empty poll keeps the server-anchored cursor instead of jumping ahead.
+    printf '{"count":0,"has_more":false,"items":[]}\n' >"$fx/response"
+    FX_URL='https://ops.example.invalid/' run_notify
+    [[ $status -eq 0 ]] || fail "follow-up empty poll should exit 0 (got $status: $err)"
+    [[ $(cursor) == "2026-11-26T10:05:00.500123Z" ]] || fail "empty poll should keep anchored cursor (got [$(cursor)])"
+    pass "trailing slash stripped, cursor tracks server updated_at across precisions, has_more noted"
+}
+
 test_dormant_without_token
 test_missing_url_is_loud
 test_refuses_loose_or_empty_token
@@ -323,5 +346,6 @@ test_dry_run_touches_nothing
 test_stdout_without_mailer
 test_secrets_stay_out_of_argv_and_status
 test_reset_clears_cursor
+test_trailing_slash_server_cursor_and_has_more
 
 printf '1..%d\n' "$pass_count"

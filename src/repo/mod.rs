@@ -1,22 +1,22 @@
-/// Build an OR-joined tsquery string for FTS fallback.
-/// Returns None if query has <2 words (OR is pointless with 0-1 words).
-/// Used when AND-based websearch_to_tsquery returns zero results.
+/// Build an OR-joined websearch query for FTS fallback.
+/// Returns None if fewer than 2 searchable terms survive (OR is pointless with
+/// 0-1 words). Used with `websearch_to_tsquery` when AND-based matching returns
+/// zero results, so malformed punctuation can never raise a PostgreSQL tsquery
+/// syntax error and separator-joined identifiers (`ops_brain`, `foo/bar`,
+/// `v8.1.0`) split into their indexed tokens instead of concatenating.
 pub(crate) fn build_or_tsquery_text(query: &str) -> Option<String> {
-    let words: Vec<String> = query
-        .split_whitespace()
-        .map(|w| {
-            w.chars()
-                .filter(|c| c.is_alphanumeric() || *c == '-')
-                .collect::<String>()
-        })
-        .filter(|w| !w.is_empty() && w != "-")
+    let words: Vec<&str> = query
+        .split(|c: char| !(c.is_alphanumeric() || c == '-'))
+        .flat_map(|token| token.split("--"))
+        .map(|token| token.trim_matches('-'))
+        .filter(|w| !w.is_empty() && !w.eq_ignore_ascii_case("or"))
         .collect();
 
     if words.len() < 2 {
         return None;
     }
 
-    Some(words.join(" | "))
+    Some(words.join(" OR "))
 }
 
 /// Handoff filter for a caller restricted to its own traffic: the row must
@@ -52,7 +52,7 @@ mod tests {
     fn or_tsquery_multi_word() {
         assert_eq!(
             build_or_tsquery_text("disk space running low"),
-            Some("disk | space | running | low".to_string())
+            Some("disk OR space OR running OR low".to_string())
         );
     }
 
@@ -70,7 +70,7 @@ mod tests {
     fn or_tsquery_strips_special_chars() {
         assert_eq!(
             build_or_tsquery_text("how do we handle (disk) space?"),
-            Some("how | do | we | handle | disk | space".to_string())
+            Some("how OR do OR we OR handle OR disk OR space".to_string())
         );
     }
 
@@ -78,12 +78,30 @@ mod tests {
     fn or_tsquery_preserves_hyphens() {
         assert_eq!(
             build_or_tsquery_text("cross-client safe"),
-            Some("cross-client | safe".to_string())
+            Some("cross-client OR safe".to_string())
         );
     }
 
     #[test]
-    fn or_tsquery_bare_punctuation_filtered() {
+    fn or_tsquery_splits_separators_and_drops_bare_hyphens() {
         assert_eq!(build_or_tsquery_text("- --"), None);
+        assert_eq!(build_or_tsquery_text("-- --"), None);
+        assert_eq!(build_or_tsquery_text("(--) foo"), None);
+        assert_eq!(
+            build_or_tsquery_text("(--) foo bar"),
+            Some("foo OR bar".to_string())
+        );
+        assert_eq!(
+            build_or_tsquery_text("(-foo) bar-"),
+            Some("foo OR bar".to_string())
+        );
+        assert_eq!(
+            build_or_tsquery_text("ops_brain foo/bar v8.1.0"),
+            Some("ops OR brain OR foo OR bar OR v8 OR 1 OR 0".to_string())
+        );
+        assert_eq!(
+            build_or_tsquery_text("foo--bar baz"),
+            Some("foo OR bar OR baz".to_string())
+        );
     }
 }

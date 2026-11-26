@@ -529,34 +529,6 @@ pub async fn count_self_claims(pool: &PgPool, agent: &str) -> Result<SelfClaims,
     })
 }
 
-/// Real open-action-handoff counts for briefings. Mirrors the filter of
-/// `list_open_handoffs(.., include_notify=false)` (action-class, pending +
-/// accepted) but returns true totals instead of a `LIMIT`-bounded page — the
-/// briefing previously reported `len()` of a 20-row page as the open count.
-pub struct OpenHandoffCounts {
-    pub open: i64,
-    pub pending: i64,
-    pub accepted: i64,
-}
-
-pub async fn count_open_handoffs(pool: &PgPool) -> Result<OpenHandoffCounts, sqlx::Error> {
-    let row: (i64, i64, i64) = sqlx::query_as(
-        "SELECT
-            count(*),
-            count(*) FILTER (WHERE status = 'pending'),
-            count(*) FILTER (WHERE status = 'accepted')
-         FROM handoffs
-         WHERE category = 'action' AND status IN ('pending', 'accepted')",
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(OpenHandoffCounts {
-        open: row.0,
-        pending: row.1,
-        accepted: row.2,
-    })
-}
-
 /// One open action handoff, projected for the briefing's operator view.
 ///
 /// Deliberately not a `Handoff`: the briefing renders one line per row and
@@ -585,16 +557,12 @@ pub struct OpenActionBrief {
 
 /// Every open (pending + accepted) action handoff, oldest first, projected for
 /// the briefing. Uncapped on purpose: the briefing derives true totals and
-/// per-recipient counts from this set, and a `LIMIT` here would silently turn
-/// every one of those counts into a page length. The projection is small
-/// enough (no body, no context, no vectors) that the whole open set is cheap.
-///
-/// Filter matches `count_open_handoffs` exactly. The two are still separate
-/// round trips, so a handoff created between them can make the briefing's
-/// header total differ by one from the sum of its per-recipient counts — a
-/// daily snapshot of a live bus, not a torn read of one. `id` breaks ties on
-/// `created_at` so a briefing of an unchanged bus renders identically twice —
-/// UUIDv7 is time-ordered, so it sorts the way the timestamp would.
+/// per-recipient counts from this single snapshot, so header counts and
+/// per-recipient totals can never disagree and no `LIMIT` turns a total into a
+/// page length. The projection is small enough (no body, no context, no
+/// vectors) that the whole open set is cheap. `id` breaks ties on `created_at`
+/// so a briefing of an unchanged bus renders identically twice — UUIDv7 is
+/// time-ordered, so it sorts the way the timestamp would.
 pub async fn list_open_action_briefs(
     pool: &PgPool,
     operator: &str,
@@ -691,11 +659,11 @@ pub async fn search_handoffs(
     limit: i64,
 ) -> Result<Vec<Handoff>, sqlx::Error> {
     let scope = super::party_clause(3, "");
-    let run = |tsquery: &'static str, text: String| {
+    let run = |text: String| {
         let sql = format!(
             "SELECT {HANDOFF_COLS} FROM handoffs
-              WHERE search_vector @@ {tsquery}('english', $1) AND {scope}
-              ORDER BY ts_rank(search_vector, {tsquery}('english', $1)) DESC, created_at DESC
+              WHERE search_vector @@ websearch_to_tsquery('english', $1) AND {scope}
+              ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $1)) DESC, created_at DESC
               LIMIT $2"
         );
         async move {
@@ -707,7 +675,7 @@ pub async fn search_handoffs(
                 .await
         }
     };
-    let all_words = run("websearch_to_tsquery", query.to_string()).await?;
+    let all_words = run(query.to_string()).await?;
     let has_operators = query.contains('"')
         || query
             .split_whitespace()
@@ -716,7 +684,7 @@ pub async fn search_handoffs(
         return Ok(all_words);
     }
     match super::build_or_tsquery_text(query) {
-        Some(any_word) => run("to_tsquery", any_word).await,
+        Some(any_word) => run(any_word).await,
         None => Ok(all_words),
     }
 }

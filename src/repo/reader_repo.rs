@@ -90,10 +90,11 @@ pub async fn get_thread(pool: &PgPool, id: Uuid) -> Result<Vec<Handoff>, sqlx::E
     .await
 }
 
-/// The bodies of a few handoffs by id, for snippets on rows that were listed
-/// without them.
+/// Opening slice of bodies for a few handoffs by id, for snippets on rows that
+/// were listed without them. Bounded in SQL so a 100 KB body is not pulled
+/// across the wire to render a 240-character preview.
 pub async fn bodies(pool: &PgPool, ids: &[Uuid]) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
-    sqlx::query_as("SELECT id, body FROM handoffs WHERE id = ANY($1)")
+    sqlx::query_as("SELECT id, LEFT(body, 1024) FROM handoffs WHERE id = ANY($1)")
         .bind(ids)
         .fetch_all(pool)
         .await

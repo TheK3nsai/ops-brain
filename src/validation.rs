@@ -8,6 +8,30 @@ use serde::Deserialize;
 pub const MAX_TITLE_BYTES: usize = 200;
 pub const MAX_BODY_BYTES: usize = 100_000;
 pub const MAX_CONTEXT_BYTES: usize = 8_192;
+pub const MAX_COMMIT_HASH_BYTES: usize = 128;
+
+/// Validate an optional commit ref (typically a short or full git SHA).
+/// Blank values become `None` so callers never store empty strings. Rejects
+/// whitespace/control characters and bounds length so a pasted commit message
+/// cannot exceed the B-tree index limit on `handoffs.commit_hash`.
+pub fn validate_commit_hash(input: Option<&str>) -> Result<Option<&str>, String> {
+    let Some(trimmed) = input.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Ok(None);
+    };
+    if trimmed.len() > MAX_COMMIT_HASH_BYTES {
+        return Err(format!(
+            "commit_hash too large ({} bytes, max {MAX_COMMIT_HASH_BYTES})",
+            trimmed.len()
+        ));
+    }
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(
+            "commit_hash must be a single token with no whitespace or control characters"
+                .to_string(),
+        );
+    }
+    Ok(Some(trimmed))
+}
 
 /// Validate a required free-form text field without silently rewriting it.
 /// Limits are byte-based so the bound matches what is stored and sent over
@@ -147,6 +171,28 @@ pub fn validate_agent_name(input: &str) -> Result<&str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_hash_trims_and_bounds_values() {
+        assert_eq!(validate_commit_hash(None).unwrap(), None);
+        assert_eq!(validate_commit_hash(Some("")).unwrap(), None);
+        assert_eq!(validate_commit_hash(Some("   \t\n ")).unwrap(), None);
+        assert_eq!(
+            validate_commit_hash(Some("  abc1234  ")).unwrap(),
+            Some("abc1234")
+        );
+        assert!(validate_commit_hash(Some("abc 123")).is_err());
+        assert!(validate_commit_hash(Some("abc\n123")).is_err());
+        let exact = "a".repeat(MAX_COMMIT_HASH_BYTES);
+        assert_eq!(
+            validate_commit_hash(Some(&exact)).unwrap(),
+            Some(exact.as_str())
+        );
+        let too_long = "a".repeat(MAX_COMMIT_HASH_BYTES + 1);
+        assert!(validate_commit_hash(Some(&too_long))
+            .unwrap_err()
+            .contains("too large"));
+    }
 
     #[test]
     fn bounded_text_rejects_blank_and_oversized_values() {

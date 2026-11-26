@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "ops-brain", about = "Operational intelligence MCP server")]
+#[command(name = "ops-brain", about = "Team handoff bus MCP server")]
 pub struct Config {
     /// Database connection URL
     #[arg(long, env = "DATABASE_URL")]
@@ -92,32 +92,45 @@ pub struct Config {
 mod tests {
     use super::*;
 
-    // The prod compose has no `env_file:`, so a var missing from its
+    // None of the compose files use `env_file:`, so a var missing from their
     // `environment:` list never reaches the container, whatever `.env` says.
     #[test]
     fn prod_compose_passes_every_env_var() {
         use clap::CommandFactory;
-        const NEVER_IN_PROD: &str = "OPS_BRAIN_DEV_NO_AUTH";
-        let compose = include_str!("../docker-compose.prod.yml");
-        let listed = |var: &str| {
-            let entry = format!("- {var}=");
-            compose.lines().any(|l| l.trim_start().starts_with(&entry))
-        };
+        const NEVER_IN_COMPOSE: &str = "OPS_BRAIN_DEV_NO_AUTH";
         let cmd = Config::command();
-        let missing: Vec<String> = std::iter::once(&cmd)
+        let vars: Vec<String> = std::iter::once(&cmd)
             .chain(cmd.get_subcommands())
             .flat_map(|c| c.get_arguments())
             .filter_map(|arg| arg.get_env())
             .map(|env| env.to_string_lossy().into_owned())
-            .filter(|var| var != NEVER_IN_PROD && !listed(var))
+            .filter(|var| var != NEVER_IN_COMPOSE)
             .collect();
-        assert!(
-            missing.is_empty(),
-            "add `- VAR=${{VAR:-}}` to docker-compose.prod.yml for: {missing:?}"
-        );
-        assert!(
-            !compose.contains(NEVER_IN_PROD),
-            "{NEVER_IN_PROD} must never appear in docker-compose.prod.yml, comments included"
-        );
+
+        for (file, compose) in [
+            (
+                "docker-compose.prod.yml",
+                include_str!("../docker-compose.prod.yml"),
+            ),
+            ("docker-compose.yml", include_str!("../docker-compose.yml")),
+            (
+                "docker-compose.example.yml",
+                include_str!("../docker-compose.example.yml"),
+            ),
+        ] {
+            let listed = |var: &str| {
+                let entry = format!("- {var}=");
+                compose.lines().any(|l| l.trim_start().starts_with(&entry))
+            };
+            let missing: Vec<&String> = vars.iter().filter(|var| !listed(var)).collect();
+            assert!(
+                missing.is_empty(),
+                "add `- VAR=${{VAR:-}}` to {file} for: {missing:?}"
+            );
+            assert!(
+                !compose.contains(NEVER_IN_COMPOSE),
+                "{NEVER_IN_COMPOSE} must never appear in {file}, comments included"
+            );
+        }
     }
 }
